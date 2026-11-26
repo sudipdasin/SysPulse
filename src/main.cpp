@@ -1,7 +1,8 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <sys/statvfs.h>
-#include <sys/sysinfo.h>
+#include "health.hpp"
+#include <fstream>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <array>
@@ -10,15 +11,13 @@
 #include <iostream>
 #include <string>
 #include <vector>
-constexpr const char* version = "0.1.0";
+constexpr const char* version = "0.2.0";
 std::vector<std::string> diagnostics() {
     std::vector<std::string> rows;
-    struct sysinfo info{};
-    if (sysinfo(&info)==0) {
-        auto mib=[&](unsigned long n){return static_cast<unsigned long long>(n)*info.mem_unit/1048576;};
-        rows.push_back("RAM total: "+std::to_string(mib(info.totalram))+" MiB; free: "+std::to_string(mib(info.freeram))+" MiB (not available RAM)");
-        rows.push_back("Swap total: "+std::to_string(mib(info.totalswap))+" MiB");
-    } else rows.push_back("Memory query failed");
+    std::ifstream mem("/proc/meminfo");
+    const auto m=sp::parseMemory(mem);
+    rows.push_back(sp::memorySummary(m));
+    rows.push_back(sp::swapSummary(m));
     struct statvfs fs{};
     if(statvfs("/",&fs)==0 && fs.f_blocks) rows.push_back("Root filesystem available: "+std::to_string(static_cast<unsigned long long>(fs.f_bavail)*fs.f_frsize/1048576)+" MiB");
     else rows.push_back("Storage query failed");
@@ -42,7 +41,7 @@ int main(int argc,char** argv) {
     Atom close=XInternAtom(d,"WM_DELETE_WINDOW",False); XSetWMProtocols(d,win,&close,1); XMapWindow(d,win);
     auto rows=diagnostics(); std::string status="Ready. Read-only diagnostics; updates require a trusted signing key."; pid_t child=-1; bool confirm=false, running=true;
     auto draw=[&]{XClearWindow(d,win); auto line=[&](int x,int y,const std::string& s){XDrawString(d,win,gc,x,y,s.c_str(),static_cast<int>(s.size()));};
-        line(24,32,"SysPulse Community 0.1.0 | Linux X11 preview"); line(24,62,"SYSTEM HEALTH - local snapshot"); int y=86; for(auto& s:rows){line(24,y,s);y+=24;}
+        line(24,32,"SysPulse Community 0.2.0 | Linux X11 preview"); line(24,62,"SYSTEM HEALTH - local snapshot"); int y=86; for(auto& s:rows){line(24,y,s);y+=24;}
         XDrawRectangle(d,win,gc,24,200,170,38);line(36,224,"Refresh diagnostics");
         XDrawRectangle(d,win,gc,210,200,170,38);line(222,224,"Check signed update");
         XDrawRectangle(d,win,gc,396,200,190,38);line(408,224,confirm?"Confirm installation":"Install signed update");
