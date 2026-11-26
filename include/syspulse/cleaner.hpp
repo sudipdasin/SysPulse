@@ -55,7 +55,7 @@ inline Category category(const fs::path& path,const fs::path& cache){
 struct Entry { fs::path path; std::uint64_t bytes=0; dev_t dev=0; ino_t ino=0; uid_t uid=0; timespec mtime{},ctime{}; Category kind=Other; bool removable=false; };
 struct Volume {std::uint64_t used=0,available=0,reserved=0;bool known=false;};
 struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;};
-struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;};
+struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;};
 inline bool sameTime(timespec a,timespec b){return a.tv_sec==b.tv_sec&&a.tv_nsec==b.tv_nsec;}
 inline bool oldEnough(const struct stat& st,unsigned days,std::time_t now){
     return now>0&&days>=7&&days<=3650&&std::difftime(now,st.st_mtime)>=days*86400.0&&std::difftime(now,st.st_ctime)>=days*86400.0;
@@ -106,22 +106,32 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
             if(bytes<limits.minBytes)continue;
             Entry e{full,bytes,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,kind,kind==Cache&&safeCache(st,limits.ageDays,now)};
             retain(out.largest,e,limits.top);
+            if(e.kind==Review)retain(out.review,e,limits.top);
             if(e.removable)retain(out.candidates,std::move(e),limits.top);
         }
     };
     visit(visit,fd.n,root,0);
     const auto descending=[](const Entry& a,const Entry& b){return a.bytes>b.bytes;};
-    std::sort(out.largest.begin(),out.largest.end(),descending);std::sort(out.candidates.begin(),out.candidates.end(),descending);
+    std::sort(out.largest.begin(),out.largest.end(),descending);std::sort(out.candidates.begin(),out.candidates.end(),descending);std::sort(out.review.begin(),out.review.end(),descending);
     out.complete=!out.cancelled&&!out.limited&&!out.skipped;return out;
 }
 // Only selected old user-cache regular files; no directory deletion, privilege escalation,
 // links, personal-file removal or cross-device traversal. Revalidate metadata immediately
 // before unlink; concurrent same-user modifications remain a residual race.
-inline bool removeCache(const fs::path& cache,const Entry& entry,unsigned ageDays){
+inline bool removeCache(const fs::path& cache,const Entry& entry,unsigned ageDays,std::time_t now=std::time(nullptr)){
     if(!entry.removable||!inside(entry.path,cache)||entry.path.filename().empty())return false;
-    Fd anchor(openDir(cache)),parent(openDir(entry.path.parent_path()));struct stat base{},st{};
-    if(anchor.n<0||parent.n<0||::fstat(anchor.n,&base)||base.st_uid!=::getuid()||::fstatat(parent.n,entry.path.filename().c_str(),&st,AT_SYMLINK_NOFOLLOW))return false;
-    if(st.st_dev!=base.st_dev||st.st_dev!=entry.dev||st.st_ino!=entry.ino||st.st_uid!=entry.uid||st.st_size<0||static_cast<std::uint64_t>(st.st_size)!=entry.bytes||!sameTime(st.st_mtim,entry.mtime)||!sameTime(st.st_ctim,entry.ctime)||!safeCache(st,ageDays,std::time(nullptr)))return false;
+    Fd anchor(openDir(cache));struct stat base{},st{};
+    if(anchor.n<0||::fstat(anchor.n,&base)||base.st_uid!=::getuid())return false;
+    Fd parent(::fcntl(anchor.n,F_DUPFD_CLOEXEC,3));if(parent.n<0)return false;
+    auto rel=entry.path.lexically_relative(cache);
+    for(const auto& part:rel.parent_path()){
+        if(part.empty()||part=="."||part=="..")return false;
+        Fd next(::openat(parent.n,part.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));struct stat dir{};
+        if(next.n<0||::fstat(next.n,&dir)||dir.st_dev!=base.st_dev||dir.st_uid!=::getuid())return false;
+        ::close(parent.n);parent.n=next.n;next.n=-1;
+    }
+    if(::fstatat(parent.n,entry.path.filename().c_str(),&st,AT_SYMLINK_NOFOLLOW))return false;
+    if(st.st_dev!=base.st_dev||st.st_dev!=entry.dev||st.st_ino!=entry.ino||st.st_uid!=entry.uid||st.st_size<0||static_cast<std::uint64_t>(st.st_size)!=entry.bytes||!sameTime(st.st_mtim,entry.mtime)||!sameTime(st.st_ctim,entry.ctime)||!safeCache(st,ageDays,now))return false;
     return ::unlinkat(parent.n,entry.path.filename().c_str(),0)==0;
 }
 }

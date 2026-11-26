@@ -31,5 +31,17 @@ int main(){
     fake.path=cache/"small";if(removeCache(cache,fake,7))return 17;
     if(!fs::exists(cache/"small")||!fs::exists(root/"docs"/"big.iso"))return 18;
     if(openDir(root/".."/root.filename())>=0)return 19;
-    std::cout<<"19 cleaner scan and rejection checks passed\n";
+    if(r.error.size())return 20;
+    if(::geteuid()!=0){
+        if(::stat((cache/"small").c_str(),&st))return 21;
+        Entry valid{cache/"small",3,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,Cache,true};
+        if(removeCache(cache,valid,7))return 22;
+        const auto future=std::time(nullptr)+8*86400;
+        auto changed=valid;changed.bytes=4;if(removeCache(cache,changed,7,future))return 23;
+        fs::create_hard_link(cache/"small",cache/"hard");if(removeCache(cache,valid,7,future))return 24;
+        fs::remove(cache/"hard");if(::stat((cache/"small").c_str(),&st))return 25;valid.ctime=st.st_ctim;
+        if(!removeCache(cache,valid,7,future)||fs::exists(cache/"small")||!fs::exists(root/"docs"/"big.iso"))return 26;
+    }
+
+    std::cout<<"Cleaner scan, rejection and actual fixture unlink checks passed\n";
 }
