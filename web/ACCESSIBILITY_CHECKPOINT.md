@@ -1,0 +1,3 @@
+# Website refinement
+
+Added system/light/dark theme selection, capability text and status filters, live result count, no-result feedback, Escape clearing and progressive enhancement without JavaScript. No storage, telemetry or remote dependencies. Chromium/Playwright set_content checks passed at 360, 768 and 1440 CSS pixels: theme selection, filter behavior, result counts, both themes without horizontal overflow, no page errors or network requests. JavaScript-disabled view retained six cards and hid controls. This is not a complete accessibility audit or hosted deployment. No native app change in this branch.
