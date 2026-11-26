@@ -1,26 +1,27 @@
-> **Migration correction:** The 0.x X11 previews below are historical experiments, not the established SysPulse application. The approved Qt 3.0.0-alpha.2 foundation is being staged for migration; see [continuity policy](docs/CONTINUITY.md). No new product UI or release from these previews.
-
 # SysPulse
 
-Open-source, lightweight system utilities for Linux and Windows: diagnose, maintain, repair, optimize and administer computers. Community development initially targets Linux Mint/XFCE, with native Windows support planned.
+Open-source native system maintenance, diagnostics and administration tools. Linux Mint XFCE (AMD64) first; other Linux distributions and native Windows 10/11 are roadmap targets requiring their own validation.
 
-**Status:** native Linux 0.3.0 source preview and source-intake foundation; no published release or verified production package. The previous Tux Steward C++/Qt project is a candidate for reviewed feature migration, not a dependency or a completed port.
+## Download the established native application
 
-- [Build and install native preview](docs/PREVIEW_0.3.0.md)
-- [Previous preview](docs/PREVIEW_0.1.0.md)
+- [Live native DEB evaluation download directory](https://syspulse-qt-alpha3-build-eval.onrender.com/) — current candidate, checksum and build/installation reports. This is a mutable evaluation service, not an immutable official release repository.
+- [Canonical GitHub Releases](https://github.com/sudipdasin/SysPulse/releases) — official distribution destination; no published assets at this checkpoint.
+- [Established Qt evaluation source](https://github.com/sudipdasin/SysPulse/tree/build/render-qt-alpha3-evaluation) — native application and build configuration. Actual deployed commit must be checked against the deployment record, not assumed from branch head.
+- [Mandatory package, update and parity policy](docs/DEB_UPDATE_RELEASE_POLICY.md).
+
+Alpha.8 passed native compilation, 36/36 regression suites, 56 additional build checks and Ubuntu 24.04 container installation, then deployed live. Alpha.9 package lifecycle evaluation is in development. The Qt application preserves the established Precision interface, resource monitoring, process/service/startup controls, System Care, maintenance and reviewed system memory compression. Real Mint XFCE VM validation, production signing/updates and official Release asset publication remain outstanding. Do not install legacy X11 prototypes as the current product.
+
+## Project documentation
+
+- [Continuity policy](docs/CONTINUITY.md)
 - [Developer handoff](docs/PROJECT_HANDOFF.md)
 - [Source intake report](docs/source-intake/REPORT.md)
 - [Implementation queue](docs/source-intake/IMPLEMENTATION_QUEUE.md)
 - [Privacy policy](docs/source-intake/PRIVACY_POLICY.md)
 - [Utility manifest](docs/source-intake/manifest.json)
-- [Intake changelog](docs/source-intake/CHANGELOG.md)
 
-Linux read-only reference prototypes can be invoked using Bash: `bash source-intake/linux/capabilities.sh`, `bash source-intake/linux/diagnostics.sh --summary`, `bash source-intake/linux/browser-process-summary.sh`. No privileges or installation are required. Review any detailed local diagnostic output before sharing. Query success does not imply health.
+GPL v3; see LICENSE. Future Pro development belongs in a separate repository and must comply with upstream licenses. No Pro code is included here.
 
-GPL v3; see LICENSE. Future Pro development belongs in a separate repository and must comply with all upstream licenses. No Pro code is included here.
+## Historical experiments — not current installers
 
-**Install the preview:** after installing the documented build dependencies, run `bash tools/install-user` as a normal user. Native CLI options: `--diagnostics`, `--capabilities`, `--browser-summary`, `--version`.
-
-## System Control Center 0.4.0 preview
-
-A separate native Linux control center provides 13 panels, 40 catalog entries, and read-only diagnostic triage. Build and install it alongside the existing health application using [Control Center preview instructions](docs/CONTROL_CENTER_0.4.0.md). This is not an official packaged release; optional system tools must be installed separately.
+The 0.x X11 previews and source-intake prototypes remain in history. [Historical 0.3.0 preview](docs/PREVIEW_0.3.0.md), [0.1.0 preview](docs/PREVIEW_0.1.0.md), [0.4.0 control center experiment](docs/CONTROL_CENTER_0.4.0.md). They are not the established Qt application and must not be distributed as the current product. Do not use the older install-user script as an alternative to a real DEB.
