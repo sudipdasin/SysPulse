@@ -34,15 +34,16 @@ constexpr int HistoryLimit = 20;
 
 QStringList reviewCommand(const tux::Action& tool,bool fixture) {
     auto command=tool.command;
-    if(!tool.admin)return command;
+    if(!tool.admin&&!tool.changes)return command;
     if(!fixture) {
         const auto target=tux::trustedSystemExecutable(command.first());
         const auto authorization=tux::trustedSystemExecutable("pkexec");
-        if(!target.isEmpty()&&!authorization.isEmpty()) {
-            command[0]=target;command.prepend(authorization);return command;
+        if(!target.isEmpty()&&(!tool.admin||!authorization.isEmpty())) {
+            command[0]=target;if(tool.admin)command.prepend(authorization);return command;
         }
     }
-    command.prepend("pkexec");return command;
+    if(tool.admin)command.prepend("pkexec");
+    return command;
 }
 
 QJsonObject reportFor(const QVector<tux::Result>& results, bool details) {
@@ -349,6 +350,10 @@ void ToolboxPage::reviewAndRun() {
     // while it is open, so recheck immediately before creating the worker.
     if (busy_ || !executionAllowed_ || (canExecute && !canExecute())) return;
 
+    if(!injectedExecutor_&&(!tux::unavailable(tool).isEmpty()||reviewCommand(tool,false)!=command)){
+        QMessageBox::warning(this,"Tool changed","The reviewed executable or capability changed. Review the tool again.");
+        updateSelection();return;
+    }
     // No command is accepted from the text preview or any editable UI field.
     busy_ = true;
     cancellable_ = !tool.changes && !tool.admin;

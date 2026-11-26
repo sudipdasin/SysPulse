@@ -70,22 +70,28 @@ Result runCommand(const QStringList& command, int timeoutMs, Output output, cons
     if (flags<0 || fcntl(child.fd,F_SETFL,flags|O_NONBLOCK)<0) {
         close(pipes[1]); throw std::runtime_error("Cannot configure output pipe");
     }
-    posix_spawn_file_actions_t files;
-    posix_spawn_file_actions_init(&files);
-    posix_spawn_file_actions_addopen(&files,STDIN_FILENO,"/dev/null",O_RDONLY,0);
-    posix_spawn_file_actions_adddup2(&files,pipes[1],STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&files,pipes[1],STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&files,pipes[0]);
-    posix_spawn_file_actions_addclose(&files,pipes[1]);
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETPGROUP);
-    posix_spawnattr_setpgroup(&attributes,0);
+    struct WriteEnd { int fd; ~WriteEnd(){if(fd>=0)close(fd);} } writer{pipes[1]};
+    struct FileActions {
+        posix_spawn_file_actions_t value;
+        FileActions(){const int rc=posix_spawn_file_actions_init(&value);if(rc)throw std::runtime_error("Cannot initialize spawn file actions");}
+        ~FileActions(){posix_spawn_file_actions_destroy(&value);}
+    } files;
+    struct Attributes {
+        posix_spawnattr_t value;
+        Attributes(){const int rc=posix_spawnattr_init(&value);if(rc)throw std::runtime_error("Cannot initialize spawn attributes");}
+        ~Attributes(){posix_spawnattr_destroy(&value);}
+    } attributes;
+    const auto check=[](int code){if(code)throw std::runtime_error(std::string("Cannot configure child process: ")+std::strerror(code));};
+    check(posix_spawn_file_actions_addopen(&files.value,STDIN_FILENO,"/dev/null",O_RDONLY,0));
+    check(posix_spawn_file_actions_adddup2(&files.value,pipes[1],STDOUT_FILENO));
+    check(posix_spawn_file_actions_adddup2(&files.value,pipes[1],STDERR_FILENO));
+    check(posix_spawn_file_actions_addclose(&files.value,pipes[0]));
+    check(posix_spawn_file_actions_addclose(&files.value,pipes[1]));
+    check(posix_spawnattr_setflags(&attributes.value,POSIX_SPAWN_SETPGROUP));
+    check(posix_spawnattr_setpgroup(&attributes.value,0));
     QElapsedTimer timer; timer.start();
-    const int error=posix_spawnp(&child.pid,argv[0],&files,&attributes,argv.data(),environ);
-    posix_spawn_file_actions_destroy(&files);
-    posix_spawnattr_destroy(&attributes);
-    close(pipes[1]);
+    const int error=posix_spawnp(&child.pid,argv[0],&files.value,&attributes.value,argv.data(),environ);
+    close(writer.fd);writer.fd=-1;
     if (error!=0) {
         child.pid=-1;
         throw std::runtime_error(std::string("Cannot start command: ")+std::strerror(error));

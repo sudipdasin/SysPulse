@@ -56,7 +56,7 @@ const Action& action(const QString& id) {
 QString unavailable(const Action& tool) {
     if (tool.x11 && qEnvironmentVariable("XDG_SESSION_TYPE")=="wayland")
         return "Requires X11; XWayland cannot control native Wayland devices.";
-    if ((tool.admin?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
+    if (((tool.admin||tool.changes)?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
         return "Missing dependency: "+tool.command.first();
     if (tool.admin && trustedSystemExecutable("pkexec").isEmpty())
         return "Missing dependency: pkexec (PolicyKit authentication agent required)";
@@ -86,12 +86,15 @@ Result execute(const QString& id, bool confirmed, int timeoutMs, Output output, 
     const auto problem=unavailable(tool);
     if (!problem.isEmpty()) throw std::runtime_error(problem.toStdString());
     auto command=tool.command;
-    if (tool.admin) {
+    if (tool.admin||tool.changes) {
         const auto executable=trustedSystemExecutable(command.first());
-        const auto authorization=trustedSystemExecutable("pkexec");
-        if(executable.isEmpty()||authorization.isEmpty())throw std::runtime_error("A trusted system executable is no longer available.");
+        if(executable.isEmpty())throw std::runtime_error("A trusted system executable is no longer available.");
         command[0]=executable;
-        command.prepend(authorization);
+        if(tool.admin){
+            const auto authorization=trustedSystemExecutable("pkexec");
+            if(authorization.isEmpty())throw std::runtime_error("Administrator authorization is no longer available.");
+            command.prepend(authorization);
+        }
     }
     // Cancellation is deliberately unavailable to settings-changing/admin tasks.
     auto result=runCommand(command,timeoutMs,std::move(output),(!tool.changes && !tool.admin)?cancel:nullptr);

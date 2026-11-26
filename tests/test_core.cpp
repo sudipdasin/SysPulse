@@ -82,6 +82,9 @@ int main(int argc,char** argv) {
         require(caught,"callback exception propagated and child cleaned");
         r=tux::runCommand({self,"--literal","$(touch should-not-exist); literal"});
         require(r.output=="$(touch should-not-exist); literal","no shell expansion");
+        std::atomic_bool preCancelled{true};
+        const auto skipped=tux::runCommand({"/nonexistent-tux-command"},3000,{},&preCancelled);
+        require(skipped.cancelled&&skipped.code==130,"pre-cancel does not spawn a command");
         caught=false; try { tux::runCommand({self},0); } catch (...) { caught=true; } require(caught,"positive timeout");
         caught=false; try { tux::runCommand({"/nonexistent-tux-command"}); } catch (...) { caught=true; } require(caught,"spawn failure");
         caught=false; try { tux::action("unknown"); } catch (...) { caught=true; } require(caught,"unknown action");
@@ -92,12 +95,14 @@ int main(int argc,char** argv) {
         const auto protectedApt=tux::trustedSystemExecutable("apt-get");
         QTemporaryDir temp; require(temp.isValid(),"temporary dependency sandbox");
         QFile::link(self,temp.filePath("pkexec")); QFile::link(self,temp.filePath("apt-get"));
+        QFile::link(self,temp.filePath("xfconf-query"));
         qputenv("PATH",temp.path().toUtf8());
         require(tux::trustedSystemExecutable("pkexec")==protectedAuthorization&&
                 tux::trustedSystemExecutable("apt-get")==protectedApt,
                 "user PATH helpers cannot replace protected privileged executables");
         require(!protectedAuthorization.startsWith(temp.path())&&!protectedApt.startsWith(temp.path()),
                 "privileged resolution rejects user-controlled helper locations without executing a mutation");
+        if(tux::trustedSystemExecutable("xfconf-query").isEmpty())require(tux::unavailable(tux::action("compositor-off")).contains("Missing dependency"),"untrusted PATH cannot satisfy desktop mutation");
         require(tux::unavailable(tux::action("storage")).contains("Missing dependency"),"missing tool detected");
         qputenv("PATH",path);
         std::cout<<checks<<" checks passed\n"; return 0;
