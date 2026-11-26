@@ -1,3 +1,5 @@
+> **Migration correction:** The 0.x X11 previews below are historical experiments, not the established SysPulse application. The approved Qt 3.0.0-alpha.2 foundation is being staged for migration; see [continuity policy](docs/CONTINUITY.md). No new product UI or release from these previews.
+
 # SysPulse
 
 Open-source, lightweight system utilities for Linux and Windows: diagnose, maintain, repair, optimize and administer computers. Community development initially targets Linux Mint/XFCE, with native Windows support planned.
