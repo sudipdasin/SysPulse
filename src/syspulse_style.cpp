@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/fluent_visuals.hpp"
 #include <QApplication>
 #include <QPalette>
 #include <QStyleFactory>
@@ -102,6 +103,15 @@ QPushButton#systemToolTileButton:focus { border:2px solid #B51235; }
 QPushButton#systemToolTileButton:disabled { color:#657487; }
 QLabel#toolAvailability { color:#526981; font-size:11px; padding-left:9px; }
 QPushButton#navigationBack,QPushButton#navigationForward { padding:5px 7px; min-width:20px; }
+QFrame#systemToolTile { background:rgba(255,255,255,225); border:1px solid #CCD9E8; border-radius:12px; }
+QFrame#systemToolTile:hover { background:rgba(255,255,255,250); border:1px solid #8BA9C8; }
+QPushButton#systemToolTileButton { background:transparent; border:1px solid transparent; text-align:left; padding:7px 10px; font-size:15px; font-weight:700; }
+QPushButton#systemToolTileButton:hover:enabled { background:#E8F1FA; border:1px solid #B8CEE5; }
+QPushButton#systemToolTileButton:focus { border:2px solid #B51235; }
+QLabel#toolDescription { color:#455D76; font-size:12px; padding:0 9px; }
+QLabel#toolAvailability { color:#657487; font-size:11px; padding:4px 9px; }
+QLabel#toolAvailability[available="true"] { color:#176341; }
+QTabBar::tab:hover:!selected { background:#E8F1FA; border-color:#ABC0D7; }
 )QSS");
 }
 void applyPrecisionTheme() {
@@ -121,6 +131,6 @@ void applyPrecisionTheme() {
     palette.setColor(QPalette::Disabled,QPalette::Text,QColor("#9198A4"));
     palette.setColor(QPalette::Disabled,QPalette::ButtonText,QColor("#9198A4"));
     QApplication::setPalette(palette);
-    qApp->setStyleSheet(precisionStyle());
+    qApp->setStyleSheet(precisionStyle());fluent::installVisualFilter();
 }
 }

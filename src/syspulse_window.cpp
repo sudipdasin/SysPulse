@@ -75,7 +75,7 @@ QFrame* panel(const char* name="panel") {
 }
 QPushButton* button(const QString& title,std::function<void()> fn,QWidget* context,bool primary=false) {
     auto* b=new QPushButton(QString(title).replace("&","&&"));b->setCursor(Qt::PointingHandCursor);b->setAccessibleName(title);
-    b->setProperty("primary",primary);
+    b->setProperty("primary",primary);fluent::decorate(b);
     QObject::connect(b,&QPushButton::clicked,context,[fn=std::move(fn)]{fn();});return b;
 }
 QWidget* workspace(const QString& title,const QString& subtitle,QWidget* child) {
@@ -208,7 +208,7 @@ struct Window::Impl {
             auto* b=new QPushButton(QString(title).replace("&","&&"));b->setObjectName("navButton");b->setCheckable(true);b->setAutoExclusive(true);
             b->setProperty("displayTitle",title);
             b->setIcon(fluent::glyph(id));b->setIconSize(QSize(20,20));
-            b->setCursor(Qt::PointingHandCursor);b->setToolTip(title);
+            b->setCursor(Qt::PointingHandCursor);b->setToolTip(fluent::hint(title));
             b->setAccessibleName(title);b->setProperty("pageId",id);nav.insert(id,b);sl->addWidget(b);
             QObject::connect(b,&QPushButton::clicked,w,[this,id]{navigate(id);});
         };
@@ -273,12 +273,7 @@ struct Window::Impl {
         management->canMutate=[this]{for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
         management->onBusyChanged=[this](bool){updateFooter();};
         for(auto i=pages.cbegin();i!=pages.cend();++i){i.value()->setProperty("sysPulsePageId",i.key());stack->addWidget(i.value());}
-        for(auto* tabs:stack->findChildren<QTabWidget*>()) {
-            tabs->setIconSize(QSize(18,18));
-            for(int index=0;index<tabs->count();++index) {
-                if(tabs->tabIcon(index).isNull())tabs->setTabIcon(index,fluent::glyph(fluent::tabGlyph(tabs->tabText(index))));
-            }
-        }
+        fluent::decorateTree(w);
         performance->onMetricsChanged=[this]{updateMetrics();};
         performance->onOpenStartup=[this]{navigate("management");management->showStartup();};
         performance->onOpenServices=[this]{navigate("management");management->showServices();};
@@ -357,6 +352,16 @@ struct Window::Impl {
         tabs->addTab(installedTools("Network configuration tools may interrupt connectivity. Review changes in their native windows.",{{"Network connections","nm-connection-editor"},{"Firewall","gufw"},{"Bluetooth","blueman-manager"}}),"Network tools");
         return workspace("Network","Inspect connection state, run reviewed diagnostics, and follow resource history.",tabs);
     }
+    QFrame* toolTile(QPushButton* b,const QString& title,bool available) {
+        auto* tile=panel("systemToolTile");auto* tl=new QVBoxLayout(tile);tl->setContentsMargins(12,10,12,10);tl->setSpacing(5);
+        const auto detail=fluent::descriptionFor(title);
+        const auto summary=detail.isEmpty()?QString("Open %1 in its native interface.").arg(title):detail;
+        const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nNot installed · install the distribution-supported utility separately.");
+        tile->setToolTip(tip);b->setToolTip(tip);b->setAccessibleDescription(summary);b->setObjectName("systemToolTileButton");b->setIcon(fluent::glyph(fluent::tabGlyph(title)));b->setIconSize(QSize(40,40));b->setMinimumHeight(54);
+        tl->addWidget(b);auto* desc=text(summary,"toolDescription");desc->setToolTip(tip);tl->addWidget(desc);
+        auto* state=text(available?"Installed · native utility":"Not installed","toolAvailability");state->setProperty("available",available);state->setToolTip(tip);tl->addWidget(state);tl->addStretch();
+        return tile;
+    }
     QWidget* installedTools(const QString& description,const QVector<QPair<QString,QString>>& entries) {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
         layout->addWidget(text(description,"muted"));
@@ -372,15 +377,12 @@ struct Window::Impl {
             b->setProperty("systemToolCommand",entry.second);
             b->setEnabled(!program.isEmpty());
             b->setToolTip(program.isEmpty()?"Unavailable: install the distribution-supported system tool separately.":"Open the installed tool after review; it manages its own authorization.");
-            auto* tile=panel("systemToolTile");auto* tl=new QVBoxLayout(tile);tl->setContentsMargins(10,8,10,8);tl->setSpacing(4);
-            b->setObjectName("systemToolTileButton");b->setIcon(fluent::glyph(fluent::tabGlyph(entry.first)));b->setIconSize(QSize(22,22));
-            tl->addWidget(b);auto* state=text(program.isEmpty()?"Not installed":"Installed · opens native utility","muted");state->setObjectName("toolAvailability");tl->addWidget(state);
-            grid->addWidget(tile,index/2,index%2);++index;
+            grid->addWidget(toolTile(b,entry.first,!program.isEmpty()),index/2,index%2);++index;
         }
         layout->addLayout(grid);layout->addStretch();return content;
     }
     QWidget* desktopPage() {
-        auto* tabs=new QTabWidget;auto* settings=new QWidget;auto* layout=new QVBoxLayout(settings);
+        auto* tabs=new QTabWidget;tabs->setObjectName("desktopWorkspaceTabs");auto* settings=new QWidget;auto* layout=new QVBoxLayout(settings);
         layout->addWidget(text("Open installed XFCE settings tools. Changes are made through their native interfaces.","muted"));
         auto* grid=new QGridLayout;grid->setSpacing(12);int index=0;
         const QVector<QPair<QString,QString>> apps={{"Display","xfce4-display-settings"},{"Keyboard","xfce4-keyboard-settings"},{"Mouse & touchpad","xfce4-mouse-settings"},{"Power manager","xfce4-power-manager-settings"},{"Panel","xfce4-panel"},{"Session","xfce4-session-settings"},{"Appearance","xfce4-appearance-settings"},{"Window manager","xfwm4-settings"}};
@@ -392,7 +394,7 @@ struct Window::Impl {
                 QStringList args;if(item.second=="xfce4-panel")args<<"--preferences";
                 if(!QProcess::startDetached(program,args))QMessageBox::warning(w,item.first,"The desktop settings tool could not be opened.");
             },w);
-            b->setEnabled(!program.isEmpty());b->setToolTip(program.isEmpty()?"This XFCE settings tool is not installed.":"Open the native XFCE settings window.");grid->addWidget(b,index/2,index%2);++index;
+            b->setEnabled(!program.isEmpty());b->setProperty("desktopToolCommand",item.second);grid->addWidget(toolTile(b,item.first,!program.isEmpty()),index/3,index%3);++index;
         }
         layout->addLayout(grid);layout->addStretch();tabs->addTab(settings,"Desktop settings");
         auto* diagnostic=toolbox({"Performance","Input","Gaming","Desktop"});toolboxes.insert("desktop",diagnostic);tabs->addTab(diagnostic,"Diagnostics & integrations");

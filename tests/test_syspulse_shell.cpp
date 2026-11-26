@@ -21,6 +21,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QSettings>
+#include <QSet>
 #include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
@@ -70,6 +71,16 @@ int main(int argc,char** argv) {
             require(b->parentWidget()->findChild<QLabel*>("toolAvailability"),"tile reports actual capability status");++tiles;
         }
         require(tiles==63,"all existing launchers retained as tiles");
+        int desktopTiles=0;QSet<qint64> desktopIcons;
+        for(auto* b:window.findChildren<QPushButton*>())if(b->property("desktopToolCommand").isValid()){
+            require(b->parentWidget()->objectName()=="systemToolTile"&&b->iconSize()==QSize(40,40),"desktop settings use large graphical tiles");
+            require(!b->toolTip().isEmpty()&&!b->accessibleDescription().isEmpty()&&b->parentWidget()->findChild<QLabel*>("toolDescription"),"desktop tiles expose hover descriptions");
+            desktopIcons.insert(b->icon().cacheKey());++desktopTiles;
+        }
+        require(desktopTiles==8&&desktopIcons.size()==8,"all eight screenshot launchers have distinct icons");
+        for(auto* tab:window.findChildren<QTabWidget*>())for(int i=0;i<tab->count();++i)require(!tab->tabToolTip(i).isEmpty(),"every workspace tab has hover help");
+        for(auto* b:window.findChildren<QPushButton*>())if(!b->text().trimmed().isEmpty())require(!b->icon().isNull()&&!b->toolTip().isEmpty(),"labeled shell actions have icons and hover help");
+        QDialog dialog;QPushButton delayed("Refresh results",&dialog);dialog.show();events(25);require(!delayed.icon().isNull()&&!delayed.toolTip().isEmpty(),"late-opened dialog actions decorated");dialog.hide();
         const auto idleTimers = [&window] {
             int active = 0;
             for (const auto* timer : window.findChildren<QTimer*>()) if (timer->isActive()) ++active;
