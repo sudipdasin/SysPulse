@@ -42,7 +42,8 @@ int main(int argc,char** argv) {
         return tux::runCommand({self,"--child",mode},ms,std::move(cb));
     };
     try {
-        require(tux::actions().size()==35,"25 inherited tools plus ten SysPulse diagnostics retained");
+        require(tux::actions().size()==37,"35 existing tools plus two reviewed system-wide memory controls");
+        require(tux::action("zswap-enable").admin&&tux::action("zswap-enable").changes&&tux::action("zswap-disable").admin&&tux::action("zswap-disable").changes,"kernel controls require review and authorization");
         QSet<QString> ids;
         for (const auto& a:tux::actions()) {
             ids.insert(a.id);

@@ -1,5 +1,6 @@
 #include "tux/core.hpp"
 #include "tux/trusted_command.hpp"
+#include "syspulse/system_memory.hpp"
 #include <QJsonArray>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -25,6 +26,8 @@ const QVector<Action>& actions() {
         {"trim-enable", "Schedules", "Enable weekly SSD trim", "Enable and start the distribution-provided fstrim timer. Undo: sudo systemctl disable --now fstrim.timer", {"systemctl", "enable", "--now", "fstrim.timer"}, true, true, false},
         {"memory", "Performance", "Memory & swap", "Inspect RAM and swap usage before tuning.", {"free", "-h"}, false, false, false},
         {"zram", "Performance", "Compressed swap status", "Inspect active zRAM devices.", {"zramctl"}, false, false, false},
+        {"zswap-enable", "Performance", "Enable system-wide memory compression", "Enable kernel zswap for future swap writes during this boot. Requires existing ordinary swap, supported kernel and no zram devices. May trade CPU time for less disk I/O.", {"syspulse-memory-control", "enable"}, true, true, false},
+        {"zswap-disable", "Performance", "Disable new zswap compression", "Stop admitting new pages to zswap. Does not disable swap or immediately empty existing compressed entries. Runtime only.", {"syspulse-memory-control", "disable"}, true, true, false},
         {"power", "Performance", "Power management status", "Inspect TLP if installed. No packages are installed automatically.", {"tlp-stat", "-s"}, false, false, false},
         {"compositor-on", "Performance", "Enable XFCE compositor", "Enable desktop compositing. Reversible using Disable compositor.", {"xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", "true"}, true, false, false},
         {"compositor-off", "Performance", "Disable XFCE compositor", "May reduce rendering overhead; can cause tearing. Reversible using Enable compositor.", {"xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", "false"}, true, false, false},
@@ -57,6 +60,10 @@ QString unavailable(const Action& tool) {
         return "Missing dependency: "+tool.command.first();
     if (tool.admin && trustedSystemExecutable("pkexec").isEmpty())
         return "Missing dependency: pkexec (PolicyKit authentication agent required)";
+    if(tool.id=="zswap-enable"&&!syspulse::system_memory::eligible())
+        return "Requires disabled zswap, active ordinary swap, and verified absence of zram devices.";
+    if(tool.id=="zswap-disable"&&syspulse::system_memory::readEnabled()!=syspulse::system_memory::State::Enabled)
+        return "Kernel zswap is not verified enabled.";
     return {};
 }
 bool matches(const Action& tool, const QString& query) {

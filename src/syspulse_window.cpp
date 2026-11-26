@@ -5,6 +5,7 @@
 #include "syspulse/memory_plan.hpp"
 #include "syspulse/care_plan.hpp"
 #include "syspulse/maintenance_preview.hpp"
+#include "syspulse/system_memory.hpp"
 #include <QDateTime>
 #include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
@@ -393,9 +394,9 @@ struct Window::Impl {
     QWidget* memoryOptimizerPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
         auto* frame=panel();auto* fl=new QVBoxLayout(frame);fl->setContentsMargins(20,20,20,20);
-        fl->addWidget(text("Memory optimizer","sectionTitle"));
-        fl->addWidget(text("Measure available memory, swap and memory pressure. Reclaim unused SysPulse allocator pages without dropping system caches or stopping other applications.","muted"));
-        auto* status=text("Ready. Select Measure memory or Reduce SysPulse memory use.","muted");
+        fl->addWidget(text("System-wide memory optimizer","sectionTitle"));
+        fl->addWidget(text("Measure the entire system and review kernel memory compression. The kernel can compress future swap writes to reduce disk I/O under pressure; this is not a guaranteed instant increase in free RAM.","muted"));
+        auto* status=text("Ready. Measure system RAM, swap and compression eligibility.","muted");
         status->setObjectName("memoryOptimizerStatus");status->setTextFormat(Qt::PlainText);fl->addWidget(status);
         const auto describe=[]{
             const auto snapshot=syspulse::triage::measure();const auto pressure=syspulse::pressure::measure();
@@ -409,10 +410,25 @@ struct Window::Impl {
             const auto plan=syspulse::memoryplan::assess(total,free,psi);
             return QString("System available RAM: %1 · Configured swap: %2\nMemory stall time (10s): %3\n%4").arg(available,swap,stalls,QString::fromLatin1(plan.advice));
         };
+        auto* kernelStatus=text("","muted");kernelStatus->setObjectName("systemMemoryStatus");kernelStatus->setTextFormat(Qt::PlainText);fl->addWidget(kernelStatus);
+        auto* enable=button("Optimize system RAM (review zswap)…",[this]{locateMaintenanceTool("zswap-enable");},w,true);
+        enable->setObjectName("optimizeSystemMemory");fl->addWidget(enable);
+        auto* disable=button("Review disabling new zswap compression…",[this]{locateMaintenanceTool("zswap-disable");},w);
+        disable->setObjectName("disableSystemMemoryCompression");fl->addWidget(disable);
+        const auto refreshKernel=[kernelStatus,enable,disable]{
+            using S=syspulse::system_memory::State;
+            const auto state=syspulse::system_memory::readEnabled();
+            const auto enableProblem=tux::unavailable(tux::action("zswap-enable"));
+            const auto disableProblem=tux::unavailable(tux::action("zswap-disable"));
+            enable->setEnabled(enableProblem.isEmpty());disable->setEnabled(disableProblem.isEmpty());
+            enable->setToolTip(enableProblem);disable->setToolTip(disableProblem);
+            kernelStatus->setText(QString("System-wide zswap: %1. %2").arg(state==S::Enabled?"Enabled":state==S::Disabled?"Disabled":"Unavailable / unknown",enableProblem.isEmpty()?"Compatible configuration detected; review and authorize to enable.":enableProblem));
+        };
+        refreshKernel();
         auto* actions=new QHBoxLayout;
-        auto* measure=button("Measure memory",[status,describe]{status->setText(describe());},content);
+        auto* measure=button("Measure system memory",[status,describe,refreshKernel]{status->setText(describe());refreshKernel();},content);
         measure->setObjectName("measureMemory");actions->addWidget(measure);
-        auto* optimize=button("Reduce SysPulse memory use",[status,describe]{
+        auto* optimize=button("Reduce SysPulse only (optional)",[status,describe]{
             const auto before=syspulse::triage::measure();
             const auto result=syspulse::relief::trimSelf();
             const auto after=syspulse::triage::measure();
@@ -420,7 +436,7 @@ struct Window::Impl {
             const QString detail=!result.supported?"Allocator trim unavailable.":result.released?"Allocator reports unused pages released.":"No allocator pages released.";
             const auto available=[](const syspulse::triage::Snapshot& v)->std::optional<std::uint64_t>{if(v.ram)return v.ram->available;return {};};
             status->setText(QString("SysPulse RSS before: %1 · after: %2\nSystem available RAM before: %3 · after: %4\n%5 System RAM changes include other workloads; no speed gain is guaranteed.\n%6").arg(show(result.before),show(result.after),show(available(before)),show(available(after)),detail,describe()));
-        },content,true);
+        },content);
         optimize->setObjectName("optimizeMemory");actions->addWidget(optimize);fl->addLayout(actions);layout->addWidget(frame);
         auto* system=panel();auto* sl=new QVBoxLayout(system);sl->setContentsMargins(20,20,20,20);
         sl->addWidget(text("System-wide memory and responsiveness","sectionTitle"));

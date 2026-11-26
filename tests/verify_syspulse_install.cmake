@@ -15,7 +15,7 @@ execute_process(COMMAND "${prefix}/bin/syspulse" --help RESULT_VARIABLE code OUT
 if(NOT code EQUAL 0 OR NOT help MATCHES "Usage:")
     message(FATAL_ERROR "Installed SysPulse help check failed")
 endif()
-foreach(path IN ITEMS share/applications/syspulse.desktop share/icons/hicolor/scalable/apps/syspulse.svg
+foreach(path IN ITEMS bin/syspulse-memory-control share/applications/syspulse.desktop share/icons/hicolor/scalable/apps/syspulse.svg
     share/doc/syspulse/LICENSE share/doc/syspulse/PRIVACY.md share/doc/syspulse/SYSPULSE_MILESTONE.md)
     if(NOT EXISTS "${prefix}/${path}")
         message(FATAL_ERROR "Missing SysPulse installed file: ${path}")

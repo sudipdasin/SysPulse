@@ -114,6 +114,10 @@ int main(int argc,char** argv) {
         require(controlTabs->tabText(controlTabs->currentIndex())=="Desktop","index locates desktop setting without launching");
         indexSearch->setText("no-such-setting-xyz");require(!locate->isEnabled(),"filter clears stale selection");
         indexSearch->clear();controlTabs->setCurrentIndex(0);
+        auto* systemBoost=window.findChild<QPushButton*>("optimizeSystemMemory");
+        auto* systemStatus=window.findChild<QLabel*>("systemMemoryStatus");
+        auto* undoCompression=window.findChild<QPushButton*>("disableSystemMemoryCompression");
+        require(systemBoost&&systemStatus&&undoCompression&&systemStatus->text().contains("System-wide zswap:"),"system-wide compression controls and detected state");
         auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
         auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
         require(optimize&&memoryStatus,"one-click process-local memory relief available");
