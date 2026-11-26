@@ -33,6 +33,9 @@ QString unavailable(const Action& tool);
 bool matches(const Action& tool, const QString& query);
 QString preview(const QStringList& command);
 using Output = std::function<void(const QByteArray&)>;
+inline const std::atomic_bool* diagnosticCancellation(const Action& tool,const std::atomic_bool* token) {
+    return (tool.changes||tool.admin)?nullptr:token;
+}
 Result runCommand(const QStringList& command, int timeoutMs=120000, Output output={}, const std::atomic_bool* cancel=nullptr);
 Result execute(const QString& id, bool confirmed=false, int timeoutMs=120000, Output output={}, const std::atomic_bool* cancel=nullptr);
 }

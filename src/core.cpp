@@ -97,7 +97,7 @@ Result execute(const QString& id, bool confirmed, int timeoutMs, Output output, 
         }
     }
     // Cancellation is deliberately unavailable to settings-changing/admin tasks.
-    auto result=runCommand(command,timeoutMs,std::move(output),(!tool.changes && !tool.admin)?cancel:nullptr);
+    auto result=runCommand(command,timeoutMs,std::move(output),diagnosticCancellation(tool,cancel));
     result.action=tool.title;
     return result;
 }

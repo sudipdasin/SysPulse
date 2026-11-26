@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "tux/core.hpp"
+#include "tux/trusted_command.hpp"
+#include <stdexcept>
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
@@ -37,8 +39,19 @@ int main(int argc,char** argv) {
     const auto oldPath=qgetenv("PATH"); const auto helper=temp.filePath("xfconf-query");
     if(!QFile::copy(self,helper)) return 9;
     qputenv("PATH",temp.path().toUtf8()); cancel.store(true);
-    const auto mutation=tux::execute("compositor-on",true,3000,{},&cancel);
+    const auto& mutation=tux::action("compositor-on");
+    if(tux::diagnosticCancellation(mutation,&cancel)!=nullptr ||
+       tux::diagnosticCancellation(tux::action("firewall-status"),&cancel)!=nullptr ||
+       tux::diagnosticCancellation(tux::action("storage"),&cancel)!=&cancel) return 10;
+    if(tux::trustedSystemExecutable("xfconf-query").isEmpty()){
+        bool refused=false;
+        try { tux::execute("compositor-on",true,3000,{},&cancel); }
+        catch(const std::runtime_error&){refused=true;}
+        if(!refused)return 11;
+    } // Never invoke an actual desktop mutation on the test host.
     qputenv("PATH",oldPath);
-    if(mutation.code!=0 || mutation.cancelled || !mutation.output.contains("fixture mutation completed")) return 10;
+    // Exercise the same cancellation admission policy using an inert subprocess.
+    const auto protectedFixture=tux::runCommand({self,"--touch",marker},3000,{},tux::diagnosticCancellation(mutation,&cancel));
+    if(protectedFixture.code!=0||protectedFixture.cancelled)return 12;
     std::cout<<"Pre-start and live cancellation, owned-child cleanup, unrelated child retention, timeout distinction, token reset and mutation gate passed\n";
 }

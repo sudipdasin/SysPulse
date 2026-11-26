@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "tux/window.hpp"
+#include "tux/trusted_command.hpp"
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
@@ -41,10 +42,15 @@ int main(int argc,char** argv) {
     if(!fixture("df","printf 'fixture diagnostic completed\\n'\n")) return 7;
     review("storage");
     if(!wait([&]{return status->text().startsWith("Completed");},3000) || !output->toPlainText().contains("fixture diagnostic completed")) return 8;
-    review("compositor-on");
-    if(!wait([&]{return output->toPlainText().contains("fixture mutation running");},3000) || stop->isEnabled()) return 9;
-    if(!QMetaObject::invokeMethod(stop,"clicked",Qt::DirectConnection,Q_ARG(bool,false))) return 11;
-    if(!wait([&]{return status->text().startsWith("Completed");},3000) || !output->toPlainText().contains("fixture mutation completed")) return 10;
+    auto* mutation=window.findChild<QPushButton*>("tool_compositor-on");
+    if(!mutation||stop->isEnabled())return 9;
+    const bool trusted=!tux::trustedSystemExecutable("xfconf-query").isEmpty();
+    if(mutation->isEnabled()!=trusted)return 10;
+    if(!trusted)mutation->click(); // Disabled: the PATH fixture must never run.
+    if(output->toPlainText().contains("fixture mutation running")||
+       window.findChild<QPushButton*>("sessionHistory")->text()!="History (2)")return 11;
+    // Actual mutation cancellation is exercised with dependency injection in syspulse-toolbox.
+    // Never invoke the real XFCE configuration tool during the legacy UI test.
     window.close(); qputenv("PATH",oldPath);
-    std::cout<<"Read-only stop, cancelled UI/history, next-task token reset and protected mutation controls passed with isolated helpers\n";
+    std::cout<<"Read-only stop, cancelled UI/history, next-task token reset and trusted mutation admission passed with isolated helpers\n";
 }

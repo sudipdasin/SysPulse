@@ -179,12 +179,24 @@ void Window::review(int index) {
     const auto tool=tux::actions()[index]; const auto problem=unavailable(tool);
     if (!problem.isEmpty()) { QMessageBox::warning(this,tool.title,problem); return; }
     auto command=tool.command;
-    if (tool.admin) {command[0]=trustedSystemExecutable(command.first());command.prepend(trustedSystemExecutable("pkexec"));}
+    if (tool.admin||tool.changes) {
+        command[0]=trustedSystemExecutable(command.first());
+        if(tool.admin)command.prepend(trustedSystemExecutable("pkexec"));
+    }
     QMessageBox dialog(QMessageBox::Question,tool.title,tool.description,QMessageBox::Ok|QMessageBox::Cancel,this);
     dialog.setTextFormat(Qt::PlainText);
     dialog.setInformativeText("Command:\n"+preview(command)+"\n\n"+(tool.changes?"This action changes your system. Continue?":"Run this diagnostic?"));
     dialog.setDefaultButton(QMessageBox::Cancel);
     if (dialog.exec()!=QMessageBox::Ok) return;
+    if(busy_)return;
+    auto current=tool.command;
+    if(tool.admin||tool.changes){
+        current[0]=trustedSystemExecutable(current.first());
+        if(tool.admin)current.prepend(trustedSystemExecutable("pkexec"));
+    }
+    if(!unavailable(tool).isEmpty()||current!=command){
+        updateButtons();QMessageBox::warning(this,"Tool changed","The reviewed capability changed. Review the command again.");return;
+    }
     cancelRequested_.store(false,std::memory_order_relaxed);
     cancellable_=!tool.changes && !tool.admin;
     busy_=true; updateButtons(); stopButton_->setEnabled(cancellable_);
