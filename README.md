@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.5 evaluation candidate.** Alpha.4 compiled successfully on Ubuntu 22.04 amd64 with 31/31 CTest suites and 56 additional checks; its DEB download service became live. Alpha.5 adds the System Care Center, prioritized live measurements and a searchable index of 37 native Control Panel settings. Its native build and target installation gates remain pending.
+**Alpha.6 evaluation candidate.** Alpha.5 passed 32/32 CTest suites and 56 additional checks and became live. Alpha.6 adds a measured maintenance comparison workspace, exact catalog action routing, and an actual DEB installation gate in a clean Ubuntu 24.04 container. Full native and installation tests pending at this checkpoint.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)
