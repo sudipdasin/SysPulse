@@ -5,3 +5,5 @@ User-reported Quick scan failure: the UI displayed the home folder but scanned p
 First alpha.17 build: Cleaner core/UI passed; core execution gate failed on the first installed hardware probe. Build withheld. Retry separates actual block inventory result from mandatory successful portable read-only probes; missing sysfs is surfaced as an unavailable capability. Hardware failure is not a successful inventory and requires real target validation. Verbose core test prints exit status only for the live probes.
 
 Second alpha.17 attempt: portable core gate passed; health-plan and health-workspace failed because a global sysfs precheck interfered with their injected read-only lsblk fixtures. The precheck was removed; the actual nonzero lsblk result remains unchanged and missing sysfs is explained after execution. Neither failed build was published. All inherited gates remain mandatory.
+
+Third attempt: all 40 native CTest suites passed, including restored health-plan and health-workspace. A malformed added shell quoting line prevented artifact packaging; corrected without changing the tests. No failed build published.
