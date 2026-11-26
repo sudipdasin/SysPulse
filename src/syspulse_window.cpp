@@ -6,6 +6,8 @@
 #include "syspulse/toolbox.hpp"
 #include "tux/core.hpp"
 #include "tux/trusted_command.hpp"
+#include "tux/async_command.hpp"
+#include <QRegularExpression>
 #include "tux/health_dialog.hpp"
 #include "tux/report_dialog.hpp"
 #include "tux/process_manager.hpp"
@@ -357,11 +359,52 @@ struct Window::Impl {
         layout->addWidget(text("The latest 20 task results stay in memory for this session. Summary is the default export; diagnostic details require a fresh opt-in. No report is sent automatically.","muted"));
         return workspace("Reports","Review analysis and tool outcomes before saving or sharing.",content);
     }
+    QWidget* applicationUpdates() {
+        auto* frame=panel();auto* layout=new QVBoxLayout(frame);
+        layout->setContentsMargins(22,20,22,20);
+        layout->addWidget(text("Application updates","sectionTitle"));
+        layout->addWidget(text(QString("Running version: %1 · Official repository: SysPulse").arg(tux::Version),"muted"));
+        auto* status=text("No update check performed. A signed SysPulse update feed has not been provisioned by this build.","muted");
+        status->setObjectName("applicationUpdateStatus");status->setTextFormat(Qt::PlainText);layout->addWidget(status);
+        auto* row=new QHBoxLayout;
+        auto* check=new QPushButton("Check for SysPulse updates");
+        check->setObjectName("checkApplicationUpdate");check->setAccessibleName("Check cached APT version of SysPulse");
+        row->addWidget(check);
+        auto* managerButton=button("Open Update Manager…",[this]{
+            const auto executable=tux::trustedSystemExecutable("mintupdate");
+            if(executable.isEmpty()){QMessageBox::information(w,"Update Manager","Linux Mint Update Manager is unavailable.");return;}
+            if(!QProcess::startDetached(executable,QStringList{}))QMessageBox::warning(w,"Update Manager","Unable to open Update Manager.");
+        },w);
+        managerButton->setObjectName("openSystemUpdateManager");managerButton->setEnabled(!tux::trustedSystemExecutable("mintupdate").isEmpty());row->addWidget(managerButton);
+        auto* releaseButton=button("Official releases…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/releases"));},w);
+        releaseButton->setObjectName("openOfficialReleases");row->addWidget(releaseButton);layout->addLayout(row);
+        QObject::connect(check,&QPushButton::clicked,frame,[frame,check,status]{
+            const auto apt=tux::trustedSystemExecutable("apt-cache");
+            const auto env=tux::trustedSystemExecutable("env");
+            if(apt.isEmpty()||env.isEmpty()){status->setText("APT version query is unavailable.");return;}
+            check->setEnabled(false);status->setText("Reading existing APT metadata locally…");
+            AsyncCommand::run(frame,env,{"LC_ALL=C",apt,"policy","syspulse"},5000,16384,[check,status](const AsyncCommandResult& result){
+                check->setEnabled(true);
+                if(!result.ok()){status->setText("APT query failed, timed out or returned incomplete output. No update status can be established.");return;}
+                const auto output=QString::fromUtf8(result.output);
+                const QRegularExpression installedRx("(?m)^  Installed: ([A-Za-z0-9.+:~()-]+)$");
+                const QRegularExpression candidateRx("(?m)^  Candidate: ([A-Za-z0-9.+:~()-]+)$");
+                const auto installed=installedRx.match(output),candidate=candidateRx.match(output);
+                if(!installed.hasMatch()||!candidate.hasMatch()){
+                    status->setText("No SysPulse version found in local APT metadata. Check the official release page; no automatic installation will be attempted.");return;
+                }
+                status->setText(QString("APT installed: %1 · Cached candidate: %2\nThis is local APT metadata, not proof of a current signed SysPulse release. Refresh and review packages in Update Manager.").arg(installed.captured(1),candidate.captured(1)));
+            });
+        });
+        layout->addWidget(text("Checking here is read-only and does not refresh repositories. Installation, trust enrollment and automatic repository checks require a configured signed release feed.","muted"));
+        return frame;
+    }
     QWidget* settingsPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);layout->setContentsMargins(0,0,0,0);
         auto* about=panel();auto* al=new QVBoxLayout(about);al->setContentsMargins(22,20,22,20);al->addWidget(text(QString("SysPulse %1").arg(tux::Version),"sectionTitle"));
         al->addWidget(text("Developed by Sudip Das · GNU GPL version 3 or later\nXFCE-first Linux system tools, built on the Tux Steward foundation.","muted"));
-        al->addWidget(text("Privacy: no telemetry, no automatic report uploads, no background self-updates. Review detailed reports before sharing.","muted"));layout->addWidget(about);
+        al->addWidget(text("Privacy: no telemetry or automatic report uploads. Review detailed reports before sharing.","muted"));layout->addWidget(about);
+        layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));layout->addWidget(preferences);
         auto* help=panel();auto* hl=new QHBoxLayout(help);hl->setContentsMargins(22,20,22,20);
         hl->addWidget(button("Report a problem…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/issues/new/choose"));},w));
