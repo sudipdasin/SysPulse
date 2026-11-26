@@ -18,3 +18,7 @@ Linux read-only reference prototypes can be invoked using Bash: `bash source-int
 GPL v3; see LICENSE. Future Pro development belongs in a separate repository and must comply with all upstream licenses. No Pro code is included here.
 
 **Install the preview:** after installing the documented build dependencies, run `bash tools/install-user` as a normal user. Native CLI options: `--diagnostics`, `--capabilities`, `--browser-summary`, `--version`.
+
+## System Control Center 0.4.0 preview
+
+A separate native Linux control center provides 13 panels, 40 catalog entries, and read-only diagnostic triage. Build and install it alongside the existing health application using [Control Center preview instructions](docs/CONTROL_CENTER_0.4.0.md). This is not an official packaged release; optional system tools must be installed separately.
