@@ -653,6 +653,15 @@ ProcessManagerWidget::ProcessManagerWidget(QWidget *parent, bool includeSystemTa
     }
 }
 
+void ProcessManagerWidget::reviewMemoryConsumers()
+{
+    search_->clear();
+    table_->sortByColumn(ProcessTableModel::Memory, Qt::DescendingOrder);
+    table_->clearSelection();
+    table_->setCurrentIndex(QModelIndex());
+    table_->scrollToTop();
+}
+
 void ProcessManagerWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
