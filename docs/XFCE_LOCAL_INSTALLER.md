@@ -1,0 +1,13 @@
+# XFCE local build installer — 3.0.0-alpha.2
+
+This installer fetches the exact established Qt integration candidate 7d7148e3a5f89a845be1ebc7276ef00f1f62a63c from the canonical repository, not the historical X11 main application. Target: Linux Mint 22.3 amd64. The target restriction is intentional; compatibility with other distributions is not claimed.
+
+Install build prerequisites via your distro package manager: sudo apt install git build-essential cmake qtbase5-dev dpkg-dev pkg-config python3 openssl file. Run as a normal user: bash tools/SysPulse-XFCE-Installer.sh (build-only) or append --install (explicit review and APT authorization). Review the pinned source before building. The build and test stages execute source code from the pinned commit; a commit hash pins content but is not a signed release. Use a disposable target VM first if possible.
+
+Build uses private temporary directories, two compiler jobs, isolated test HOME/XDG directories, offscreen CTest, additional pressure/staging tests, CPack, inherited package checks, exact DEB identity and copied checksum. A local candidate package uses version 3.0.0~alpha2+local.7d7148e. No downgrade if a newer installed version is detected. APT may replace the legacy tux-steward package; read its proposed changes and back up first. No auto dependency installation or root build. On success the local DEB, SHA256SUMS and source commit are retained in a new directory in the current working directory. No live updater or official signed release implied.
+
+## Actual evidence
+
+Bash syntax/help, root rejection, and non-Mint rejection passed. Fourteen non-root orchestration scenarios passed with mocked git/build/test/CPack/authorization calls and real dpkg-deb synthetic package metadata: successful build-only, wrong revision, fetch/configure/build/CTest/pressure/staging/CPack/package-verification failures, wrong architecture, cancelled authorization, downgrade refusal, and explicit install (mock sudo only). Retained checksums validated. Initial fixture failures revealed a restrictive package-build umask and a shell VERSION variable collision with os-release; both fixed and rerun. The synthetic package is not SysPulse, is not published, and no actual privileged install was performed.
+
+The Debian container lacks Qt development headers and direct GitHub DNS; no complete application build, real package or real XFCE installation test was possible. The script refuses to proceed when any build/test gate fails. Real native tests, actual target VM/hardware and official signed release remain pending. No hosted CI, no paid service, no private source attachments.
