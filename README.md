@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.7 evaluation candidate.** Alpha.6 passed native tests and actual Ubuntu 24.04 container installation. Alpha.7 adds explicitly reviewed system-wide zswap activation and reversal, verified kernel state, and safe eligibility checks. Native build, package validation and installed-helper checks pending; actual kernel mutation and real Mint XFCE validation require a suitable target VM.
+**Alpha.8 hardening candidate.** Alpha.7 built and passed container installation, helper rejection and deployment gates. Alpha.8 strengthens command setup and reviewed executable resolution, refreshes kernel eligibility, guards package-cache inspection with a directory descriptor, and expands asynchronous query and installation regressions. Native gates pending for this checkpoint.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)
