@@ -50,18 +50,39 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(m.digest(next((self.out / 'pool').iterdir())), self.sha)
         self.assertEqual(self.out.stat().st_mode & 0o777, 0o755)
 
-    def test_apt_accepts_signed_snapshot(self):
-        m.build(**self.kw)
+    def apt_options(self, key):
         state = Path(self.temp.name) / 'apt'
         for name in ('lists/partial', 'archives/partial', 'empty'):
             (state / name).mkdir(parents=True)
-        (state / 'status').touch()
+        (state / 'status').write_text('Package: syspulse\nStatus: install ok installed\nArchitecture: amd64\nVersion: 3.0.0~alpha1\nDescription: Synthetic installed fixture\nMaintainer: Synthetic <test@example.invalid>\n')
         source = state / 'sources.list'
-        source.write_text(f'deb [arch=amd64 signed-by={self.pub}] {self.out.as_uri()} ./\n')
+        source.write_text(f'deb [arch=amd64 signed-by={key}] {self.out.as_uri()} ./\n')
         opts = ['-o', f'Dir::Etc::sourcelist={source}', '-o', f'Dir::Etc::sourceparts={state / "empty"}', '-o', f'Dir::Etc::main=/dev/null', '-o', f'Dir::Etc::parts={state / "empty"}', '-o', f'Dir::State::lists={state / "lists"}', '-o', f'Dir::State::status={state / "status"}', '-o', f'Dir::Cache::archives={state / "archives"}', '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=', '-o', 'APT::Architecture=amd64', '-o', 'Acquire::Languages=none']
+        return opts
+
+    def test_apt_accepts_signed_snapshot(self):
+        m.build(**self.kw)
+        opts = self.apt_options(self.pub)
         subprocess.run(['apt-get', *opts, 'update'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         policy = subprocess.check_output(['apt-cache', *opts, 'policy', 'syspulse']).decode()
+        self.assertIn('Installed: 3.0.0~alpha1', policy)
         self.assertIn('Candidate: 3.0.0~alpha2', policy)
+
+    def test_apt_rejects_wrong_trust(self):
+        m.build(**self.kw)
+        wrong = Path(self.temp.name) / 'empty.gpg'
+        wrong.touch()
+        opts = self.apt_options(wrong)
+        result = subprocess.run(['apt-get', *opts, 'update'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_apt_rejects_changed_index(self):
+        m.build(**self.kw)
+        with (self.out / 'Packages').open('ab') as stream:
+            stream.write(b'\n')
+        opts = self.apt_options(self.pub)
+        result = subprocess.run(['apt-get', *opts, 'update'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_bad_digest(self):
         self.kw['expected_sha256'] = '0' * 64
