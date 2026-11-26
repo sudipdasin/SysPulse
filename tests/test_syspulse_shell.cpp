@@ -5,6 +5,8 @@
 #include "tux/core.hpp"
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QPlainTextEdit>
 #include <QAction>
 #include <QMenu>
 #include <QScrollArea>
@@ -53,6 +55,28 @@ int main(int argc,char** argv) {
         for(auto* action:help->menu()->actions())require(!action->icon().isNull(),"help commands have distinct icon glyphs");
         for(auto* tabs:window.findChildren<QTabWidget*>())for(int i=0;i<tabs->count();++i)require(!tabs->tabIcon(i).isNull(),"workspace tabs have icons");
         require(window.currentPageId()=="overview","overview is the initial destination");
+        auto* sharing=window.findChild<QPushButton*>("reviewDiagnosticSharing");require(sharing,"report consent entry present");
+        bool consentChecks=false;
+        QTimer::singleShot(0,&window,[&]{
+            auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if(!dialog)return;
+            auto* level=dialog->findChild<QComboBox*>("diagnosticShareLevel");
+            auto* consent=dialog->findChild<QCheckBox*>("diagnosticShareConsent");
+            auto* preview=dialog->findChild<QPushButton*>("diagnosticGeneratePreview");
+            auto* output=dialog->findChild<QPlainTextEdit*>("diagnosticSharePreview");
+            auto* send=dialog->findChild<QPushButton*>("diagnosticSend");
+            auto* save=dialog->findChild<QPushButton*>("diagnosticSave");
+            if(level&&consent&&preview&&output&&send&&save){
+                const bool initial=level->currentIndex()==0&&!consent->isChecked()&&output->toPlainText().isEmpty()&&!send->isEnabled();
+                level->setCurrentIndex(1);preview->click();
+                const bool generated=!output->toPlainText().isEmpty()&&!save->isEnabled()&&!send->isEnabled();
+                consent->setChecked(true);const bool reviewed=save->isEnabled()&&!send->isEnabled();
+                level->setCurrentIndex(3);const bool reset=!consent->isChecked()&&output->toPlainText().isEmpty()&&!save->isEnabled()&&!send->isEnabled();
+                consentChecks=initial&&generated&&reviewed&&reset;
+            }
+            dialog->reject();
+        });
+        sharing->click();require(consentChecks,"diagnostic sharing defaults off, needs review and invalidates changed payload; no relay configured");
         auto* back=window.findChild<QPushButton*>("navigationBack");auto* forward=window.findChild<QPushButton*>("navigationForward");
         require(back&&forward&&!back->isEnabled()&&!forward->isEnabled(),"initial history empty except overview");
         window.navigate("performance");window.navigate("storage");back->click();

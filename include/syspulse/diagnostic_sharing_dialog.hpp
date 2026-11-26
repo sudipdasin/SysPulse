@@ -25,14 +25,14 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
     auto* layout=new QVBoxLayout(&dialog);
     auto* info=new QLabel("Choose what to disclose. Sharing is optional and off by default. No raw logs, personal paths, account, device IDs, IP addresses, timestamps or hardware fingerprints are included. A network provider can still observe connection metadata. A configured relay would publish the reviewed structured report to the SysPulse repository via a service account.",&dialog);
     info->setWordWrap(true);layout->addWidget(info);
-    auto* level=new QComboBox(&dialog);level->setObjectName("diagnosticShareLevel");level->addItems({"Off — do not share","Minimum — aggregate outcome counts","Medium — counts and fixed catalog check outcomes","Maximum — medium plus allowlisted imported audit checks"});layout->addWidget(level);
+    auto* level=new QComboBox(&dialog);level->setObjectName("diagnosticShareLevel");level->addItems({"Off — do not share","Minimum — aggregate outcome counts","Medium — counts and fixed catalog check outcomes","Maximum — medium plus native launcher, Cleaner and imported audit checks"});layout->addWidget(level);
     auto* import=new QPushButton("Import local SHARE-report.json (optional)",&dialog);layout->addWidget(import);
-    auto* preview=new QPushButton("Generate exact report preview",&dialog);layout->addWidget(preview);
+    auto* preview=new QPushButton("Generate exact report preview",&dialog);preview->setObjectName("diagnosticGeneratePreview");layout->addWidget(preview);
     auto* text=new QPlainTextEdit(&dialog);text->setReadOnly(true);text->setObjectName("diagnosticSharePreview");layout->addWidget(text,1);
-    auto* status=new QLabel("No report collected or sent.",&dialog);status->setWordWrap(true);status->setTextFormat(Qt::PlainText);layout->addWidget(status);
+    auto* status=new QLabel("No report collected or sent.",&dialog);status->setObjectName("diagnosticShareStatus");status->setWordWrap(true);status->setTextFormat(Qt::PlainText);layout->addWidget(status);
     auto* consent=new QCheckBox("I reviewed this exact report and consent to sharing it with the public repository.",&dialog);consent->setObjectName("diagnosticShareConsent");layout->addWidget(consent);
     auto* save=new QPushButton("Save reviewed report locally…",&dialog);auto* send=new QPushButton("Send reviewed report to repository",&dialog);auto* close=new QPushButton("Close without sharing",&dialog);
-    save->setEnabled(false);send->setEnabled(false);layout->addWidget(save);layout->addWidget(send);layout->addWidget(close);
+    save->setObjectName("diagnosticSave");send->setObjectName("diagnosticSend");save->setEnabled(false);send->setEnabled(false);layout->addWidget(save);layout->addWidget(send);layout->addWidget(close);
     auto* manager=new QNetworkAccessManager(&dialog);const auto target=endpoint();QMap<QString,QString> imported;QString auditTarget;QByteArray body;bool inFlight=false;QNetworkReply* activeReply=nullptr;
     const auto refresh=[&]{const bool ready=!inFlight&&level->currentIndex()>0&&!body.isEmpty()&&consent->isChecked();save->setEnabled(ready);send->setEnabled(ready&&!target.isEmpty());};
     const auto clear=[&]{body.clear();text->clear();consent->setChecked(false);refresh();};
