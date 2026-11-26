@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <limits>
+#include <set>
 #include <pwd.h>
 #include <string>
 #include <sys/stat.h>
@@ -52,10 +53,10 @@ inline Category category(const fs::path& path,const fs::path& cache){
     if(ext==".mp4"||ext==".mkv"||ext==".avi"||ext==".mp3"||ext==".wav"||ext==".jpg"||ext==".png"||ext==".webm")return Media;
     return Other;
 }
-struct Entry { fs::path path; std::uint64_t bytes=0; dev_t dev=0; ino_t ino=0; uid_t uid=0; timespec mtime{},ctime{}; Category kind=Other; bool removable=false; };
+struct Entry { fs::path path; std::uint64_t bytes=0; dev_t dev=0; ino_t ino=0; uid_t uid=0; timespec mtime{},ctime{}; Category kind=Other; bool removable=false; std::uint64_t allocated=0; };
 struct Volume {std::uint64_t used=0,available=0,reserved=0;bool known=false;};
-struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;};
-struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;};
+struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;bool collectDuplicates=false;};
+struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review,duplicateInput;std::uint64_t allocated=0,logical=0;unsigned hardlinkAliases=0;bool accountingOverflow=false,duplicateInputLimited=false;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;};
 inline bool sameTime(timespec a,timespec b){return a.tv_sec==b.tv_sec&&a.tv_nsec==b.tv_nsec;}
 inline bool oldEnough(const struct stat& st,unsigned days,std::time_t now){
     return now>0&&days>=7&&days<=3650&&std::difftime(now,st.st_mtime)>=days*86400.0&&std::difftime(now,st.st_ctime)>=days*86400.0;
@@ -79,6 +80,8 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
     out.volume=volume(fd.n);
     const auto start=std::chrono::steady_clock::now();const auto now=std::time(nullptr);
     const auto stop=[&]{if(cancel.load()){out.cancelled=true;return true;}if(out.visited>=limits.entries||std::chrono::steady_clock::now()-start>=std::chrono::seconds(limits.seconds)){out.limited=true;return true;}return false;};
+    std::set<std::pair<dev_t,ino_t>> seen;
+    const auto add=[&](std::uint64_t& sum,std::uint64_t n){if(n>std::numeric_limits<std::uint64_t>::max()-sum)out.accountingOverflow=true;else sum+=n;};
     const auto visit=[&](auto&& self,int dir,const fs::path& path,unsigned depth)->void{
         if(stop())return;
         if(depth>64){++out.skipped;return;}
@@ -101,10 +104,17 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
             if(!S_ISREG(st.st_mode)||st.st_size<0)continue;
             ++out.files;const auto bytes=static_cast<std::uint64_t>(st.st_size);
             const auto kind=category(full,cache);
+            const bool unique=st.st_nlink==1||seen.emplace(st.st_dev,st.st_ino).second;
+            const auto blocks=st.st_blocks>=0&&static_cast<std::uint64_t>(st.st_blocks)<=std::numeric_limits<std::uint64_t>::max()/512?static_cast<std::uint64_t>(st.st_blocks)*512:0;
+            if(unique){add(out.allocated,blocks);add(out.logical,bytes);}else ++out.hardlinkAliases;
             if(bytes>std::numeric_limits<std::uint64_t>::max()-out.categories[kind]){out.limited=true;return;}
             out.categories[kind]+=bytes;
             if(bytes<limits.minBytes)continue;
             Entry e{full,bytes,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,kind,kind==Cache&&safeCache(st,limits.ageDays,now)};
+            e.allocated=blocks;
+            if(limits.collectDuplicates&&bytes>=1048576&&st.st_nlink==1&&st.st_uid==::getuid()){
+                if(out.duplicateInput.size()<10000)out.duplicateInput.push_back(e);else out.duplicateInputLimited=true;
+            }
             retain(out.largest,e,limits.top);
             if(e.kind==Review)retain(out.review,e,limits.top);
             if(e.removable)retain(out.candidates,std::move(e),limits.top);
