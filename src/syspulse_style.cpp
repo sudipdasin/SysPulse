@@ -94,6 +94,14 @@ QMenu::icon { left:9px; }
 QMenu::item:selected { background:#EAF1F9; color:#142336; }
 QLabel#statusFooter { background:rgba(255,255,255,218); border-top:1px solid #DCE4EE; }
 
+QScrollArea#navigationScroll { background:transparent; border:0; }
+QFrame#systemToolTile { background:rgba(255,255,255,225); border:1px solid #D5E0EB; border-radius:9px; }
+QPushButton#systemToolTileButton { background:transparent; border:1px solid transparent; text-align:left; padding:9px 8px; font-weight:600; }
+QPushButton#systemToolTileButton:hover:enabled { background:#ECF3FA; border:1px solid #C8D9EB; }
+QPushButton#systemToolTileButton:focus { border:2px solid #B51235; }
+QPushButton#systemToolTileButton:disabled { color:#657487; }
+QLabel#toolAvailability { color:#526981; font-size:11px; padding-left:9px; }
+QPushButton#navigationBack,QPushButton#navigationForward { padding:5px 7px; min-width:20px; }
 )QSS");
 }
 void applyPrecisionTheme() {

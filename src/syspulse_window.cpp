@@ -113,6 +113,11 @@ struct Window::Impl {
     QLabel* cpu=nullptr;QLabel* memory=nullptr;QLabel* disk=nullptr;QLabel* network=nullptr;
     QLabel* analysisStatus=nullptr;
     QString current="overview";
+    QStringList history;
+    int historyIndex=-1;
+    QPushButton *backButton=nullptr,*forwardButton=nullptr;
+    fluent::Backdrop* backdrop=nullptr;
+    bool historyReplay=false;
     bool sampling=true;
     explicit Impl(Window* window,bool sample):w(window),sampling(sample) {build();}
     void remember(const tux::Result& result) {
@@ -191,7 +196,7 @@ struct Window::Impl {
     void build() {
         w->setObjectName("sysPulseWindow");w->setWindowTitle(QString("SysPulse %1 · XFCE Edition").arg(tux::Version));
         w->resize(1366,768);w->setMinimumSize(1000,680);
-        auto* root=new fluent::Backdrop(w);auto* outer=new QVBoxLayout(root);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
+        auto* root=new fluent::Backdrop(w);backdrop=root;auto* outer=new QVBoxLayout(root);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
         auto* shell=new QHBoxLayout;shell->setContentsMargins(0,0,0,0);shell->setSpacing(0);
         outer->addLayout(shell,1);
         auto* sidebar=new QWidget;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(248);
@@ -214,9 +219,13 @@ struct Window::Impl {
         sl->addWidget(text("TOOLS","navGroup"));
         addNav("schedules","Schedules");addNav("recovery","Recovery");addNav("reports","Reports");addNav("experimental","Experimental");
         sl->addStretch(1);addNav("settings","Settings & help");
-        shell->addWidget(sidebar);
+        auto* navScroll=new QScrollArea;navScroll->setObjectName("navigationScroll");navScroll->setWidgetResizable(true);navScroll->setFrameShape(QFrame::NoFrame);navScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);navScroll->setFixedWidth(258);sidebar->setMinimumWidth(0);sidebar->setMaximumWidth(QWIDGETSIZE_MAX);navScroll->setWidget(sidebar);shell->addWidget(navScroll);
         auto* body=new QWidget;body->setObjectName("fluentBody");auto* bl=new QVBoxLayout(body);bl->setContentsMargins(0,0,0,0);bl->setSpacing(0);
         auto* utility=new QWidget;utility->setObjectName("utilityBar");auto* ul=new QHBoxLayout(utility);ul->setContentsMargins(24,12,24,12);
+        backButton=button("Back",[this]{stepHistory(-1);},w);backButton->setObjectName("navigationBack");backButton->setIcon(fluent::glyph("back"));backButton->setToolTip("Back · Alt+Left");backButton->setText(QString());backButton->setEnabled(false);ul->addWidget(backButton);
+        forwardButton=button("Forward",[this]{stepHistory(1);},w);forwardButton->setObjectName("navigationForward");forwardButton->setIcon(fluent::glyph("forward"));forwardButton->setToolTip("Forward · Alt+Right");forwardButton->setText(QString());forwardButton->setEnabled(false);ul->addWidget(forwardButton);
+        auto* backShortcut=new QShortcut(QKeySequence(Qt::ALT|Qt::Key_Left),w);QObject::connect(backShortcut,&QShortcut::activated,w,[this]{stepHistory(-1);});
+        auto* forwardShortcut=new QShortcut(QKeySequence(Qt::ALT|Qt::Key_Right),w);QObject::connect(forwardShortcut,&QShortcut::activated,w,[this]{stepHistory(1);});
         breadcrumb=text("Workspace / Overview");breadcrumb->setObjectName("breadcrumb");ul->addWidget(breadcrumb,1);
         search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->addAction(fluent::glyph("search"),QLineEdit::LeadingPosition);search->setMaximumWidth(420);ul->addWidget(search,1);
         auto* helpButton=new QPushButton(fluent::glyph("help"),"Help");helpButton->setIconSize(QSize(18,18));helpButton->setObjectName("helpMenuButton");
@@ -363,7 +372,10 @@ struct Window::Impl {
             b->setProperty("systemToolCommand",entry.second);
             b->setEnabled(!program.isEmpty());
             b->setToolTip(program.isEmpty()?"Unavailable: install the distribution-supported system tool separately.":"Open the installed tool after review; it manages its own authorization.");
-            grid->addWidget(b,index/2,index%2);++index;
+            auto* tile=panel("systemToolTile");auto* tl=new QVBoxLayout(tile);tl->setContentsMargins(10,8,10,8);tl->setSpacing(4);
+            b->setObjectName("systemToolTileButton");b->setIcon(fluent::glyph(fluent::tabGlyph(entry.first)));b->setIconSize(QSize(22,22));
+            tl->addWidget(b);auto* state=text(program.isEmpty()?"Not installed":"Installed · opens native utility","muted");state->setObjectName("toolAvailability");tl->addWidget(state);
+            grid->addWidget(tile,index/2,index%2);++index;
         }
         layout->addLayout(grid);layout->addStretch();return content;
     }
@@ -737,7 +749,17 @@ struct Window::Impl {
         al->addWidget(text("Developed by Sudip Das · GNU GPL version 3 or later\nXFCE-first Linux system tools, built on the Tux Steward foundation.","muted"));
         al->addWidget(text("Privacy: no telemetry or automatic report uploads. Review detailed reports before sharing.","muted"));layout->addWidget(about);
         layout->addWidget(applicationUpdates());
-        auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));layout->addWidget(preferences);
+        auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));
+        auto* artwork=new QCheckBox("Show translucent background artwork");artwork->setObjectName("appearanceArtwork");artwork->setAccessibleDescription("Disable decorative wallpaper for a simpler appearance.");
+        QSettings appearance(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+        const bool showArtwork=appearance.status()==QSettings::NoError&&appearance.value("appearance/artwork",true).toBool();
+        artwork->setChecked(showArtwork);backdrop->setArtwork(showArtwork);pl->addWidget(artwork);
+        auto* appearanceStatus=text("Appearance is a local preference; no system settings are changed.","muted");appearanceStatus->setObjectName("appearanceStatus");pl->addWidget(appearanceStatus);
+        QObject::connect(artwork,&QCheckBox::toggled,w,[this,appearanceStatus](bool enabled){
+            backdrop->setArtwork(enabled);QSettings preferences(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+            preferences.setValue("appearance/artwork",enabled);preferences.sync();
+            appearanceStatus->setText(preferences.status()==QSettings::NoError?"Appearance preference saved.":"Appearance changed for this session; preference could not be saved.");
+        });layout->addWidget(preferences);
         auto* help=panel();auto* hl=new QHBoxLayout(help);hl->setContentsMargins(22,20,22,20);
         hl->addWidget(button("Report a problem…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/issues/new/choose"));},w));
         hl->addWidget(button("Contribute…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse"));},w));
@@ -745,8 +767,17 @@ struct Window::Impl {
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
         return workspace("Settings & help","Local preferences, project information and developer feedback.",scroll);
     }
+    void stepHistory(int direction) {
+        const int next=historyIndex+direction;if(next<0||next>=history.size())return;
+        historyIndex=next;historyReplay=true;navigate(history.at(next));historyReplay=false;
+    }
     bool navigate(const QString& id) {
         if(!pages.contains(id))return false;
+        if(!historyReplay&&(historyIndex<0||history.value(historyIndex)!=id)) {
+            while(history.size()>historyIndex+1)history.removeLast();
+            history.append(id);if(history.size()>64)history.removeFirst();historyIndex=history.size()-1;
+        }
+        backButton->setEnabled(historyIndex>0);forwardButton->setEnabled(historyIndex+1<history.size());
         current=id;stack->setCurrentWidget(pages[id]);nav[id]->setChecked(true);
         const auto group=(id=="overview"||id=="performance"||id=="storage")?"Workspace":(id=="control"||id=="management"||id=="network"||id=="desktop"||id=="security")?"System":"Tools";
         breadcrumb->setText(QString(group)+" / "+nav[id]->property("displayTitle").toString());

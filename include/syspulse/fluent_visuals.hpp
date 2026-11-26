@@ -31,6 +31,8 @@ inline QIcon glyph(const QString& id) {
     else if(id=="reports"){rect(5,3,14,18);line(8,8,16,8);line(8,12,16,12);line(8,16,14,16);}
     else if(id=="experimental"){path({{9,3},{15,3}});path({{10,3},{10,9},{4,19},{5,21},{19,21},{20,19},{14,9},{14,3}});line(7,15,17,15);}
     else if(id=="settings"){circle(12,12,7);circle(12,12,2.5);line(12,2,12,5);line(12,19,12,22);line(2,12,5,12);line(19,12,22,12);line(5,5,7,7);line(17,17,19,19);line(5,19,7,17);line(17,7,19,5);}
+    else if(id=="back"){path({{14,5},{7,12},{14,19}});line(7,12,21,12);}
+    else if(id=="forward"){path({{10,5},{17,12},{10,19}});line(3,12,17,12);}
     else if(id=="search"){circle(10,10,6);line(14.5,14.5,20,20);}
     else if(id=="help"){circle(12,12,9);p.drawArc(QRectF(9,6,6,6),0,180*16);path({{15,9},{15,11},{12,13},{12,15}});circle(12,18,.45);}
     else {rect(4,4,16,16);line(8,9,16,9);line(8,14,16,14);}
@@ -50,6 +52,7 @@ inline QString tabGlyph(QString title) {
 }
 class Backdrop final : public QWidget {
     QPixmap image;
+    bool artwork=true;
 public:
     explicit Backdrop(QWidget* parent=nullptr):QWidget(parent),image(640,360) {
         setObjectName("fluentBackdrop");
@@ -61,9 +64,11 @@ public:
         QLinearGradient silk(280,160,640,360);silk.setColorAt(0,QColor(255,255,255,20));silk.setColorAt(1,QColor(155,194,232,88));p.fillPath(ribbon,silk);
         QPainterPath lower;lower.moveTo(640,150);lower.cubicTo(505,120,510,300,285,335);lower.lineTo(185,360);lower.lineTo(640,360);lower.closeSubpath();p.fillPath(lower,QColor(255,255,255,105));
     }
+    void setArtwork(bool enabled) {artwork=enabled;update();}
+    bool artworkEnabled() const {return artwork;}
 protected:
     void paintEvent(QPaintEvent*) override {
-        QPainter p(this);p.setRenderHint(QPainter::SmoothPixmapTransform);p.drawPixmap(rect(),image);
+        QPainter p(this);p.setRenderHint(QPainter::SmoothPixmapTransform);if(artwork)p.drawPixmap(rect(),image);else p.fillRect(rect(),QColor("#F4F6FA"));
     }
 };
 }

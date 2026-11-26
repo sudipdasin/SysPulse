@@ -6,6 +6,8 @@
 #include <QCheckBox>
 #include <QAction>
 #include <QMenu>
+#include <QScrollArea>
+#include "syspulse/fluent_visuals.hpp"
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QTableView>
@@ -49,6 +51,25 @@ int main(int argc,char** argv) {
         for(auto* action:help->menu()->actions())require(!action->icon().isNull(),"help commands have distinct icon glyphs");
         for(auto* tabs:window.findChildren<QTabWidget*>())for(int i=0;i<tabs->count();++i)require(!tabs->tabIcon(i).isNull(),"workspace tabs have icons");
         require(window.currentPageId()=="overview","overview is the initial destination");
+        auto* back=window.findChild<QPushButton*>("navigationBack");auto* forward=window.findChild<QPushButton*>("navigationForward");
+        require(back&&forward&&!back->isEnabled()&&!forward->isEnabled(),"initial history empty except overview");
+        window.navigate("performance");window.navigate("storage");back->click();
+        require(window.currentPageId()=="performance"&&forward->isEnabled(),"back restores previous workspace");
+        forward->click();require(window.currentPageId()=="storage"&&!forward->isEnabled(),"forward restores next workspace");
+        back->click();window.navigate("overview");require(!forward->isEnabled(),"new navigation discards forward history");
+        require(window.findChild<QScrollArea*>("navigationScroll"),"navigation scrolls on short screens");
+        auto* wallpaper=window.findChild<QCheckBox*>("appearanceArtwork");
+        auto* background=static_cast<syspulse::fluent::Backdrop*>(window.findChild<QWidget*>("fluentBackdrop"));
+        require(wallpaper&&background&&wallpaper->isChecked()&&background->artworkEnabled(),"artwork default enabled");
+        wallpaper->setChecked(false);require(!background->artworkEnabled(),"reduced artwork changes visible rendering state");
+        { QSettings setting(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");require(!setting.value("appearance/artwork",true).toBool(),"appearance preference persists"); }
+        wallpaper->setChecked(true);require(background->artworkEnabled(),"artwork can be restored");
+        int tiles=0;
+        for(auto* b:window.findChildren<QPushButton*>())if(b->property("systemToolCommand").isValid()){
+            require(!b->icon().isNull()&&b->parentWidget()->objectName()=="systemToolTile","system launcher uses a rich tile");
+            require(b->parentWidget()->findChild<QLabel*>("toolAvailability"),"tile reports actual capability status");++tiles;
+        }
+        require(tiles==63,"all existing launchers retained as tiles");
         const auto idleTimers = [&window] {
             int active = 0;
             for (const auto* timer : window.findChildren<QTimer*>()) if (timer->isActive()) ++active;
