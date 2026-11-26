@@ -40,6 +40,13 @@ int main(int argc,char** argv){
     if(scan->isEnabled()||!cancel->isEnabled()||!await(scan))return 3;
     if(!status->text().contains("Scan complete")||largest->rowCount()!=2||largest->item(0,1)->text()!="largest.iso"||largest->item(0,2)->text()!=fixture.path()||leftovers->rowCount()!=1||candidates->rowCount()!=0||remove->isEnabled())return 4;
     if(page->findChild<QWidget*>("cleanerLargestChart")->accessibleName().isEmpty()||page->findChild<QWidget*>("cleanerDiskChart")->accessibleName().isEmpty())return 5;
+    path->setText(fixture.path()+"/other");if(largest->rowCount()!=0||leftovers->rowCount()!=0||remove->isEnabled()||!status->text().contains("settings changed"))return 20;
+    path->setText(fixture.path());scan->click();if(!await(scan)||largest->rowCount()!=2)return 21;
+    minimum->setValue(1);if(largest->rowCount()!=0||!status->text().contains("settings changed"))return 22;
+    minimum->setValue(0);scan->click();if(!await(scan)||largest->rowCount()!=2)return 23;
+    mode->setCurrentIndex(0);if(largest->rowCount()!=0||remove->isEnabled())return 24;
+    mode->setCurrentIndex(3);if(path->text()!=fixture.path())return 25;
+    scan->click();if(!await(scan)||largest->rowCount()!=2)return 26;
     auto* opt=page->findChild<QCheckBox*>("cleanerDuplicateOpt");auto* dup=page->findChild<QTableWidget*>("cleanerDuplicates");auto* dupStatus=page->findChild<QLabel*>("cleanerDuplicateStatus");
     if(!opt||!dup||!dupStatus||opt->isChecked())return 13;
     std::ofstream(root/"copy1")<<std::string(1048576,'x');std::ofstream(root/"copy2")<<std::string(1048576,'x');opt->setChecked(true);scan->click();if(!await(scan)||dup->rowCount()!=2||!dupStatus->text().contains("1 byte-matched groups"))return 14;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/toolbox.hpp"
+#include "syspulse/result_state.hpp"
 #include "syspulse/fluent_visuals.hpp"
 #include <QComboBox>
 #include "tux/trusted_command.hpp"
@@ -55,13 +56,6 @@ QJsonObject reportFor(const QVector<tux::Result>& results, bool details) {
     const auto version = QCoreApplication::applicationVersion();
     report.insert("version", version.isEmpty() ? QStringLiteral("development") : version);
     return report;
-}
-
-QString resultState(const tux::Result& result) {
-    if (result.cancelled) return QStringLiteral("Cancelled");
-    if (result.code == 0) return QStringLiteral("Completed");
-    if (result.code == 124) return QStringLiteral("Timed out — inspect state");
-    return QStringLiteral("Needs attention (%1)").arg(result.code);
 }
 
 QLabel* wrappedLabel(const QString& text, const QString& objectName,
@@ -468,8 +462,12 @@ void ToolboxPage::poll() {
     pollTimer_->stop();
     if (worker_.joinable()) worker_.join();
     const auto result = std::move(*completed);
-    if (output_->toPlainText().isEmpty() && !result.output.isEmpty())
-        appendOutput(QString::fromUtf8(result.output));
+    // Final retained output is authoritative, including backend-added failure
+    // explanations that may not have been streamed. Preserve the same bound.
+    output_->clear();
+    if(result.truncated)appendOutput("[Earlier command output was truncated.]\n");
+    if(!result.output.isEmpty())appendOutput(QString::fromUtf8(result.output));
+    else appendOutput("No command output was returned. Review the exit status.");
     history_.append(result);
     if (history_.size() > HistoryLimit) history_.remove(0, history_.size() - HistoryLimit);
     historyTable_->setRowCount(history_.size());

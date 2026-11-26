@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/toolbox.hpp"
+#include "syspulse/result_state.hpp"
 #include <QComboBox>
 #include <QCheckBox>
 #include <QApplication>
@@ -230,6 +231,17 @@ int main(int argc, char** argv) {
         require(waitUntil(app, [&] { return !failed.isBusy(); }), "failed worker resolves");
         require(failed.findChild<QLabel*>("toolboxStatus")->text().startsWith("Needs attention"), "exception never appears as success");
 
+        syspulse::ToolboxPage incomplete({"Storage"},false,[](const QString&,tux::Output output,const std::atomic_bool*){
+            output("streamed only");tux::Result r;r.code=0;r.truncated=true;r.output="final retained output";return r;
+        });
+        incomplete.locateTool("storage");answerReview(QMessageBox::Ok);invokeRun(incomplete);
+        require(waitUntil(app,[&]{return !incomplete.isBusy();}),"incomplete output resolves");
+        require(incomplete.findChild<QLabel*>("toolboxStatus")->text().startsWith("Incomplete output"),"truncation never appears as complete");
+        require(incomplete.findChild<QPlainTextEdit*>("toolboxOutput")->toPlainText().contains("final retained output"),"final backend evidence shown");
+        tux::Result check;check.action=tux::action("apt-clean").title;check.code=0;
+        require(syspulse::resultState(check).contains("verify change"),"exit zero does not establish mutation success");
+        check.code=124;require(syspulse::resultState(check).startsWith("Timed out"),"timeout remains distinct");
+        check.cancelled=true;require(syspulse::resultState(check)=="Cancelled","cancellation overrides status");
         std::atomic_bool entered{false};
         syspulse::ToolboxPage cancellable({"Storage"}, false,
             [&entered](const QString&, tux::Output, const std::atomic_bool* cancel) {

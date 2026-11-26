@@ -1,0 +1,3 @@
+# Alpha.18 reliability checkpoint
+
+No feature catalog expansion. Existing Cleaner results now invalidate on scope/threshold/duplicate-option changes, invalid paths and cleanup. A late cancel cannot authorize deletion; a generation check prevents confirmation of stale scan results. Final diagnostic output includes backend failure explanations; incomplete output and unverified changes are distinguished from completed diagnostics in tool and report views. Native launcher target revalidated after review. Regression tests cover stale scope and threshold results, mode restoration, final diagnostic evidence and outcome classifications. Target runtime testing remains required.

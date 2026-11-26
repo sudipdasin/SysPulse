@@ -1,3 +1,4 @@
+#include "syspulse/result_state.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
 #include "syspulse/fluent_visuals.hpp"
@@ -125,7 +126,7 @@ struct Window::Impl {
         reports->setRowCount(results.size());
         for(int row=0;row<results.size();++row) {
             const auto& r=results[results.size()-row-1];
-            const QString outcome=r.cancelled?"Cancelled":r.code==0?"Completed":r.code==124?"Timed out":QString("Needs attention (%1)").arg(r.code);
+            const QString outcome=resultState(r);
             reports->setItem(row,0,new QTableWidgetItem(r.action));
             reports->setItem(row,1,new QTableWidgetItem(outcome));
             reports->setItem(row,2,new QTableWidgetItem(QString::number(r.seconds,'f',2)+" s"));
@@ -164,7 +165,7 @@ struct Window::Impl {
         dialog.exec();
         const auto completed=dialog.results();for(const auto& r:completed)remember(r);
         if(!completed.isEmpty()) {
-            int ok=0;for(const auto& r:completed)if(r.code==0&&!r.cancelled)++ok;
+            int ok=0;for(const auto& r:completed)if(r.code==0&&!r.cancelled&&!r.truncated)++ok;
             QString summary=QString("Analysis recorded: %1 of %2 checks completed successfully. Review the findings in Reports.").arg(ok).arg(completed.size());
             analysisStatus->setToolTip(QString());
             const auto completedCheck=[&completed](const QString& id){
@@ -372,7 +373,8 @@ struct Window::Impl {
                 const auto executable=tux::trustedSystemExecutable(entry.second);
                 if(executable.isEmpty()){QMessageBox::warning(w,entry.first,"The trusted system tool is no longer available.");return;}
                 if(QMessageBox::question(w,entry.first,"Open the installed system utility? It may change your computer. Review its own authorization and operation prompts. Back up data before disk or recovery changes.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
-                if(!QProcess::startDetached(executable,QStringList{}))QMessageBox::warning(w,entry.first,"The system utility could not be opened.");
+                if(tux::trustedSystemExecutable(entry.second)!=executable){QMessageBox::warning(w,entry.first,"The installed utility changed during review. Reopen it and review again.");return;}
+                if(!QProcess::startDetached(executable,QStringList{}))QMessageBox::warning(w,entry.first,"The system utility could not be opened. Check the installed application and desktop session.");
             },w);
             b->setProperty("systemToolCommand",entry.second);
             b->setEnabled(!program.isEmpty());
