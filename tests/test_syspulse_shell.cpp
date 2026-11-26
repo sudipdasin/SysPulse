@@ -129,6 +129,13 @@ int main(int argc,char** argv) {
         systemStatus->setText("stale fixture");
         controlTabs->setCurrentIndex(1);controlTabs->setCurrentIndex(0);
         require(systemStatus->text().contains("System-wide zswap:"),"return to performance tab refreshes kernel state");
+        auto* sample=window.findChild<QPushButton*>("measureSwapActivity");
+        auto* activity=window.findChild<QLabel*>("swapActivityStatus");
+        require(sample&&activity&&sample->isEnabled(),"system-wide swap activity available on demand");
+        sample->click();
+        if(!sample->isEnabled()){require(activity->text().contains("Measuring"),"measurement is asynchronous");events(2300);}
+        require(sample->isEnabled()&&(activity->text().contains("KiB/s")||activity->text().contains("unavailable")),"measured rate or honest unavailable state");
+        require(idleTimers()==0,"swap measurement leaves no recurring timers");
         auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
         auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
         require(optimize&&memoryStatus,"one-click process-local memory relief available");

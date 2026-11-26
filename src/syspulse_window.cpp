@@ -6,6 +6,8 @@
 #include "syspulse/care_plan.hpp"
 #include "syspulse/maintenance_preview.hpp"
 #include "syspulse/system_memory.hpp"
+#include "syspulse/swap_activity.hpp"
+#include <QElapsedTimer>
 #include <QDateTime>
 #include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
@@ -429,6 +431,24 @@ struct Window::Impl {
             kernelStatus->setText(QString("System-wide zswap: %1. %2").arg(state==S::Enabled?"Enabled":state==S::Disabled?"Disabled":"Unavailable / unknown",state==S::Enabled?"Compression is active; new swap writes can be compressed.":enableProblem.isEmpty()?"Compatible configuration detected; review and authorize to enable.":enableProblem));
         };
         refreshMemoryKernel=refreshKernel;refreshKernel();
+        auto* activity=text("Swap activity not measured. Kernel paging counters are not physical disk throughput.","muted");
+        activity->setObjectName("swapActivityStatus");activity->setTextFormat(Qt::PlainText);fl->addWidget(activity);
+        auto* sample=new QPushButton("Measure system-wide swap activity (2 seconds)");
+        sample->setObjectName("measureSwapActivity");fl->addWidget(sample);
+        QObject::connect(sample,&QPushButton::clicked,content,[content,sample,activity]{
+            using namespace syspulse::swap_activity;
+            const auto before=read();const auto page=pageSize();
+            if(!before||page<=0){activity->setText("Swap activity unavailable: kernel counters or page size could not be read.");return;}
+            QElapsedTimer clock;clock.start();sample->setEnabled(false);
+            activity->setText("Measuring system-wide swap activity…");
+            QTimer::singleShot(2000,content,[sample,activity,before,page,clock]{
+                sample->setEnabled(true);
+                const auto after=read();const double seconds=clock.elapsed()/1000.0;
+                const auto result=after?rates(*before,*after,seconds,page):std::optional<Rates>{};
+                if(!result){activity->setText("Swap activity unavailable: counters reset, interval invalid or read failed.");return;}
+                activity->setText(QString("Swap activity over %1 s: in %2 KiB/s · out %3 KiB/s. Kernel paging, not necessarily disk I/O. Zero means no observed paging in this interval.").arg(seconds,0,'f',2).arg(result->inKiB,0,'f',1).arg(result->outKiB,0,'f',1));
+            });
+        });
         auto* actions=new QHBoxLayout;
         auto* measure=button("Measure system memory",[status,describe,refreshKernel]{status->setText(describe());refreshKernel();},content);
         measure->setObjectName("measureMemory");actions->addWidget(measure);
