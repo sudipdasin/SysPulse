@@ -72,7 +72,18 @@ int main(int argc,char** argv) {
         require(reportTable->rowCount()==0,"launcher search never executes a diagnostic or records a mutation");
         require(window.navigate("control"),"Control Panel accessible");
         auto* controlTabs=window.findChild<QTabWidget*>("controlPanelTabs");
-        require(controlTabs&&controlTabs->count()==8,"all Control Panel categories present");
+        require(controlTabs&&controlTabs->count()==9,"all Control Panel categories and index present");
+        auto* index=window.findChild<QTableWidget*>("settingsIndexTable");
+        auto* indexSearch=window.findChild<QLineEdit*>("settingsIndexSearch");
+        auto* locate=window.findChild<QPushButton*>("locateIndexedSetting");
+        require(index&&indexSearch&&locate&&index->rowCount()==37,"all 37 native Control Panel settings indexed");
+        controlTabs->setCurrentIndex(8);indexSearch->setText("display resolution");
+        int matching=-1,visible=0;for(int i=0;i<index->rowCount();++i)if(!index->isRowHidden(i)){matching=i;++visible;}
+        require(visible==1&&matching>=0&&!locate->isEnabled(),"index filters and requires selection");
+        index->selectRow(matching);require(locate->isEnabled(),"locate enabled for selected setting");locate->click();
+        require(controlTabs->tabText(controlTabs->currentIndex())=="Desktop","index locates desktop setting without launching");
+        indexSearch->setText("no-such-setting-xyz");require(!locate->isEnabled(),"filter clears stale selection");
+        indexSearch->clear();controlTabs->setCurrentIndex(0);
         auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
         auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
         require(optimize&&memoryStatus,"one-click process-local memory relief available");

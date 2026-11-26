@@ -431,6 +431,53 @@ struct Window::Impl {
         sl->addWidget(button("Open memory history",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(2);},w));
         layout->addWidget(system);layout->addStretch();return content;
     }
+    QWidget* settingsIndex(QTabWidget* tabs) {
+        auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
+        auto* filter=new QLineEdit;filter->setObjectName("settingsIndexSearch");filter->setAccessibleName("Search all native settings");filter->setPlaceholderText("Search settings, category or availability");filter->setClearButtonEnabled(true);
+        layout->addWidget(filter);
+        auto* status=text("","muted");status->setObjectName("settingsIndexStatus");layout->addWidget(status);
+        auto* table=new QTableWidget(0,3);table->setObjectName("settingsIndexTable");
+        table->setHorizontalHeaderLabels({"Setting","Category","Availability"});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);table->verticalHeader()->hide();
+        table->horizontalHeader()->setSectionResizeMode(0,QHeaderView::Stretch);
+        table->horizontalHeader()->setSectionResizeMode(1,QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(2,QHeaderView::ResizeToContents);
+        QVector<QPushButton*> controls;QVector<int> categories;
+        for(int i=0;i<tabs->count();++i)for(auto* control:tabs->widget(i)->findChildren<QPushButton*>()){
+            if(!control->property("systemToolCommand").isValid())continue;
+            const int row=table->rowCount();table->insertRow(row);
+            table->setItem(row,0,new QTableWidgetItem(control->accessibleName()));
+            table->setItem(row,1,new QTableWidgetItem(tabs->tabText(i)));
+            table->setItem(row,2,new QTableWidgetItem(control->isEnabled()?"Installed":"Not installed"));
+            controls.append(control);categories.append(i);
+        }
+        layout->addWidget(table,1);
+        auto* locate=new QPushButton("Locate selected setting");locate->setObjectName("locateIndexedSetting");locate->setEnabled(false);
+        layout->addWidget(locate);layout->addWidget(text("Locating a setting never starts it. Unavailable utilities require separate installation.","muted"));
+        const auto selected=[table,locate]{locate->setEnabled(table->currentRow()>=0&&!table->selectedItems().isEmpty()&&!table->isRowHidden(table->currentRow()));};
+        QObject::connect(table,&QTableWidget::itemSelectionChanged,content,selected);
+        const auto update=[table,status,selected](const QString& query){
+            int visible=0;const auto tokens=query.simplified().split(' ',Qt::SkipEmptyParts);
+            table->clearSelection();table->setCurrentItem(nullptr);
+            for(int r=0;r<table->rowCount();++r){
+                const QString hay=table->item(r,0)->text()+" "+table->item(r,1)->text()+" "+table->item(r,2)->text();
+                bool match=true;for(const auto& token:tokens)if(!hay.contains(token,Qt::CaseInsensitive)){match=false;break;}
+                table->setRowHidden(r,!match);if(match)++visible;
+            }
+            status->setText(QString("%1 of %2 native settings · Select an entry to locate it.").arg(visible).arg(table->rowCount()));selected();
+        };
+        QObject::connect(filter,&QLineEdit::textChanged,content,update);update(QString());
+        QObject::connect(locate,&QPushButton::clicked,content,[tabs,table,controls,categories]{
+            const int row=table->currentRow();
+            if(row<0||row>=controls.size()||table->isRowHidden(row)||table->selectedItems().isEmpty())return;
+            tabs->setCurrentIndex(categories[row]);
+            auto* control=controls[row];
+            if(control->isEnabled())control->setFocus(Qt::OtherFocusReason);
+            if(auto* scroll=qobject_cast<QScrollArea*>(tabs->widget(categories[row])))scroll->ensureWidgetVisible(control);
+        });
+        return content;
+    }
     QWidget* controlPanelPage() {
         auto* tabs=new QTabWidget;tabs->setObjectName("controlPanelTabs");
         tabs->addTab(memoryOptimizerPage(),"Performance");
@@ -449,6 +496,7 @@ struct Window::Impl {
         const QVector<QPair<QString,QString>> links={{"System information and diagnostics","overview"},{"Processes and resource history","performance"},{"Startup applications and services","management"},{"Storage diagnostics and cleanup","storage"},{"Network monitoring","network"},{"Security and log diagnostics","security"},{"Scheduled tasks","schedules"},{"Recovery and undo","recovery"},{"Reviewed system changes","experimental"},{"Application updates and preferences","settings"},{"Reports","reports"}};
         for(const auto& link:links)sl->addWidget(button(link.first,[this,link]{navigate(link.second);},w));
         sl->addStretch();auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(system);tabs->addTab(scroll,"System tools");
+        tabs->addTab(settingsIndex(tabs),"All settings");
         return workspace("Control Panel","Centralized desktop, hardware, accounts, storage, software and system administration. Uninstalled tools are disabled.",tabs);
     }
     QWidget* applicationUpdates() {
