@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/cleaner_page.hpp"
 #include "syspulse/cleaner.hpp"
+#include "syspulse/duplicates.hpp"
 #include "tux/async_command.hpp"
 #include "tux/trusted_command.hpp"
 #include <QCheckBox>
@@ -92,6 +93,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* form=new QGridLayout;form->addWidget(label("Scan mode"),0,0);form->addWidget(modes,0,1,1,3);
     form->addWidget(label("Folder"),1,0);form->addWidget(root,1,1,1,2);form->addWidget(browse,1,3);
     form->addWidget(label("Minimum listed size"),2,0);form->addWidget(minimum,2,1);form->addWidget(label("Cache minimum age"),2,2);form->addWidget(age,2,3);
+    auto* duplicateOpt=new QCheckBox("Compare file contents for duplicates (at least 1 MiB; up to 256 MiB read)");duplicateOpt->setObjectName("cleanerDuplicateOpt");form->addWidget(duplicateOpt,3,0,1,4);
     layout->addLayout(form);auto* actions=new QHBoxLayout;actions->addWidget(scan);actions->addWidget(cancel);actions->addStretch();layout->addLayout(actions);
     auto* status=label("Ready · no scan performed.","cleanerStatus");layout->addWidget(status);
     auto* tabs=new QTabWidget;tabs->setObjectName("cleanerTabs");layout->addWidget(tabs,1);
@@ -131,6 +133,17 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             packageStatus->setText(QString("%1 installed packages listed · %2 invalid entries · %3 omitted by limit. Review removals in the distribution package manager.").arg(count).arg(skipped).arg(rows.size()-count));
         });
     });
+    auto* dupPage=new QWidget;auto* dl=new QVBoxLayout(dupPage);
+    auto* dupStatus=label("Duplicate comparison is optional and read-only. Enable it before scanning.","cleanerDuplicateStatus");dl->addWidget(dupStatus);
+    auto* dupTable=table({"Group","Logical size","File","Location"},"cleanerDuplicates");dl->addWidget(dupTable,1);
+    auto* dupOpen=push("Open containing folder");dl->addWidget(dupOpen);tabs->addTab(dupPage,"Duplicate files");
+    auto duplicateResult=std::make_shared<c::DuplicateResult>();
+    QObject::connect(dupOpen,&QPushButton::clicked,page,[=]{const int r=dupTable->currentRow();if(r<0||!dupTable->item(r,0))return;
+        const auto g=dupTable->item(r,0)->data(Qt::UserRole).toUInt(),i=dupTable->item(r,0)->data(Qt::UserRole+1).toUInt();
+        if(g>=duplicateResult->groups.size()||i>=duplicateResult->groups[g].files.size())return;
+        const auto raw=duplicateResult->groups[g].files[i].path.parent_path().native();const auto decoded=QFile::decodeName(raw.c_str());
+        if(QFile::encodeName(decoded)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||!QDesktopServices::openUrl(QUrl::fromLocalFile(decoded)))QMessageBox::information(page,"Open folder","The folder could not be opened.");
+    });
     const auto open=[page,current](QTableWidget* t,bool review){int i=t->currentRow();const auto& v=review?current->review:current->largest;if(i<0||i>=static_cast<int>(v.size()))return;
         const auto raw=v[i].path.parent_path().native();const auto decoded=QFile::decodeName(raw.c_str());if(QFile::encodeName(decoded)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||!QDesktopServices::openUrl(QUrl::fromLocalFile(decoded)))QMessageBox::information(page,"Open folder","The folder could not be opened.");};
     QObject::connect(openLargest,&QPushButton::clicked,page,[open,largest]{open(largest,false);});QObject::connect(openReview,&QPushButton::clicked,page,[open,leftovers]{open(leftovers,true);});
@@ -164,32 +177,44 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(path.empty()||!path.is_absolute()){status->setText("Choose an absolute folder path.");return;}
         c::Limits limits;limits.entries=mode==0?25000:mode==1?150000:300000;limits.seconds=mode==0?10:mode==1?45:60;
         if(mode==3){limits.minBytes=static_cast<std::uint64_t>(minimum->value())*1048576;limits.ageDays=age->value();}
+        limits.collectDuplicates=duplicateOpt->isChecked();
         *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(true);remove->setEnabled(false);
-        modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);
-        *current={};fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);disk->setValues({});types->setValues({});bigChart->setValues({});ownershipStatus->setText("Select a possible leftover for ownership lookup.");totals->setText("Scan running…");
+        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);
+        *current={};*duplicateResult={};dupTable->setRowCount(0);dupStatus->setText(limits.collectDuplicates?"Scanning and comparing selected file scope…":"Duplicate comparison not requested.");fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);disk->setValues({});types->setValues({});bigChart->setValues({});ownershipStatus->setText("Select a possible leftover for ownership lookup.");totals->setText("Scan running…");
         status->setText("Scanning "+pathText(path)+" · bounded, same filesystem, no symlink traversal…");
         auto result=std::make_shared<c::Result>();
-        auto* thread=QThread::create([result,path,cache,limits,token]{try{*result=c::scan(path,cache,limits,*token);}catch(const std::exception&){result->error="Scan interrupted by a filesystem or resource error.";}}); 
+        auto comparison=std::make_shared<c::DuplicateResult>();
+        auto* thread=QThread::create([result,comparison,path,cache,limits,token]{try{*result=c::scan(path,cache,limits,*token);if(limits.collectDuplicates&&!result->cancelled&&result->error.empty())*comparison=c::duplicates(result->duplicateInput,*token);}catch(const std::exception&){result->error="Scan interrupted by a filesystem or resource error.";}}); 
         QObject::connect(thread,&QThread::finished,page,[=]{
-            *busy=false;*current=std::move(*result);scan->setEnabled(true);cancel->setEnabled(false);modes->setEnabled(true);modeChanged();
+            *busy=false;*current=std::move(*result);*duplicateResult=std::move(*comparison);duplicateOpt->setEnabled(true);scan->setEnabled(true);cancel->setEnabled(false);modes->setEnabled(true);modeChanged();
             fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);
             if(current->volume.known)disk->setValues({{"Used",current->volume.used},{"Available",current->volume.available},{"Reserved/free unavailable",current->volume.reserved}});
             QVector<QPair<QString,qulonglong>> series;for(int i=0;i<c::Count;++i)series.append({categories[i],current->categories[i]});types->setValues(series);
             QVector<QPair<QString,qulonglong>> big;for(unsigned i=0;i<current->largest.size()&&i<5;++i)big.append({pathText(current->largest[i].path.filename()),current->largest[i].bytes});bigChart->setValues(big);
             status->setText(!current->error.empty()?QString::fromStdString(current->error):QString("%1 · %2 entries · %3 regular files · %4 skipped").arg(current->cancelled?"Cancelled — partial results":current->limited?"Limit reached — partial results":current->complete?"Scan complete":"Partial scan — inaccessible or excluded entries").arg(current->visited).arg(current->files).arg(current->skipped));
             totals->setText(QString("%1 largest files shown · %2 possible leftovers · %3 old cache candidates. Scan totals are logical bytes and may include hard links or sparse files.").arg(current->largest.size()).arg(current->review.size()).arg(current->candidates.size()));
-            remove->setEnabled(current->error.empty()&&!current->cancelled&&!current->candidates.empty());
+            if(!current->accountingOverflow)totals->setText(totals->text()+QString("\nUnique-inode logical size: %1 · reported allocated blocks: %2 · %3 hard-link aliases excluded. Shared extents/compression can affect actual reclaimable space.").arg(sizeText(current->logical),sizeText(current->allocated)).arg(current->hardlinkAliases));
+            else totals->setText(totals->text()+"\nUnique-inode accounting overflow; totals unavailable.");
+            if(limits.collectDuplicates){
+                int row=0;for(unsigned g=0;g<duplicateResult->groups.size();++g)for(unsigned i=0;i<duplicateResult->groups[g].files.size();++i){
+                    const auto& e=duplicateResult->groups[g].files[i];dupTable->insertRow(row);auto* id=new QTableWidgetItem(QString::number(g+1));id->setData(Qt::UserRole,g);id->setData(Qt::UserRole+1,i);dupTable->setItem(row,0,id);dupTable->setItem(row,1,new QTableWidgetItem(sizeText(e.bytes)));dupTable->setItem(row,2,new QTableWidgetItem(pathText(e.path.filename())));dupTable->setItem(row,3,new QTableWidgetItem(pathText(e.path.parent_path())));++row;
+                }
+                const bool partial=!current->complete||current->duplicateInputLimited||duplicateResult->limited||duplicateResult->cancelled||duplicateResult->unverified;
+                dupStatus->setText(QString("%1 · %2 byte-matched groups · %3 logical extra copies · %4 read · %5 comparisons · %6 unverified. Results are scan-time evidence only; never delete automatically.").arg(partial?"Partial results":"Comparison complete").arg(duplicateResult->groups.size()).arg(sizeText(duplicateResult->logicalExtra),sizeText(duplicateResult->bytesRead)).arg(duplicateResult->compared).arg(duplicateResult->unverified));
+            }
+            current->duplicateInput.clear();
+            remove->setEnabled(current->error.empty()&&!current->cancelled&&!duplicateResult->cancelled&&!current->candidates.empty());
         });QObject::connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();
     });
     QObject::connect(remove,&QPushButton::clicked,page,[=]{
-        if(*busy||current->cancelled)return;
+        if(*busy||current->cancelled||duplicateResult->cancelled)return;
         std::vector<c::Entry> selected;std::uint64_t logical=0;for(int i=0;i<candidates->rowCount();++i)if(candidates->item(i,0)->checkState()==Qt::Checked){const auto& e=current->candidates[i];if(e.bytes>std::numeric_limits<std::uint64_t>::max()-logical){QMessageBox::warning(page,"Cleanup","Selected sizes exceed the safe accounting limit.");return;}selected.push_back(e);logical+=e.bytes;}
         if(selected.empty()){QMessageBox::information(page,"Cleanup","Select the exact cache files to remove.");return;}
         if(selected.size()>100){QMessageBox::information(page,"Cleanup","Select at most 100 files per batch.");return;}
         if(QMessageBox::question(page,"Permanently remove selected cache files?",QString("Delete %1 selected cache files (%2 logical bytes)? Close affected applications first. Changed, linked or unsafe files will be refused. This is not reversible.").arg(selected.size()).arg(sizeText(logical)),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes)return;
         const auto cache=c::homeCache();unsigned removed=0,failed=0;std::uint64_t bytes=0;
         for(const auto& e:selected){if(c::removeCache(cache,e,*scannedAge)){++removed;bytes+=e.bytes;}else ++failed;}
-        remove->setEnabled(false);fill(candidates,{},true);status->setText(QString("Removed %1 files · %2 refused/failed · %3 logical bytes removed. Start a new scan to measure actual volume availability.").arg(removed).arg(failed).arg(sizeText(bytes)));totals->setText("Previous scan results are stale after cleanup; rescan before further action.");
+        remove->setEnabled(false);fill(candidates,{},true);dupTable->setRowCount(0);*duplicateResult={};dupStatus->setText("Cleanup changed the filesystem; rescan for current duplicate results.");status->setText(QString("Removed %1 files · %2 refused/failed · %3 logical bytes removed. Start a new scan to measure actual volume availability.").arg(removed).arg(failed).arg(sizeText(bytes)));totals->setText("Previous scan results are stale after cleanup; rescan before further action.");
     });
     return page;
 }
