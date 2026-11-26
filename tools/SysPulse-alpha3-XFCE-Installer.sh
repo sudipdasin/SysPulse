@@ -13,6 +13,7 @@ usage() {
       'Default: build, test and create a local DEB without installing.' \
       '--install: after successful checks, ask before running sudo apt install.' \
       'Target: Linux Mint 22.3 amd64; XFCE desktop recommended.' \
+      'Build prerequisites include desktop-file-utils (required for desktop validation).' \
       'Source candidate only; no official signed binary release.'
 }
 check_platform() {
@@ -23,8 +24,8 @@ check_platform() {
 }
 check_dependencies() {
     local cmd
-    for cmd in git cmake ctest cpack g++ dpkg dpkg-deb dpkg-query dpkg-shlibdeps python3 openssl pkg-config sha256sum file timeout mktemp; do
-        command -v "$cmd" >/dev/null || fail "Missing $cmd. Install the documented build dependencies first."
+    for cmd in git cmake ctest cpack g++ dpkg dpkg-deb dpkg-query dpkg-shlibdeps python3 openssl pkg-config sha256sum file timeout mktemp desktop-file-validate; do
+        command -v "$cmd" >/dev/null || fail "Missing $cmd. Install the documented build dependencies first (including desktop-file-utils)."
     done
     pkg-config --atleast-version=5.15 Qt5Core && pkg-config --atleast-version=5.15 Qt5Widgets && pkg-config --atleast-version=5.15 Qt5Network || fail 'Qt 5.15 development packages are required.'
 }
