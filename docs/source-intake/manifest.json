@@ -12,13 +12,13 @@
       "id": "SP-002",
       "name": "Capability detection",
       "intake": "read_only_prototype",
-      "integration": "pending"
+      "integration": "partial_native_preview"
     },
     {
       "id": "SP-003",
       "name": "Browser process summary",
       "intake": "read_only_prototype",
-      "integration": "pending"
+      "integration": "partial_native_preview"
     },
     {
       "id": "SP-004",

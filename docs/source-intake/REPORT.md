@@ -20,3 +20,6 @@ Batch intake-001 — Linux references. Three standalone read-only Bash prototype
 Privacy: clean-room prototypes, no private identifiers or original logs. Machine-specific notes inform designs only. Known-identifier scanning is limited, not guaranteed anonymization. Testing: smoke checks on staging prototypes cover syntax and synthetic privacy omission; native SP-001 preview built and local CTest passed; physical desktop/hardware and remaining C++ integration not yet tested. No claims of Windows testing. Hourly scheduling remains blocked pending available task capacity. Keep this report current alongside manifest and queue; record real test/commit evidence on each batch. See implementation queue for acceptance criteria.
 
 Native milestone: [0.1.0 preview](../PREVIEW_0.1.0.md), [implementation status](IMPLEMENTATION_STATUS.md). Signed-update fixture tests passed; no actual published release or enrolled key. Existing intake IDs preserved.
+
+### Native milestone 0.3.0
+SP-002 and SP-003 have native read-only GUI and CLI previews; SP-001 remains partial. Seven combined CTest suites passed, Xvfb startup and isolated non-root installation verified. Real Mint/XFCE interaction and live signed-release delivery remain pending.

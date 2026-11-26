@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Build, test and install the source preview for the current user only.
+set -euo pipefail
+umask 022
+fail(){ printf '%s\n' "$*" >&2; exit 1; }
+[[ $# == 0 ]] || fail 'Usage: bash tools/install-user'
+[[ $EUID != 0 ]] || fail 'Run as a normal user, not root.'
+[[ ${HOME:-} == /* && -d $HOME && -O $HOME ]] || fail 'Invalid user home.'
+[[ -z ${DESTDIR:-} ]] || fail 'Unset DESTDIR before installing.'
+for cmd in cmake ctest mktemp install stat mv flock; do command -v "$cmd" >/dev/null || fail "Missing dependency: $cmd"; done
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+secure_dir(){
+    local path=$1
+    if [[ ! -e $path && ! -L $path ]]; then mkdir -- "$path"; fi
+    [[ -d $path && ! -L $path && -O $path ]] || fail 'Unsafe user installation directory.'
+    [[ $(stat -c %a "$path") =~ ^(700|750|755)$ ]] || fail 'Unsafe user installation permissions.'
+}
+secure_target(){
+    local path=$1
+    if [[ -e $path || -L $path ]]; then
+        [[ -f $path && ! -L $path && -O $path ]] || fail 'Unsafe existing installation file.'
+    fi
+}
+work=$(mktemp -d); trap 'rm -rf -- "$work"' EXIT
+cmake -S "$root" -B "$work/build" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$work/build" -j2
+ctest --test-dir "$work/build" --output-on-failure
+secure_dir "$HOME/.local"; secure_dir "$HOME/.local/bin"
+secure_target "$HOME/.local/bin/syspulse"; secure_target "$HOME/.local/bin/syspulse-update"
+exec 9<"$HOME/.local/bin"; flock -n 9 || fail 'Another installation or update is running.'
+cmake --install "$work/build" --prefix "$HOME/.local"
+"$HOME/.local/bin/syspulse" --version
+# Only construct a desktop Exec string for paths with no desktop field codes or escapes.
+if [[ $HOME =~ ^[a-zA-Z0-9_./\ -]+$ && -z ${XDG_DATA_HOME:-} ]]; then
+    secure_dir "$HOME/.local/share"; secure_dir "$HOME/.local/share/applications"
+    desktop="$HOME/.local/share/applications/org.syspulse.Community.desktop"
+    secure_target "$desktop"
+    printf '[Desktop Entry]\nType=Application\nName=SysPulse Community\nComment=Read-only system diagnostics\nExec="%s/.local/bin/syspulse"\nTerminal=false\nCategories=System;Monitor;\n' "$HOME" > "$work/launcher"
+    staged=$(mktemp "$HOME/.local/share/applications/.syspulse-launcher.XXXXXXXX")
+    install -m 644 "$work/launcher" "$staged"
+    mv -T -- "$staged" "$desktop"
+else
+    printf 'Desktop launcher skipped: custom data directory or unsupported home path.\n'
+fi
+printf 'Installed. Start with: %s/.local/bin/syspulse\n' "$HOME"
