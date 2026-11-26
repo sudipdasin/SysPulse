@@ -73,7 +73,7 @@ const QStringList categories={"User cache","Possible leftovers — review","Arch
 void fill(QTableWidget* t,const std::vector<c::Entry>& items,bool checks){
     t->setRowCount(0);t->setRowCount(static_cast<int>(items.size()));
     for(int i=0;i<t->rowCount();++i){const auto& e=items[i];int col=0;
-        if(checks){auto* item=new QTableWidgetItem;item->setFlags(Qt::ItemIsEnabled|Qt::ItemIsSelectable|Qt::ItemIsUserCheckable);item->setCheckState(Qt::Unchecked);t->setItem(i,col++,item);}
+        if(checks){auto* item=new QTableWidgetItem;item->setFlags(Qt::ItemIsEnabled|Qt::ItemIsSelectable|Qt::ItemIsUserCheckable);item->setCheckState(Qt::Unchecked);const auto raw=e.path.native();const auto display=QFile::decodeName(raw.c_str());if(QFile::encodeName(display)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||display.contains('\n')||display.contains('\r')||display.contains('\t')){item->setFlags(Qt::ItemIsSelectable);item->setToolTip("Filename cannot be represented safely for cleanup review.");}t->setItem(i,col++,item);}
         t->setItem(i,col++,new QTableWidgetItem(sizeText(e.bytes)));
         t->setItem(i,col++,new QTableWidgetItem(pathText(e.path.filename())));
         auto* location=new QTableWidgetItem(pathText(e.path.parent_path()));location->setToolTip(pathText(e.path));t->setItem(i,col,location);
@@ -117,7 +117,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* inventory=push("Load installed packages","cleanerPackageScan");auto* orphan=push("Preview unused dependencies");auto* manager=push("Open package manager");
     auto* pr=new QHBoxLayout;pr->addWidget(inventory);pr->addWidget(orphan);pr->addWidget(manager);pl->addLayout(pr);tabs->addTab(packagesPage,"Applications & packages");
     QObject::connect(orphan,&QPushButton::clicked,page,[route]{route("apt-preview");});
-    QObject::connect(manager,&QPushButton::clicked,page,[page]{const auto app=tux::trustedSystemExecutable("synaptic");if(app.isEmpty()||!QProcess::startDetached(app,{}))QMessageBox::information(page,"Package manager","Synaptic is unavailable. Use your distribution's installed software manager.");});
+    QObject::connect(manager,&QPushButton::clicked,page,[page]{const auto app=tux::trustedSystemExecutable("synaptic");if(app.isEmpty()||!QProcess::startDetached(app,QStringList{}))QMessageBox::information(page,"Package manager","Synaptic is unavailable. Use your distribution's installed software manager.");});
     QObject::connect(packageFilter,&QLineEdit::textChanged,page,[packages](const QString& q){for(int i=0;i<packages->rowCount();++i)packages->setRowHidden(i,!packages->item(i,1)->text().contains(q,Qt::CaseInsensitive));});
     QObject::connect(inventory,&QPushButton::clicked,page,[page,inventory,packages,packageStatus,packageFilter]{
         const auto dpkg=tux::trustedSystemExecutable("dpkg-query");if(dpkg.isEmpty()){packageStatus->setText("dpkg-query unavailable.");return;}

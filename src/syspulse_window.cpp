@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/cleaner_page.hpp"
 #include "syspulse/health_probe.hpp"
 #include "syspulse/memory_relief.hpp"
 #include "syspulse/memory_plan.hpp"
@@ -242,6 +243,7 @@ struct Window::Impl {
         auto* storage=toolbox({"Storage","Maintenance"});toolboxes.insert("storage",storage);
         auto* storageTabs=new QTabWidget;storageTabs->setObjectName("storageWorkspaceTabs");storageTabs->addTab(storage,"Diagnostics & cleanup");
         storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
+        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");
         pages.insert("storage",workspace("Storage & cleanup","Inspect storage and review maintenance commands. Native changes remain in Experimental.",storageTabs));
         pages.insert("management",management);
         pages.insert("control",controlPanelPage());
@@ -309,6 +311,7 @@ struct Window::Impl {
         grid->addWidget(button("Optimize memory…",[this]{openMemoryOptimizer();},w),2,1);
         auto* care=button("System Care Center",[this]{openControlTab("systemCarePage");},w,true);care->setObjectName("openSystemCare");grid->addWidget(care,3,0,1,2);
         auto* maintenance=button("Maintenance & boost",[this]{openControlTab("maintenanceCenterPage");},w);maintenance->setObjectName("openMaintenanceCenter");grid->addWidget(maintenance,4,0,1,2);
+        auto* cleaner=button("Cleaner · reclaim disk space",[this]{navigate("storage");if(auto* tabs=pages.value("storage")->findChild<QTabWidget*>("storageWorkspaceTabs"))tabs->setCurrentIndex(2);},w,true);cleaner->setObjectName("openCleaner");grid->addWidget(cleaner,5,0,1,2);
         ql->addLayout(grid);ql->addWidget(text(QString("%1 reviewed tools · Local reports · Explicit system changes").arg(tux::actions().size()),"muted"));ql->addStretch();lower->addWidget(quick,1);layout->addLayout(lower,1);
         layout->addWidget(text("No maintenance actions run when SysPulse starts.","muted"));
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
