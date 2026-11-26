@@ -49,6 +49,15 @@ int main(int argc,char** argv) {
         auto* search=window.findChild<QLineEdit*>("globalToolSearch");
         require(search,"global tool search is accessible");search->setText("Package health");QMetaObject::invokeMethod(search,"returnPressed");events(30);
         require(window.currentPageId()=="storage","global tool search routes a real catalog tool");
+        auto* storageTabs=window.findChild<QTabWidget*>("storageWorkspaceTabs");
+        auto* securityTabs=window.findChild<QTabWidget*>("securityWorkspaceTabs");
+        require(storageTabs&&storageTabs->count()==2&&storageTabs->tabText(1)=="Disk tools","storage tools extend the existing workspace");
+        require(securityTabs&&securityTabs->count()==2,"security tools extend the existing workspace");
+        storageTabs->setCurrentIndex(1);search->setText("Package health");QMetaObject::invokeMethod(search,"returnPressed");
+        require(storageTabs->currentIndex()==0,"existing search restores the diagnostic tab");
+        int integrationCount=0;
+        for(auto* b:window.findChildren<QPushButton*>())if(b->property("systemToolCommand").isValid())++integrationCount;
+        require(integrationCount==26,"all optional tool integrations are present");
         search->setText("Experimental");QMetaObject::invokeMethod(search,"returnPressed");
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");

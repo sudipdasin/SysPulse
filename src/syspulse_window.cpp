@@ -4,6 +4,7 @@
 #include "syspulse/management.hpp"
 #include "syspulse/toolbox.hpp"
 #include "tux/core.hpp"
+#include "tux/trusted_command.hpp"
 #include "tux/health_dialog.hpp"
 #include "tux/report_dialog.hpp"
 #include "tux/process_manager.hpp"
@@ -185,12 +186,16 @@ struct Window::Impl {
         pages.insert("overview",overview());
         pages.insert("performance",performance);
         auto* storage=toolbox({"Storage","Maintenance"});toolboxes.insert("storage",storage);
-        pages.insert("storage",workspace("Storage & cleanup","Inspect storage and review maintenance commands. Changes remain in Experimental.",storage));
+        auto* storageTabs=new QTabWidget;storageTabs->setObjectName("storageWorkspaceTabs");storageTabs->addTab(storage,"Diagnostics & cleanup");
+        storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
+        pages.insert("storage",workspace("Storage & cleanup","Inspect storage and review maintenance commands. Native changes remain in Experimental.",storageTabs));
         pages.insert("management",management);
         pages.insert("network",networkPage());
         pages.insert("desktop",desktopPage());
         auto* security=toolbox({"Diagnostics","Security"});toolboxes.insert("security",security);
-        pages.insert("security",workspace("Security & privacy","Review system warnings, update state, permissions and available firewall tools. Reports stay local.",security));
+        auto* securityTabs=new QTabWidget;securityTabs->setObjectName("securityWorkspaceTabs");securityTabs->addTab(security,"Diagnostics");
+        securityTabs->addTab(installedTools("Open distribution-supported software and security tools; they manage their own authorization.",{{"Update manager","mintupdate"},{"Software manager","mintinstall"},{"Package manager","synaptic"},{"Software sources","mintsources"},{"Firewall","gufw"},{"System logs","gnome-logs"}}),"Software & security tools");
+        pages.insert("security",workspace("Security & privacy","Review system warnings, update state, permissions and available firewall tools. Reports stay local.",securityTabs));
         auto* schedules=toolbox({"Schedules"});toolboxes.insert("schedules",schedules);
         pages.insert("schedules",workspace("Schedules","Inspect system and user timers. SysPulse does not enable automation at startup.",schedules));
         pages.insert("recovery",recoveryPage());
@@ -264,7 +269,27 @@ struct Window::Impl {
         QObject::connect(reveal,&QCheckBox::toggled,w,[refresh]{refresh();});refresh();tabs->addTab(connections,"Connections");
         auto* diagnostics=toolbox({"Network"});toolboxes.insert("network",diagnostics);tabs->addTab(diagnostics,"Diagnostics");
         auto* throughput=new QWidget;auto* tl=new QVBoxLayout(throughput);tl->addWidget(text("Receive/transmit histories and interface selectors are available in Performance.","muted"));tl->addWidget(button("Open network throughput",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(4);},w,true));tl->addStretch();tabs->addTab(throughput,"Throughput");
+        tabs->addTab(installedTools("Network configuration tools may interrupt connectivity. Review changes in their native windows.",{{"Network connections","nm-connection-editor"},{"Firewall","gufw"},{"Bluetooth","blueman-manager"}}),"Network tools");
         return workspace("Network","Inspect connection state, run reviewed diagnostics, and follow resource history.",tabs);
+    }
+    QWidget* installedTools(const QString& description,const QVector<QPair<QString,QString>>& entries) {
+        auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
+        layout->addWidget(text(description,"muted"));
+        auto* grid=new QGridLayout;grid->setSpacing(12);int index=0;
+        for(const auto& entry:entries) {
+            const auto program=tux::trustedSystemExecutable(entry.second);
+            auto* b=button(entry.first,[this,entry]{
+                const auto executable=tux::trustedSystemExecutable(entry.second);
+                if(executable.isEmpty()){QMessageBox::warning(w,entry.first,"The trusted system tool is no longer available.");return;}
+                if(QMessageBox::question(w,entry.first,"Open the installed system utility? It may change your computer. Review its own authorization and operation prompts. Back up data before disk or recovery changes.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+                if(!QProcess::startDetached(executable,QStringList{}))QMessageBox::warning(w,entry.first,"The system utility could not be opened.");
+            },w);
+            b->setProperty("systemToolCommand",entry.second);
+            b->setEnabled(!program.isEmpty());
+            b->setToolTip(program.isEmpty()?"Unavailable: install the distribution-supported system tool separately.":"Open the installed tool after review; it manages its own authorization.");
+            grid->addWidget(b,index/2,index%2);++index;
+        }
+        layout->addLayout(grid);layout->addStretch();return content;
     }
     QWidget* desktopPage() {
         auto* tabs=new QTabWidget;auto* settings=new QWidget;auto* layout=new QVBoxLayout(settings);
@@ -281,12 +306,14 @@ struct Window::Impl {
         }
         layout->addLayout(grid);layout->addStretch();tabs->addTab(settings,"Desktop settings");
         auto* diagnostic=toolbox({"Performance","Input","Gaming","Desktop"});toolboxes.insert("desktop",diagnostic);tabs->addTab(diagnostic,"Diagnostics & integrations");
+        tabs->addTab(installedTools("Administration tools are optional and run separately using their own authorization.",{{"Settings manager","xfce4-settings-manager"},{"Desktop preferences","xfdesktop-settings"},{"Driver manager","driver-manager"},{"Users and groups","users-admin"},{"Mint users","mintusers"},{"Login window","lightdm-settings"},{"Printers","system-config-printer"},{"Hardware information","hardinfo"},{"Password and keys","seahorse"}}),"Administration tools");
         return workspace("XFCE desktop","Desktop, input, power and installed Linux integrations.",tabs);
     }
     QWidget* recoveryPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);auto* frame=panel();auto* fl=new QVBoxLayout(frame);fl->setContentsMargins(20,20,20,20);
         fl->addWidget(text("Startup overrides","sectionTitle"));fl->addWidget(text("Review the selected application in Startup apps to restore its system default or inspect an available undo record. Recovery refuses externally changed targets.","muted"));fl->addWidget(button("Review startup recovery",[this]{navigate("management");management->showStartup();},w,true));layout->addWidget(frame);
-        auto* limits=panel();auto* ll=new QVBoxLayout(limits);ll->setContentsMargins(20,20,20,20);ll->addWidget(text("Recovery availability","sectionTitle"));ll->addWidget(text("Cleanup and process termination cannot be undone here. Snapshot creation and general configuration rollback are planned; no backup is created automatically.","muted"));layout->addWidget(limits);layout->addStretch();
+        auto* limits=panel();auto* ll=new QVBoxLayout(limits);ll->setContentsMargins(20,20,20,20);ll->addWidget(text("Recovery availability","sectionTitle"));ll->addWidget(text("Cleanup and process termination cannot be undone here. Snapshot creation and general configuration rollback are planned; no backup is created automatically.","muted"));layout->addWidget(limits);
+        layout->addWidget(installedTools("Recover files to a different disk. Timeshift system snapshots are not personal-file backups.",{{"Timeshift","timeshift-gtk"},{"File recovery","qphotorec"},{"Personal file backups","deja-dup"}}),1);layout->addStretch();
         return workspace("Recovery","Use recovery only where a supported saved state exists.",content);
     }
     QWidget* reportsPage() {
@@ -323,6 +350,7 @@ struct Window::Impl {
             const auto id=destination(a);navigate(id);toolboxes[id]->setSearch(trimmed);
             if(id=="network")pages[id]->findChild<QTabWidget*>("networkWorkspaceTabs")->setCurrentIndex(1);
             if(id=="desktop") {auto* tabs=toolboxes[id]->parentWidget();while(tabs&&!qobject_cast<QTabWidget*>(tabs))tabs=tabs->parentWidget();if(auto* t=qobject_cast<QTabWidget*>(tabs))t->setCurrentIndex(1);}
+            if(id=="storage"||id=="security"){auto* tabs=pages[id]->findChild<QTabWidget*>(id=="storage"?"storageWorkspaceTabs":"securityWorkspaceTabs");if(tabs)tabs->setCurrentIndex(0);}
             return;
         }
         search->setToolTip("No matching tool. Try a shorter name or choose a suggestion.");
