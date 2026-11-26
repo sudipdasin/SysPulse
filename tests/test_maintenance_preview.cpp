@@ -24,5 +24,11 @@ int main(){
     if(archives(dir/"missing").complete)return 12;
     fs::create_directory_symlink(dir,cleanup.p/"alias");if(archives(cleanup.p/"alias").complete)return 13;
     if(!fs::exists(dir/"a.deb"))return 14;
-    std::cout<<"14 maintenance preview checks passed\n";
+    if(!archives(dir,4).complete||archives(dir,3).complete)return 15;
+    if(archives(dir,0).complete)return 16;
+    if(::mkfifo((dir/"pipe.deb").c_str(),0600)!=0)return 17;
+    auto withPipe=archives(dir);if(!withPipe.complete||withPipe.files!=1||withPipe.bytes!=4)return 18;
+    fs::create_symlink(dir/"missing",dir/"broken.deb");
+    auto withBroken=archives(dir);if(!withBroken.complete||withBroken.files!=1||withBroken.bytes!=4)return 19;
+    std::cout<<"19 maintenance preview checks passed\n";
 }
