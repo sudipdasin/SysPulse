@@ -35,3 +35,6 @@ No intake IDs promoted. Alpha.17 verified live: 40 CTest suites passed; five por
 
 ### Alpha.19 reliability checkpoint
 Alpha.18 Render deployment confirmed live, full native tests and install/runtime gate completed per deployment; public endpoint timed out on recheck. Alpha.19 addresses existing dependency remediation and stale settings index; adds disposable virtual X11 functional gates. No new intake IDs promoted. Source 673ba79f26df3ebf28dc22539cc2359582d96d5f. Native and lifecycle tests pending.
+
+### Alpha.20 diagnostic consent source checkpoint
+Owner requested opt-in diagnostic feedback. Implements fixed schema, consent dialog, local audit import and analysis, safe export, disabled-by-default HTTPS transport. No personal reports committed. Relay and native validation pending. No intake completion claimed.

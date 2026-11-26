@@ -1,4 +1,5 @@
 #include "syspulse/result_state.hpp"
+#include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
@@ -419,7 +420,7 @@ struct Window::Impl {
     QWidget* reportsPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);layout->setContentsMargins(0,0,0,0);
         auto* row=new QHBoxLayout;reportStatus=text("No completed tasks in this session.","muted");reportStatus->setObjectName("reportsStatus");row->addWidget(reportStatus,1);
-        auto* exportButton=button("Review export…",[this]{exportReports();},w,true);exportButton->setObjectName("reviewReports");row->addWidget(exportButton);layout->addLayout(row);
+        auto* exportButton=button("Review export…",[this]{exportReports();},w,true);exportButton->setObjectName("reviewReports");row->addWidget(exportButton);auto* share=button("Review diagnostic sharing…",[this]{diagnostic::reviewSharing(w,results);},w);share->setObjectName("reviewDiagnosticSharing");row->addWidget(share);layout->addLayout(row);
         reports=new QTableWidget(0,4);reports->setObjectName("sessionReports");reports->setHorizontalHeaderLabels({"Task","Outcome","Duration","Record"});reports->verticalHeader()->hide();reports->horizontalHeader()->setSectionResizeMode(0,QHeaderView::Stretch);reports->horizontalHeader()->setSectionResizeMode(3,QHeaderView::Stretch);reports->setColumnWidth(1,170);reports->setEditTriggers(QAbstractItemView::NoEditTriggers);reports->setSelectionBehavior(QAbstractItemView::SelectRows);layout->addWidget(reports,1);
         layout->addWidget(text("The latest 20 task results stay in memory for this session. Summary is the default export; diagnostic details require a fresh opt-in. No report is sent automatically.","muted"));
         return workspace("Reports","Review analysis and tool outcomes before saving or sharing.",content);
@@ -762,7 +763,7 @@ struct Window::Impl {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);layout->setContentsMargins(0,0,0,0);
         auto* about=panel();auto* al=new QVBoxLayout(about);al->setContentsMargins(22,20,22,20);al->addWidget(text(QString("SysPulse %1").arg(tux::Version),"sectionTitle"));
         al->addWidget(text("Developed by Sudip Das · GNU GPL version 3 or later\nXFCE-first Linux system tools, built on the Tux Steward foundation.","muted"));
-        al->addWidget(text("Privacy: no telemetry or automatic report uploads. Review detailed reports before sharing.","muted"));layout->addWidget(about);
+        al->addWidget(text("Privacy: no automatic telemetry. Optional diagnostic sharing is off by default; each report requires preview and fresh consent.","muted"));al->addWidget(button("Review diagnostic sharing…",[this]{diagnostic::reviewSharing(w,results);},w));layout->addWidget(about);
         layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));
         auto* artwork=new QCheckBox("Show translucent background artwork");artwork->setObjectName("appearanceArtwork");artwork->setAccessibleDescription("Disable decorative wallpaper for a simpler appearance.");
