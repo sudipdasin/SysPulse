@@ -1,3 +1,4 @@
+#include "syspulse/fluent_visuals.hpp"
 #include "tux/core.hpp"
 #include "tux/cli.hpp"
 #include "tux/process_manager.hpp"
@@ -17,6 +18,7 @@ int main(int argc, char *argv[])
     const int information=tux::handleInformationOptions(argc,argv,"Tux Task Manager");
     if (information>=0) return information;
     QApplication application(argc, argv);
+    syspulse::fluent::installVisualFilter();
     application.setApplicationName("Tux Task Manager");
     application.setApplicationVersion(tux::Version);
     application.setOrganizationName("Tux Steward");

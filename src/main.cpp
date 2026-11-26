@@ -1,3 +1,4 @@
+#include "syspulse/fluent_visuals.hpp"
 #include "tux/window.hpp"
 #include "tux/cli.hpp"
 #include <QApplication>
@@ -11,6 +12,7 @@ int main(int argc,char** argv) {
         return 1;
     }
     QApplication app(argc,argv);
+    syspulse::fluent::installVisualFilter();
     app.setApplicationName("Tux Steward"); app.setApplicationVersion(tux::Version); app.setOrganizationName("Tux Steward");
     tux::Window window; window.show(); return app.exec();
 }
