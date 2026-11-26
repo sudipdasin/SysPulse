@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <ctime>
+#include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <filesystem>
@@ -22,11 +23,11 @@ namespace syspulse::cleaner {
 namespace fs=std::filesystem;
 struct Fd { int n=-1; explicit Fd(int v=-1):n(v){} ~Fd(){if(n>=0)::close(n);} Fd(const Fd&)=delete; Fd& operator=(const Fd&)=delete; };
 inline int openDir(const fs::path& p){
-    if(!p.is_absolute())return -1;
+    if(!p.is_absolute()){errno=EINVAL;return -1;}
     Fd fd(::open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));if(fd.n<0)return -1;
     for(const auto& part:p.relative_path()){
         if(part.empty()||part==".")continue;
-        if(part=="..")return -1;
+        if(part==".."){errno=EINVAL;return -1;}
         int next=::openat(fd.n,part.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         if(next<0)return -1;
         ::close(fd.n);fd.n=next;
@@ -55,8 +56,8 @@ inline Category category(const fs::path& path,const fs::path& cache){
 }
 struct Entry { fs::path path; std::uint64_t bytes=0; dev_t dev=0; ino_t ino=0; uid_t uid=0; timespec mtime{},ctime{}; Category kind=Other; bool removable=false; std::uint64_t allocated=0; };
 struct Volume {std::uint64_t used=0,available=0,reserved=0;bool known=false;};
-struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;bool collectDuplicates=false;};
-struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review,duplicateInput;std::uint64_t allocated=0,logical=0;unsigned hardlinkAliases=0;bool accountingOverflow=false,duplicateInputLimited=false;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;};
+struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;bool collectDuplicates=false,allowRemoval=true;};
+struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review,duplicateInput;std::uint64_t allocated=0,logical=0;unsigned hardlinkAliases=0;bool accountingOverflow=false,duplicateInputLimited=false;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;fs::path resolvedRoot;bool redirected=false,missingCache=false,readOnly=false;};
 inline bool sameTime(timespec a,timespec b){return a.tv_sec==b.tv_sec&&a.tv_nsec==b.tv_nsec;}
 inline bool oldEnough(const struct stat& st,unsigned days,std::time_t now){
     return now>0&&days>=7&&days<=3650&&std::difftime(now,st.st_mtime)>=days*86400.0&&std::difftime(now,st.st_ctime)>=days*86400.0;
@@ -75,7 +76,7 @@ inline Volume volume(int fd){
     return {(v.f_blocks-v.f_bfree)*v.f_frsize,v.f_bavail*v.f_frsize,(v.f_bfree-v.f_bavail)*v.f_frsize,true};
 }
 inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limits,const std::atomic_bool& cancel){
-    Result out;Fd fd(openDir(root));if(fd.n<0){out.error="Cannot open scan directory (missing, inaccessible or symbolic link).";return out;}
+    Result out;out.resolvedRoot=root;Fd fd(openDir(root));if(fd.n<0){const int reason=errno;out.error="Cannot open scan directory: "+std::string(std::strerror(reason))+". Choose an accessible folder.";return out;}
     struct stat rootStat{};if(::fstat(fd.n,&rootStat)){out.error="Cannot inspect scan directory.";return out;}
     out.volume=volume(fd.n);
     const auto start=std::chrono::steady_clock::now();const auto now=std::time(nullptr);
@@ -110,7 +111,7 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
             if(bytes>std::numeric_limits<std::uint64_t>::max()-out.categories[kind]){out.limited=true;return;}
             out.categories[kind]+=bytes;
             if(bytes<limits.minBytes)continue;
-            Entry e{full,bytes,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,kind,kind==Cache&&safeCache(st,limits.ageDays,now)};
+            Entry e{full,bytes,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,kind,limits.allowRemoval&&kind==Cache&&safeCache(st,limits.ageDays,now)};
             e.allocated=blocks;
             if(limits.collectDuplicates&&bytes>=1048576&&st.st_nlink==1&&st.st_uid==::getuid()){
                 if(out.duplicateInput.size()<10000)out.duplicateInput.push_back(e);else out.duplicateInputLimited=true;
@@ -124,6 +125,29 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
     const auto descending=[](const Entry& a,const Entry& b){return a.bytes>b.bytes;};
     std::sort(out.largest.begin(),out.largest.end(),descending);std::sort(out.candidates.begin(),out.candidates.end(),descending);std::sort(out.review.begin(),out.review.end(),descending);
     out.complete=!out.cancelled&&!out.limited&&!out.skipped;return out;
+}
+// Resolve the explicitly requested scan root once. Traversal and deletion still use
+// no-follow descriptor walks. A redirected root or nonstandard cache is inspection-only.
+inline Result scanRequested(const fs::path& requested,const fs::path& cache,const fs::path& cleanupCache,Limits limits,const std::atomic_bool& cancel,bool quick){
+    Result out;
+    if(cancel.load()){out.cancelled=true;return out;}
+    if(!requested.is_absolute()){out.error="Choose an absolute folder path.";return out;}
+    std::error_code ec;const auto resolved=fs::canonical(requested,ec);
+    if(ec){
+        const auto failure=ec;ec.clear();const auto state=fs::symlink_status(requested,ec);
+        if(quick&&failure==std::errc::no_such_file_or_directory&&state.type()==fs::file_type::not_found){
+            ec.clear();const auto parent=fs::canonical(requested.parent_path(),ec);
+            if(!ec){Fd parentFd(openDir(parent));if(parentFd.n>=0){out.volume=volume(parentFd.n);out.complete=true;out.missingCache=true;out.readOnly=true;out.resolvedRoot=requested;return out;}}
+        }
+        out.error="Cannot open scan directory: "+failure.message()+". Choose an accessible folder or use Deep scan.";return out;
+    }
+    ec.clear();const auto resolvedCache=fs::canonical(cache,ec);
+    const auto classification=ec?fs::path{}:resolvedCache;
+    const bool redirected=resolved!=requested.lexically_normal();
+    const bool standardCache=!classification.empty()&&classification==cleanupCache&&cache==cleanupCache;
+    limits.allowRemoval=limits.allowRemoval&&!redirected&&standardCache;
+    out=scan(resolved,classification,limits,cancel);out.redirected=redirected;out.readOnly=!limits.allowRemoval;
+    return out;
 }
 // Only selected old user-cache regular files; no directory deletion, privilege escalation,
 // links, personal-file removal or cross-device traversal. Revalidate metadata immediately

@@ -22,10 +22,17 @@ int main(int argc,char** argv){
     const auto root=std::filesystem::path(fixture.path().toStdString());
     std::ofstream(root/"largest.iso")<<std::string(4096,'x');std::ofstream(root/"old.log")<<"123";
     std::filesystem::create_symlink(root/"largest.iso",root/"link");
+    const auto cacheDir=root/"xdg-cache";std::filesystem::create_directory(cacheDir);std::ofstream(cacheDir/"fixture.cache")<<"abc";
+    qputenv("XDG_CACHE_HOME",QByteArray::fromStdString(cacheDir.string()));
     QString routed;std::unique_ptr<QWidget> page(syspulse::cleanerPage([&](const QString& id){routed=id;}));page->resize(1024,700);page->show();
     auto* mode=page->findChild<QComboBox*>("cleanerMode");auto* path=page->findChild<QLineEdit*>("cleanerRoot");auto* scan=page->findChild<QPushButton*>("cleanerScan");auto* cancel=page->findChild<QPushButton*>("cleanerCancel");auto* status=page->findChild<QLabel*>("cleanerStatus");auto* largest=page->findChild<QTableWidget*>("cleanerLargest");auto* leftovers=page->findChild<QTableWidget*>("cleanerLeftovers");auto* candidates=page->findChild<QTableWidget*>("cleanerCandidates");auto* remove=page->findChild<QPushButton*>("cleanerDelete");auto* tabs=page->findChild<QTabWidget*>("cleanerTabs");auto* minimum=page->findChild<QSpinBox*>("cleanerMinimum");
     if(!mode||!path||!scan||!cancel||!status||!largest||!leftovers||!candidates||!remove||!tabs||!minimum||mode->count()!=4||tabs->count()!=6||remove->isEnabled()||cancel->isEnabled())return 2;
     const auto await=[&](QPushButton* b){QElapsedTimer time;time.start();while(!b->isEnabled()&&time.elapsed()<18000){app.processEvents();QThread::msleep(5);}return b->isEnabled();};
+    if(path->text()!=QString::fromStdString(cacheDir.string()))return 15;
+    scan->click();if(!await(scan)||!status->text().contains("Scan complete")||largest->rowCount()!=1||remove->isEnabled())return 16;
+    std::filesystem::remove_all(cacheDir);scan->click();if(!await(scan)||!status->text().contains("does not exist")||largest->rowCount()!=0||remove->isEnabled())return 17;
+    std::filesystem::create_directory_symlink(root/"missing-target",cacheDir);scan->click();if(!await(scan)||!status->text().contains("Cannot open"))return 18;
+    std::filesystem::remove(cacheDir);
     mode->setCurrentIndex(3);path->setText(fixture.path());scan->click();
     if(scan->isEnabled()||!cancel->isEnabled()||!await(scan))return 3;
     if(!status->text().contains("Scan complete")||largest->rowCount()!=2||largest->item(0,1)->text()!="largest.iso"||largest->item(0,2)->text()!=fixture.path()||leftovers->rowCount()!=1||candidates->rowCount()!=0||remove->isEnabled())return 4;

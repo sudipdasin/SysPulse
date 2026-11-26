@@ -32,6 +32,17 @@ int main(){
     if(!fs::exists(cache/"small")||!fs::exists(root/"docs"/"big.iso"))return 18;
     if(openDir(root/".."/root.filename())>=0)return 19;
     if(r.error.size())return 20;
+    limits.seconds=45;
+    auto redirected=scanRequested(root/"linkdir",cache,cache,limits,cancel,false);
+    if(!redirected.complete||!redirected.redirected||!redirected.readOnly||redirected.files!=1||!redirected.candidates.empty())return 27;
+    auto missing=scanRequested(root/"not-created",root/"not-created",cache,limits,cancel,true);
+    if(!missing.complete||!missing.missingCache||!missing.readOnly||!missing.volume.known||missing.files!=0)return 28;
+    fs::create_directory_symlink(root/"no-target",root/"dangling");
+    if(scanRequested(root/"dangling",root/"dangling",cache,limits,cancel,true).error.empty())return 29;
+    auto custom=scanRequested(cache,cache,root/"other-cache",limits,cancel,true);
+    if(!custom.complete||!custom.readOnly||custom.categories[Cache]!=3||!custom.candidates.empty())return 30;
+    if(scanRequested(root/"not-created",cache,cache,limits,cancel,false).error.empty())return 31;
+    if(scanRequested(root/"notes.log",cache,cache,limits,cancel,false).error.empty())return 32;
     if(::geteuid()!=0){
         if(::stat((cache/"small").c_str(),&st))return 21;
         Entry valid{cache/"small",3,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,Cache,true};
