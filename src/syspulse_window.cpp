@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/health_probe.hpp"
 #include "syspulse/performance.hpp"
 #include "syspulse/management.hpp"
 #include "syspulse/toolbox.hpp"
@@ -140,7 +141,32 @@ struct Window::Impl {
         const auto completed=dialog.results();for(const auto& r:completed)remember(r);
         if(!completed.isEmpty()) {
             int ok=0;for(const auto& r:completed)if(r.code==0&&!r.cancelled)++ok;
-            analysisStatus->setText(QString("Analysis recorded: %1 of %2 checks completed successfully. Review the findings in Reports.").arg(ok).arg(completed.size()));
+            QString summary=QString("Analysis recorded: %1 of %2 checks completed successfully. Review the findings in Reports.").arg(ok).arg(completed.size());
+            analysisStatus->setToolTip(QString());
+            const auto completedCheck=[&completed](const QString& id){
+                const auto& tool=tux::action(id);
+                for(const auto& result:completed)
+                    if(result.action==tool.title && result.command==tool.command && result.code==0 && !result.cancelled && !result.truncated) return true;
+                return false;
+            };
+            // Supplement a completed, reviewed storage and memory analysis with local measurements.
+            // Do not run this additional snapshot when either check was skipped, failed or cancelled.
+            if(completedCheck("storage") && completedCheck("memory")) {
+                const auto sample=syspulse::triage::measure();
+                const auto findings=syspulse::triage::assess(sample.ram,sample.root,sample.swap);
+                QStringList states, advice;
+                using syspulse::triage::Check;
+                using syspulse::triage::Severity;
+                for(const auto& finding:findings) {
+                    const QString name=finding.check==Check::AvailableMemory?"RAM":finding.check==Check::RootStorage?"Root storage":"Swap";
+                    const QString state=finding.severity==Severity::Critical?"Critical":finding.severity==Severity::Warning?"Warning":finding.severity==Severity::Unknown?"Unknown":finding.severity==Severity::Info?"Info":"Within threshold";
+                    states.append(name+": "+state);
+                    advice.append(name+": "+QString::fromLatin1(finding.advice));
+                }
+                summary+=QString("\nLocal snapshot: %1.").arg(states.join(" · "));
+                analysisStatus->setToolTip(advice.join("\n"));
+            }
+            analysisStatus->setText(summary);
         }
     }
     void build() {
