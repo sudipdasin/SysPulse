@@ -11,10 +11,14 @@ valid_version "$current" || fail 'Invalid current version.'
 for cmd in curl openssl sha256sum sort flock stat mktemp install mv timeout cut tail; do command -v "$cmd" >/dev/null || fail "Missing dependency: $cmd"; done
 key="$HOME/.config/syspulse/update-public.pem"
 [[ -f $key && ! -L $key && -O $key ]] || fail 'Trusted release key not enrolled. No automatic trust-on-first-use.'
+for parent in "$HOME/.config" "$HOME/.config/syspulse"; do
+    [[ -d $parent && ! -L $parent && -O $parent ]] || fail 'Unsafe release key directory.'
+    [[ $(stat -c %a "$parent") =~ ^(700|750|755)$ ]] || fail 'Unsafe release key directory permissions.'
+done
 [[ $(stat -c %a "$key") =~ ^(400|440|444|600|640|644)$ ]] || fail 'Unsafe release key permissions.'
 dir=$(mktemp -d); staged=''; trap 'rm -rf -- "$dir"; [[ -z $staged ]] || rm -f -- "$staged"' EXIT
 base=https://github.com/sudipdasin/SysPulse/releases/latest/download
-fetch(){ curl -q --fail --silent --show-error --location --max-redirs 4 --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --max-filesize "$3" --output "$2" "$1"; }
+fetch(){ curl -q --fail --silent --show-error --location --max-redirs 4 --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --max-filesize "$3" --output "$2" "$1"; [[ -s $2 && $(stat -c %s "$2") -le $3 ]] || fail 'Release asset size rejected.'; }
 fetch "$base/syspulse-linux-x86_64.manifest" "$dir/manifest" 4096
 fetch "$base/syspulse-linux-x86_64.manifest.sig" "$dir/signature" 8192
 openssl dgst -sha256 -verify "$key" -signature "$dir/signature" "$dir/manifest" >/dev/null || fail 'Release signature rejected.'
@@ -26,6 +30,8 @@ valid_version "$latest" && [[ $digest =~ ^[a-f0-9]{64}$ ]] || fail 'Invalid sign
 printf 'New signed version: %s\n' "$latest"
 [[ $mode == install ]] || exit 0
 bin="$HOME/.local/bin"; target="$bin/syspulse"
+[[ -d $HOME/.local && ! -L $HOME/.local && -O $HOME/.local ]] || fail 'Unsafe installation parent.'
+[[ $(stat -c %a "$HOME/.local") =~ ^(700|750|755)$ ]] || fail 'Unsafe installation parent permissions.'
 [[ -d $bin && ! -L $bin && -O $bin && -f $target && ! -L $target && -O $target ]] || fail 'Only an existing per-user installation can be updated.'
 [[ $(stat -c %a "$bin") =~ ^(700|750|755)$ ]] || fail 'Unsafe installation directory permissions.'
 exec 9<"$bin"; flock -n 9 || fail 'Another update is running.'
