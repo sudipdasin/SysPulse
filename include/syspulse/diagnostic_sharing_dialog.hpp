@@ -33,20 +33,20 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
     auto* consent=new QCheckBox("I reviewed this exact report and consent to sharing it with the public repository.",&dialog);consent->setObjectName("diagnosticShareConsent");layout->addWidget(consent);
     auto* save=new QPushButton("Save reviewed report locally…",&dialog);auto* send=new QPushButton("Send reviewed report to repository",&dialog);auto* close=new QPushButton("Close without sharing",&dialog);
     save->setEnabled(false);send->setEnabled(false);layout->addWidget(save);layout->addWidget(send);layout->addWidget(close);
-    auto* manager=new QNetworkAccessManager(&dialog);const auto target=endpoint();QMap<QString,QString> imported;QByteArray body;bool inFlight=false;
+    auto* manager=new QNetworkAccessManager(&dialog);const auto target=endpoint();QMap<QString,QString> imported;QString auditTarget;QByteArray body;bool inFlight=false;QNetworkReply* activeReply=nullptr;
     const auto refresh=[&]{const bool ready=!inFlight&&level->currentIndex()>0&&!body.isEmpty()&&consent->isChecked();save->setEnabled(ready);send->setEnabled(ready&&!target.isEmpty());};
     const auto clear=[&]{body.clear();text->clear();consent->setChecked(false);refresh();};
     QObject::connect(level,QOverload<int>::of(&QComboBox::currentIndexChanged),&dialog,[&](int){clear();status->setText("Selection changed; generate a new preview.");});
     QObject::connect(import,&QPushButton::clicked,&dialog,[&]{
         const auto path=QFileDialog::getOpenFileName(&dialog,"Select local audit report",{},"JSON (*.json)");if(path.isEmpty())return;
-        clear();imported.clear();QFile file(path);bool valid=false;
-        if(file.open(QIODevice::ReadOnly))imported=importAudit(file.read(512*1024+1),valid);
+        clear();imported.clear();auditTarget.clear();QFile file(path);bool valid=false;
+        if(file.open(QIODevice::ReadOnly))imported=importAudit(file.read(512*1024+1),valid,&auditTarget);
         status->setText(valid?"Imported recognized check statuses only. All facts, output and unknown fields were discarded.":"Audit rejected: unsupported, oversized or malformed report. Nothing imported.");
     });
     QObject::connect(preview,&QPushButton::clicked,&dialog,[&]{
         clear();if(level->currentIndex()==0){status->setText("Sharing is off.");return;}
         const auto checks=snapshot(results,imported);
-        body=QJsonDocument(payload(checks,level->currentIndex())).toJson(QJsonDocument::Compact);
+        body=QJsonDocument(payload(checks,level->currentIndex(),auditTarget)).toJson(QJsonDocument::Compact);
         text->setPlainText(QString::fromUtf8(body));status->setText(advice(checks)+(target.isEmpty()?"\nRepository relay is not configured. Local save only.":"\nDestination: "+target.toString()));refresh();
     });
     QObject::connect(consent,&QCheckBox::toggled,&dialog,[&](bool){refresh();});
@@ -60,15 +60,16 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
         if(QMessageBox::question(&dialog,"Confirm repository submission","Send the exact reviewed report through the configured HTTPS relay? The report may be publicly visible and cannot be guaranteed anonymous at the network layer.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
         inFlight=true;refresh();level->setEnabled(false);import->setEnabled(false);preview->setEnabled(false);consent->setEnabled(false);
         QNetworkRequest request(target);request.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,QNetworkRequest::ManualRedirectPolicy);request.setAttribute(QNetworkRequest::CookieLoadControlAttribute,QNetworkRequest::Manual);request.setAttribute(QNetworkRequest::CookieSaveControlAttribute,QNetworkRequest::Manual);request.setHeader(QNetworkRequest::UserAgentHeader,"SysPulse-report/1");
-        auto* reply=manager->post(request,body);reply->setReadBufferSize(4096);QTimer::singleShot(15000,reply,[reply]{if(!reply->isFinished())reply->abort();});
+        auto* reply=manager->post(request,body);activeReply=reply;reply->setReadBufferSize(4096);QTimer::singleShot(15000,reply,[reply]{if(!reply->isFinished())reply->abort();});
         QObject::connect(reply,&QNetworkReply::finished,&dialog,[&,reply]{
             const auto code=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             const auto response=QJsonDocument::fromJson(reply->read(4096)).object();
             const bool accepted=reply->error()==QNetworkReply::NoError&&code==201&&response.value("accepted").toBool();
-            reply->deleteLater();inFlight=false;level->setEnabled(true);import->setEnabled(true);preview->setEnabled(true);consent->setEnabled(true);consent->setChecked(false);refresh();
+            activeReply=nullptr;reply->deleteLater();inFlight=false;level->setEnabled(true);import->setEnabled(true);preview->setEnabled(true);consent->setEnabled(true);consent->setChecked(false);refresh();
             status->setText(accepted?"Repository relay confirmed receipt. No automatic system change will be applied.":"Submission not confirmed. Do not assume receipt; no automatic retry.");
         });
     });
     QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::reject);dialog.exec();
+    if(activeReply){QObject::disconnect(activeReply,nullptr,&dialog,nullptr);activeReply->abort();}
 }
 }

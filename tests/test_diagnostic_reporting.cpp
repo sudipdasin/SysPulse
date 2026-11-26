@@ -14,6 +14,7 @@ int main(int argc,char** argv){
  bool valid=false;auto imported=importAudit(fixture,valid);
  if(!valid||imported.size()!=1||imported.value("audit/catalog/storage")!="PASS")return 4;
  if(QJsonDocument(payload(imported,3)).toJson().contains("secret"))return 5;
+ if(payload(imported,3,"arbitrary-private").value("audit_target").toString()!="unknown")return 9;
  importAudit(QByteArray(512*1024+1,'x'),valid);if(valid)return 6;
  tux::Result r;r.code=0;if(sessionState(r,tux::action("apt-clean"))!="REVIEW")return 7;
  r.cancelled=true;if(sessionState(r,tux::action("storage"))!="CANCELLED")return 8;

@@ -9,6 +9,8 @@
 #include <QMap>
 #include <QSet>
 #include <QStandardPaths>
+#include <QDir>
+#include "syspulse/cleaner.hpp"
 namespace syspulse::diagnostic {
 inline const QSet<QString>& allowedStatuses(){static const QSet<QString> s={"PASS",
         "DISCREPANCY",
@@ -301,11 +303,87 @@ inline const QSet<QString>& allowedKeys(){static const QSet<QString> s={
         "audit/desktop/real-GUI-interaction",
         "audit/recovery/destructive-operations",
         "audit/coverage/planned-native-capabilities"
+        ,"native/launcher/Storage/Disk tools/gnome-disks",
+        "native/launcher/Storage/Disk tools/gparted",
+        "native/launcher/Storage/Disk tools/baobab",
+        "native/launcher/Storage/Disk tools/thunar",
+        "native/launcher/Storage/Disk tools/bleachbit",
+        "native/launcher/Security/Software and security/mintupdate",
+        "native/launcher/Security/Software and security/mintinstall",
+        "native/launcher/Security/Software and security/synaptic",
+        "native/launcher/Security/Software and security/mintsources",
+        "native/launcher/Security/Software and security/gufw",
+        "native/launcher/Security/Software and security/gnome-logs",
+        "native/launcher/Network/Network tools/nm-connection-editor",
+        "native/launcher/Network/Network tools/gufw",
+        "native/launcher/Network/Network tools/blueman-manager",
+        "native/launcher/Desktop/Desktop settings/xfce4-display-settings",
+        "native/launcher/Desktop/Desktop settings/xfce4-keyboard-settings",
+        "native/launcher/Desktop/Desktop settings/xfce4-mouse-settings",
+        "native/launcher/Desktop/Desktop settings/xfce4-power-manager-settings",
+        "native/launcher/Desktop/Desktop settings/xfce4-panel",
+        "native/launcher/Desktop/Desktop settings/xfce4-session-settings",
+        "native/launcher/Desktop/Desktop settings/xfce4-appearance-settings",
+        "native/launcher/Desktop/Desktop settings/xfwm4-settings",
+        "native/launcher/Desktop/Administration/xfce4-settings-manager",
+        "native/launcher/Desktop/Administration/xfdesktop-settings",
+        "native/launcher/Desktop/Administration/driver-manager",
+        "native/launcher/Desktop/Administration/users-admin",
+        "native/launcher/Desktop/Administration/mintusers",
+        "native/launcher/Desktop/Administration/lightdm-settings",
+        "native/launcher/Desktop/Administration/system-config-printer",
+        "native/launcher/Desktop/Administration/hardinfo",
+        "native/launcher/Desktop/Administration/seahorse",
+        "native/launcher/Recovery/timeshift-gtk",
+        "native/launcher/Recovery/qphotorec",
+        "native/launcher/Recovery/deja-dup",
+        "native/launcher/Control Panel/Desktop/xfce4-appearance-settings",
+        "native/launcher/Control Panel/Desktop/xfwm4-settings",
+        "native/launcher/Control Panel/Desktop/xfwm4-tweaks-settings",
+        "native/launcher/Control Panel/Desktop/xfdesktop-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-display-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-keyboard-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-mouse-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-power-manager-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-session-settings",
+        "native/launcher/Control Panel/Desktop/exo-preferred-applications",
+        "native/launcher/Control Panel/Desktop/xfce4-accessibility-settings",
+        "native/launcher/Control Panel/Desktop/xfce4-notifyd-config",
+        "native/launcher/Control Panel/Desktop/thunar-settings",
+        "native/launcher/Control Panel/Hardware/driver-manager",
+        "native/launcher/Control Panel/Hardware/system-config-printer",
+        "native/launcher/Control Panel/Hardware/pavucontrol",
+        "native/launcher/Control Panel/Hardware/blueman-manager",
+        "native/launcher/Control Panel/Hardware/hardinfo",
+        "native/launcher/Control Panel/Hardware/gcm-viewer",
+        "native/launcher/Control Panel/Accounts/users-admin",
+        "native/launcher/Control Panel/Accounts/mintusers",
+        "native/launcher/Control Panel/Accounts/lightdm-settings",
+        "native/launcher/Control Panel/Accounts/seahorse",
+        "native/launcher/Control Panel/Storage/gnome-disks",
+        "native/launcher/Control Panel/Storage/gparted",
+        "native/launcher/Control Panel/Storage/baobab",
+        "native/launcher/Control Panel/Storage/bleachbit",
+        "native/launcher/Control Panel/Storage/timeshift-gtk",
+        "native/launcher/Control Panel/Storage/deja-dup",
+        "native/launcher/Control Panel/Storage/qphotorec",
+        "native/launcher/Control Panel/Network and security/nm-connection-editor",
+        "native/launcher/Control Panel/Network and security/gufw",
+        "native/launcher/Control Panel/Network and security/gnome-logs",
+        "native/launcher/Control Panel/Software/mintupdate",
+        "native/launcher/Control Panel/Software/mintinstall",
+        "native/launcher/Control Panel/Software/synaptic",
+        "native/launcher/Control Panel/Software/mintsources",
+        "native/Cleaner/home-access",
+        "native/Cleaner/cache-access",
+        "native/Cleaner/cache-redirection",
+        "native/Cleaner/cleanup-eligibility"
     };return s;}
 inline bool allowed(const QString& key,const QString& value){return allowedKeys().contains(key)&&allowedStatuses().contains(value);}
 inline bool mediumKey(const QString& key){return key.startsWith("preflight/")||key.startsWith("run/")||key.startsWith("audit/catalog/");}
 inline const char* auditReference(){return "3beb151833b9faf2ec9266e67b0123f2cab91f5d";}
-inline QMap<QString,QString> importAudit(const QByteArray& data,bool& valid){
+inline QMap<QString,QString> importAudit(const QByteArray& data,bool& valid,QString* target=nullptr){
+    if(target)*target="unknown";
     valid=false;QMap<QString,QString> result;
     if(data.size()>512*1024)return result;
     QJsonParseError error;const auto doc=QJsonDocument::fromJson(data,&error);
@@ -321,7 +399,9 @@ inline QMap<QString,QString> importAudit(const QByteArray& data,bool& valid){
         if(result.contains(key)){result.clear();return result;} // reject ambiguous duplicate evidence
         result.insert(key,state);
     }
-    valid=!result.isEmpty();return result;
+    valid=!result.isEmpty();
+    if(valid&&target){for(int n=1;n<=20;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(facts.value("syspulse_version").toString()==known){*target=known;break;}}}
+    return result;
 }
 inline QString sessionState(const tux::Result& r,const tux::Action& a){
     if(r.cancelled)return "CANCELLED";
@@ -339,9 +419,22 @@ inline QMap<QString,QString> snapshot(const QVector<tux::Result>& results,const 
         const auto key="preflight/"+a.id;if(allowed(key,state))checks.insert(key,state);
         for(const auto& r:results)if(r.action==a.title){const auto rk="run/"+a.id;const auto rs=sessionState(r,a);if(allowed(rk,rs))checks.insert(rk,rs);}
     }
+    for(const auto& key:allowedKeys())if(key.startsWith("native/launcher/")){
+        const auto command=key.section('/',-1);const auto trusted=tux::trustedSystemExecutable(command);
+        checks.insert(key,!trusted.isEmpty()?"PREFLIGHT_ONLY":QStandardPaths::findExecutable(command).isEmpty()?"MISSING":"DISCREPANCY");
+    }
+    const auto home=QDir::homePath(),cache=QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+    const QFileInfo homeInfo(home),cacheInfo(cache);
+    checks.insert("native/Cleaner/home-access",homeInfo.isDir()&&homeInfo.isReadable()?"PREFLIGHT_ONLY":"FAILED");
+    checks.insert("native/Cleaner/cache-access",cacheInfo.isDir()&&cacheInfo.isReadable()?"PREFLIGHT_ONLY":cacheInfo.exists()?"FAILED":"REVIEW");
+    const auto canonical=cacheInfo.canonicalFilePath();
+    checks.insert("native/Cleaner/cache-redirection",canonical.isEmpty()?"REVIEW":canonical==QDir::cleanPath(cache)?"PREFLIGHT_ONLY":"DISCREPANCY");
+    const auto cleanup=syspulse::cleaner::homeCache(); // namespace verified below
+    const auto standard=QString::fromStdString(cleanup.string());
+    checks.insert("native/Cleaner/cleanup-eligibility",!canonical.isEmpty()&&canonical==standard&&cache==standard?"PREFLIGHT_ONLY":"BLOCKED_BY_DESIGN");
     return checks;
 }
-inline QJsonObject payload(const QMap<QString,QString>& checks,int level){
+inline QJsonObject payload(const QMap<QString,QString>& checks,int level,const QString& auditTarget=QString()){
     if(level<1||level>3)return {};
     QJsonObject counts,details;
     for(auto i=checks.cbegin();i!=checks.cend();++i){
@@ -351,13 +444,15 @@ inline QJsonObject payload(const QMap<QString,QString>& checks,int level){
     }
     QJsonObject obj{{"schema",1},{"release",QString(tux::Version)},{"level",level==1?"min":level==2?"med":"max"},{"counts",counts}};
     if(level>=2)obj.insert("checks",details);
+    bool hasAudit=false;for(auto i=checks.cbegin();i!=checks.cend();++i)if(i.key().startsWith("audit/")&&allowed(i.key(),i.value())){hasAudit=true;break;}
+    if(hasAudit){QString safe="unknown";for(int n=1;n<=20;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(auditTarget==known)safe=known;}obj.insert("audit_reference","3.0.0-alpha.19");obj.insert("audit_target",safe);}
     return obj;
 }
 inline QString advice(const QMap<QString,QString>& checks){
     int discrepancies=0,missing=0,failed=0;
     for(const auto& state:checks){discrepancies+=state=="DISCREPANCY";missing+=state=="MISSING";failed+=state=="FAILED"||state=="TIMEOUT"||state=="INCOMPLETE";}
     QString out=QString("Local analysis: %1 discrepancy, %2 missing prerequisite, %3 failed/incomplete check records. Records can overlap; not a feature success percentage.").arg(discrepancies).arg(missing).arg(failed);
-    if(checks.value("audit/Cleaner/quick-cache")=="DISCREPANCY")out+="\nCleaner: redirected cache detected. Inspect only; do not bypass deletion guards.";
+    if(checks.value("audit/Cleaner/quick-cache")=="DISCREPANCY"||checks.value("native/Cleaner/cache-redirection")=="DISCREPANCY")out+="\nCleaner: redirected cache detected. Inspect only; do not bypass deletion guards.";
     if(missing)out+="\nReview dependency guidance and refresh availability.";
     if(discrepancies||failed)out+="\nPrioritize reproducing failed checks; verify outcomes before any system change.";
     out+="\nNo setting changes, installation, deletion or automatic updates are performed.";

@@ -132,6 +132,7 @@ if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME syspulse-signed-package COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signed_package.py)
     add_test(NAME syspulse-release-policy COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release_policy.py)
+    add_test(NAME syspulse-report-relay COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_report_relay.py)
     set_tests_properties(syspulse-health-triage syspulse-health-probe syspulse-signed-package syspulse-release-policy PROPERTIES TIMEOUT 30)
     # Manual VM benchmark; deliberately excluded from normal CTest runs.
     add_executable(syspulse-idle-probe tests/syspulse_idle_probe.cpp)
