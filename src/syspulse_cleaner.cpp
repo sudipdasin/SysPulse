@@ -125,7 +125,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         AsyncCommand::run(page,dpkg,{"-W","-f=${db:Status-Status}\\t${binary:Package}\\t${Installed-Size}\\n"},15000,2*1024*1024,[inventory,packages,packageStatus,packageFilter](const AsyncCommandResult& result){
             inventory->setEnabled(true);if(!result.ok()){packageStatus->setText("Package inventory failed or exceeded output limit.");return;}
             QVector<QPair<qulonglong,QString>> rows;int skipped=0;
-            for(const auto& line:result.output.split('\n',Qt::SkipEmptyParts)){const auto fields=line.split('\t');if(fields.size()!=3){++skipped;continue;}if(fields[0]!="installed")continue;bool ok=false;auto kib=fields[2].toULongLong(&ok);if(!ok||kib>std::numeric_limits<qulonglong>::max()/1024||fields[1].isEmpty()){++skipped;continue;}rows.append({kib*1024,fields[1]});}
+            for(const auto& line:QFile::decodeName(result.output).split('\n',Qt::SkipEmptyParts)){const auto fields=line.split('\t');if(fields.size()!=3){++skipped;continue;}if(fields[0]!="installed")continue;bool ok=false;auto kib=fields[2].toULongLong(&ok);if(!ok||kib>std::numeric_limits<qulonglong>::max()/1024||fields[1].isEmpty()){++skipped;continue;}rows.append(qMakePair(static_cast<qulonglong>(kib*1024),fields[1]));}
             std::sort(rows.begin(),rows.end(),[](const auto& a,const auto& b){return a.first>b.first;});const int count=qMin(10000,rows.size());packages->setRowCount(count);
             for(int i=0;i<count;++i){packages->setItem(i,0,new QTableWidgetItem(sizeText(rows[i].first)));packages->setItem(i,1,new QTableWidgetItem(rows[i].second));packages->setRowHidden(i,!rows[i].second.contains(packageFilter->text(),Qt::CaseInsensitive));}
             packageStatus->setText(QString("%1 installed packages listed · %2 invalid entries · %3 omitted by limit. Review removals in the distribution package manager.").arg(count).arg(skipped).arg(rows.size()-count));
@@ -148,7 +148,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         AsyncCommand::run(page,dpkg,{"-S","--",path},5000,8192,[ownership,ownershipStatus,path](const AsyncCommandResult& result){
             ownership->setEnabled(true);
             if(!result.ok()){ownershipStatus->setText("No confirmed owner or lookup failed for "+path+". This does not establish that the file is orphaned or safe to remove.");return;}
-            QStringList owners;for(const auto& line:result.output.split('\n',Qt::SkipEmptyParts)){const int at=line.indexOf(": ");if(at>0&&line.mid(at+2)==path)owners<<line.left(at);}
+            QStringList owners;for(const auto& line:QFile::decodeName(result.output).split('\n',Qt::SkipEmptyParts)){const int at=line.indexOf(": ");if(at>0&&line.mid(at+2)==path)owners<<line.left(at);}
             ownershipStatus->setText(owners.isEmpty()?"No exact registered owner confirmed; not proof of an orphan.":"Registered owner: "+owners.join(", ")+" · "+path);
         });
     });
