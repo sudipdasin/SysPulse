@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+fail(){ printf '%s\n' "$*" >&2; exit 1; }
+[[ $# == 2 && ( $1 == check || $1 == install ) ]] || fail 'Usage: syspulse-update check|install CURRENT_VERSION'
+[[ $EUID != 0 ]] || fail 'Do not run this updater as root.'
+[[ $(uname -m) == x86_64 && $(uname -s) == Linux ]] || fail 'Unsupported update platform.'
+mode=$1; current=$2
+valid_version(){ [[ $1 =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; }
+valid_version "$current" || fail 'Invalid current version.'
+for cmd in curl openssl sha256sum sort flock stat mktemp install mv timeout cut tail; do command -v "$cmd" >/dev/null || fail "Missing dependency: $cmd"; done
+key="$HOME/.config/syspulse/update-public.pem"
+[[ -f $key && ! -L $key && -O $key ]] || fail 'Trusted release key not enrolled. No automatic trust-on-first-use.'
+[[ $(stat -c %a "$key") =~ ^(400|440|444|600|640|644)$ ]] || fail 'Unsafe release key permissions.'
+dir=$(mktemp -d); staged=''; trap 'rm -rf -- "$dir"; [[ -z $staged ]] || rm -f -- "$staged"' EXIT
+base=https://github.com/sudipdasin/SysPulse/releases/latest/download
+fetch(){ curl -q --fail --silent --show-error --location --max-redirs 4 --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 --max-filesize "$3" --output "$2" "$1"; }
+fetch "$base/syspulse-linux-x86_64.manifest" "$dir/manifest" 4096
+fetch "$base/syspulse-linux-x86_64.manifest.sig" "$dir/signature" 8192
+openssl dgst -sha256 -verify "$key" -signature "$dir/signature" "$dir/manifest" >/dev/null || fail 'Release signature rejected.'
+mapfile -t lines < "$dir/manifest"
+[[ ${#lines[@]} == 2 && ${lines[0]} == version=* && ${lines[1]} == sha256=* ]] || fail 'Invalid signed manifest.'
+latest=${lines[0]#version=}; digest=${lines[1]#sha256=}
+valid_version "$latest" && [[ $digest =~ ^[a-f0-9]{64}$ ]] || fail 'Invalid signed version or digest.'
+[[ $latest != "$current" && $(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n1) == "$latest" ]] || { printf 'No newer signed release.\n'; exit 0; }
+printf 'New signed version: %s\n' "$latest"
+[[ $mode == install ]] || exit 0
+bin="$HOME/.local/bin"; target="$bin/syspulse"
+[[ -d $bin && ! -L $bin && -O $bin && -f $target && ! -L $target && -O $target ]] || fail 'Only an existing per-user installation can be updated.'
+[[ $(stat -c %a "$bin") =~ ^(700|750|755)$ ]] || fail 'Unsafe installation directory permissions.'
+exec 9<"$bin"; flock -n 9 || fail 'Another update is running.'
+[[ $(timeout 5 "$target" --version) == "$current" ]] || fail 'Installed version changed; restart and retry.'
+fetch "https://github.com/sudipdasin/SysPulse/releases/download/v$latest/syspulse-linux-x86_64" "$dir/binary" 52428800
+[[ $(sha256sum "$dir/binary" | cut -d ' ' -f1) == "$digest" ]] || fail 'Release checksum rejected.'
+staged=$(mktemp "$bin/.syspulse-update.XXXXXXXX")
+install -m 755 "$dir/binary" "$staged"
+[[ $(timeout 5 "$staged" --version) == "$latest" ]] || fail 'Signed executable version mismatch.'
+backup=$(mktemp "$bin/.syspulse-previous.XXXXXXXX")
+install -m 755 "$target" "$backup"
+mv -T -- "$staged" "$target"; staged=''
+printf 'Installed %s. Restart SysPulse. Previous binary retained locally.\n' "$latest"
