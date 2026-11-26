@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.16 diagnostic expansion evaluation candidate.** Adds 20 fixed read-only diagnostics, access and availability filters, exact catalog navigation, icon-bearing diagnostic rows and scrollable XFCE tool tiles. Native and package lifecycle gates apply.
+**Alpha.17 reliability evaluation candidate.** Feature freeze: correct actual Cleaner scan scope, missing and redirected caches, failure and stale result handling; recheck launcher availability and execute baseline diagnostics in tests. See [reliability checkpoint](docs/ALPHA17_RELIABILITY_FREEZE.md).
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)

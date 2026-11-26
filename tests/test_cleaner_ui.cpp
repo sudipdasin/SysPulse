@@ -33,6 +33,9 @@ int main(int argc,char** argv){
     std::filesystem::remove_all(cacheDir);scan->click();if(!await(scan)||!status->text().contains("does not exist")||largest->rowCount()!=0||remove->isEnabled())return 17;
     std::filesystem::create_directory_symlink(root/"missing-target",cacheDir);scan->click();if(!await(scan)||!status->text().contains("Cannot open"))return 18;
     std::filesystem::remove(cacheDir);
+    auto target=root/"cache-target";std::filesystem::create_directory(target);std::ofstream(target/"test.cache")<<"1234";std::filesystem::create_directory_symlink(target,cacheDir);
+    scan->click();if(!await(scan)||!status->text().contains("resolved folder")||largest->rowCount()!=1||remove->isEnabled())return 19;
+    std::filesystem::remove(cacheDir);std::filesystem::remove_all(target);
     mode->setCurrentIndex(3);path->setText(fixture.path());scan->click();
     if(scan->isEnabled()||!cancel->isEnabled()||!await(scan))return 3;
     if(!status->text().contains("Scan complete")||largest->rowCount()!=2||largest->item(0,1)->text()!="largest.iso"||largest->item(0,2)->text()!=fixture.path()||leftovers->rowCount()!=1||candidates->rowCount()!=0||remove->isEnabled())return 4;

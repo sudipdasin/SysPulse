@@ -26,3 +26,6 @@ SP-002 and SP-003 have native read-only GUI and CLI previews; SP-001 remains par
 
 ### Alpha.16 diagnostic expansion (source checkpoint)
 20 read-only catalog entries extend existing SP-001/SP-002 diagnostics and inspection aspects of SP-004–009/SP-012. This does not establish completion of device disabling, filesystem repair, Wine setup, browser configuration, maintenance scheduling or production updates. Exact source checkpoint: ef99e6fd7cd136c46780e63b420f4567e55f8c6e. Native/package test evidence must be recorded separately; no raw attached scripts or machine metadata incorporated.
+
+### Alpha.17 reliability freeze
+Cleaner scope and existing action availability hardening only. No new intake ID claimed complete. Real diagnostic execution and Quick-mode regression gates added; native/package verification required. Source checkpoint 6b9cd9a3f09441636d6a0f785332ec187d2b27bd.

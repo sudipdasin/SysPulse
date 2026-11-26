@@ -37,6 +37,7 @@ public:
     bool isCancellable() const { return busy_ && cancellable_; }
     void requestStop();
     void setSearch(const QString& query);
+    void refreshAvailability();
     bool locateTool(const QString& id);
     void setExecutionAllowed(bool allowed);
     QJsonObject summaryReport() const;

@@ -781,6 +781,17 @@ struct Window::Impl {
         }
         backButton->setEnabled(historyIndex>0);forwardButton->setEnabled(historyIndex+1<history.size());
         current=id;stack->setCurrentWidget(pages[id]);nav[id]->setChecked(true);
+        if(auto* tools=toolboxes.value(id,nullptr))tools->refreshAvailability();
+        for(auto* control:pages[id]->findChildren<QPushButton*>()){
+            auto command=control->property("systemToolCommand");if(!command.isValid())command=control->property("desktopToolCommand");
+            if(!command.isValid())continue;
+            const bool available=!tux::trustedSystemExecutable(command.toString()).isEmpty();control->setEnabled(available);
+            auto* tile=control->parentWidget();if(!tile||tile->objectName()!="systemToolTile")continue;
+            const auto summary=control->accessibleDescription();
+            const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nNot installed or not trusted · install the distribution-supported utility separately, then revisit this page.");
+            control->setToolTip(tip);tile->setToolTip(tip);
+            if(auto* state=tile->findChild<QLabel*>("toolAvailability")){state->setText(available?"Installed · native utility":"Not installed or not trusted");state->setProperty("available",available);state->setToolTip(tip);state->style()->unpolish(state);state->style()->polish(state);}
+        }
         const auto group=(id=="overview"||id=="performance"||id=="storage")?"Workspace":(id=="control"||id=="management"||id=="network"||id=="desktop"||id=="security")?"System":"Tools";
         breadcrumb->setText(QString(group)+" / "+nav[id]->property("displayTitle").toString());
         performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));

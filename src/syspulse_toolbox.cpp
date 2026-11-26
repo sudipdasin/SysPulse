@@ -121,6 +121,8 @@ ToolboxPage::ToolboxPage(const QStringList& groups, bool experimental,
     toolbar->addWidget(accessFilter_);
     availableOnly_=new QCheckBox("Available only");availableOnly_->setObjectName("toolboxAvailableOnly");availableOnly_->setToolTip("Hide tools whose required dependency or verified precondition is unavailable. No command is executed.");
     toolbar->addWidget(availableOnly_);
+    auto* refresh=new QPushButton(fluent::glyph("refresh"),"");refresh->setObjectName("toolboxRefreshAvailability");refresh->setAccessibleName("Refresh tool availability");refresh->setToolTip("Recheck installed commands and prerequisites without running diagnostics.");toolbar->addWidget(refresh);
+    connect(refresh,&QPushButton::clicked,this,[this]{refreshAvailability();});
     count_ = wrappedLabel({}, "toolboxCount");
     toolbar->addWidget(count_);
     layout->addLayout(toolbar);
@@ -258,6 +260,8 @@ ToolboxPage::~ToolboxPage() {
 
 int ToolboxPage::toolCount() const { return catalogIndices_.size(); }
 
+void ToolboxPage::refreshAvailability() {filter();}
+
 void ToolboxPage::setSearch(const QString& query) { search_->setText(query); }
 
 bool ToolboxPage::locateTool(const QString& id) {
@@ -326,7 +330,7 @@ void ToolboxPage::updateSelection() {
     const auto command = reviewCommand(tool,injectedExecutor_);
     command_->setPlainText(tux::preview(command));
     const auto problem = injectedExecutor_ ? QString{} : tux::unavailable(tool);
-    access_->setText(!problem.isEmpty() ? problem : tool.admin ? (tool.changes ? "Administrator approval required · Experimental" : "Read only · Administrator approval required")
+    access_->setText(!problem.isEmpty() ? problem+" · Install the required distribution utility or correct the stated prerequisite, then refresh availability." : tool.admin ? (tool.changes ? "Administrator approval required · Experimental" : "Read only · Administrator approval required")
                                  : tool.changes ? "Changes settings · Experimental" : "Read only · No administrator approval");
     runButton_->setText(tool.changes ? "Review change…" : "Review diagnostic…");
     runButton_->setToolTip(!executionAllowed_ ? "Another SysPulse task is running. Wait for it to finish."

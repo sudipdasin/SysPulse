@@ -119,6 +119,13 @@ int main(int argc,char** argv) {
         caught=false; try { tux::action("unknown"); } catch (...) { caught=true; } require(caught,"unknown action");
         auto report=r.json(); require(report.contains("code") && report.contains("command"),"JSON result schema");
         r=tux::execute("storage"); require(r.code==0 && r.output.contains("Filesystem"),"real df diagnostic");
+        for(const auto& id:QStringList{"devices","memory","kernel-version","native-architecture","package-audit","package-holds"}){
+            const auto& a=tux::action(id);
+            if(!tux::unavailable(a).isEmpty()){std::cout<<"Unavailable in test container: "<<id.toStdString()<<'\n';continue;}
+            auto live=tux::execute(id,false,10000);
+            require(live.code==0&&!live.cancelled&&!live.truncated,"installed baseline diagnostic executes successfully");
+            std::cout<<"Real diagnostic executed: "<<id.toStdString()<<'\n';
+        }
         const auto path=qgetenv("PATH");
         const auto protectedAuthorization=tux::trustedSystemExecutable("pkexec");
         const auto protectedApt=tux::trustedSystemExecutable("apt-get");
