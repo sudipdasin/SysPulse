@@ -134,6 +134,20 @@ int main(int argc,char** argv) {
             std::cout<<"Real diagnostic "<<id.toStdString()<<": exit "<<live.code<<std::endl;
             require(live.code==0&&!live.cancelled&&!live.truncated,"baseline diagnostic executes successfully");
         }
+        if(qEnvironmentVariable("SYSPULSE_RUNTIME_X11")=="1"){
+            for(const auto& id:QStringList{"display-modes","input","desktop-channels","compositor-state"}){
+                require(tux::unavailable(tux::action(id)).isEmpty(),"virtual X11 dependency available");
+                const auto live=tux::execute(id,false,10000);
+                std::cout<<"X11 runtime diagnostic "<<id.toStdString()<<": exit "<<live.code<<std::endl;
+                require(live.code==0&&!live.cancelled&&!live.truncated,"virtual X11 diagnostic actually executes");
+            }
+            for(const auto& id:QStringList{"compositor-off","compositor-on"}){
+                const auto live=tux::execute(id,true,10000);
+                const auto state=tux::execute("compositor-state",false,10000);
+                require(live.code==0&&state.code==0&&state.output.trimmed()==(id=="compositor-off"?"false":"true"),"isolated XFCE setting mutation verified by readback");
+                std::cout<<"X11 runtime "<<id.toStdString()<<": verified by readback"<<std::endl;
+            }
+        }
         const auto path=qgetenv("PATH");
         const auto protectedAuthorization=tux::trustedSystemExecutable("pkexec");
         const auto protectedApt=tux::trustedSystemExecutable("apt-get");

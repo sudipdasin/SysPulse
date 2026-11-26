@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/toolbox.hpp"
 #include "syspulse/result_state.hpp"
+#include "syspulse/dependency_help.hpp"
 #include "syspulse/fluent_visuals.hpp"
 #include <QComboBox>
 #include "tux/trusted_command.hpp"
@@ -167,6 +168,8 @@ ToolboxPage::ToolboxPage(const QStringList& groups, bool experimental,
     runButton_->setAccessibleName("Review selected tool before running");
     runButton_->setEnabled(false);
     detailLayout->addWidget(runButton_);
+    dependencyButton_=new QPushButton("Review missing dependency…");dependencyButton_->setObjectName("toolboxDependency");dependencyButton_->hide();detailLayout->addWidget(dependencyButton_);
+    connect(dependencyButton_,&QPushButton::clicked,this,[this]{if(busy_||!executionAllowed_||injectedExecutor_)return;const auto name=dependencyButton_->property("dependencyCommand").toString();reviewDependency(this,name);refreshAvailability();});
     detailLayout->addStretch();
     workspace->addWidget(inspector);
     workspace->setStretchFactor(0, 3);
@@ -315,7 +318,7 @@ void ToolboxPage::updateSelection() {
         description_->setText("Choose another filter or select a tool from the list.");
         command_->clear();
         access_->clear();
-        runButton_->setEnabled(false);
+        runButton_->setEnabled(false);dependencyButton_->hide();
         return;
     }
     const auto& tool = tux::actions()[index];
@@ -324,7 +327,11 @@ void ToolboxPage::updateSelection() {
     const auto command = reviewCommand(tool,injectedExecutor_);
     command_->setPlainText(tux::preview(command));
     const auto problem = injectedExecutor_ ? QString{} : tux::unavailable(tool);
-    access_->setText(!problem.isEmpty() ? problem+" · Install the required distribution utility or correct the stated prerequisite, then refresh availability." : tool.admin ? (tool.changes ? "Administrator approval required · Experimental" : "Read only · Administrator approval required")
+    const auto missing=problem.startsWith("Missing dependency: ")?(problem.startsWith("Missing dependency: pkexec")?QString("pkexec"):tool.command.first()):QString{};
+    const bool help=!missing.isEmpty()&&!dependencyPackage(missing).isEmpty();
+    dependencyButton_->setProperty("dependencyCommand",missing);dependencyButton_->setToolTip(help?dependencyHint(missing):"Review optional package availability.");
+    dependencyButton_->setVisible(help);dependencyButton_->setEnabled(help&&!busy_&&executionAllowed_);
+    access_->setText(!problem.isEmpty() ? problem+(help?" · "+dependencyHint(missing):QString(" · Correct the stated prerequisite, then refresh availability.")) : tool.admin ? (tool.changes ? "Administrator approval required · Experimental" : "Read only · Administrator approval required")
                                  : tool.changes ? "Changes settings · Experimental" : "Read only · No administrator approval");
     runButton_->setText(tool.changes ? "Review change…" : "Review diagnostic…");
     runButton_->setToolTip(!executionAllowed_ ? "Another SysPulse task is running. Wait for it to finish."

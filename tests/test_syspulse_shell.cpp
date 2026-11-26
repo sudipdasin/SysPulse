@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/dependency_help.hpp"
 #include "syspulse/performance.hpp"
 #include "tux/core.hpp"
 #include <QApplication>
@@ -71,6 +72,11 @@ int main(int argc,char** argv) {
             require(b->parentWidget()->findChild<QLabel*>("toolAvailability"),"tile reports actual capability status");++tiles;
         }
         require(tiles==63,"all existing launchers retained as tiles");
+        require(syspulse::dependencyPackage("xfce4-display-settings")=="xfce4-settings"&&syspulse::dependencyPackage("xrandr")=="x11-xserver-utils","known dependency mappings");
+        require(syspulse::dependencyPackage("syspulse-memory-control").isEmpty()&&syspulse::dependencyPackage("malicious; command").isEmpty(),"internal and arbitrary names never become installation targets");
+        for(auto* b:window.findChildren<QPushButton*>())if(b->property("systemToolCommand").isValid()||b->property("desktopToolCommand").isValid()){
+            auto* dep=b->parentWidget()->findChild<QPushButton*>("toolDependency");require(dep&&!dep->toolTip().isEmpty(),"native launcher has reviewed dependency route");
+        }
         int desktopTiles=0;QSet<qint64> desktopIcons;
         for(auto* b:window.findChildren<QPushButton*>())if(b->property("desktopToolCommand").isValid()){
             require(b->parentWidget()->objectName()=="systemToolTile"&&b->iconSize()==QSize(40,40),"desktop settings use large graphical tiles");

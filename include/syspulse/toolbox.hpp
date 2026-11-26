@@ -73,6 +73,7 @@ private:
     QPlainTextEdit* command_ = nullptr;
     QPlainTextEdit* output_ = nullptr;
     QPushButton* runButton_ = nullptr;
+    QPushButton* dependencyButton_ = nullptr;
     QPushButton* stopButton_ = nullptr;
     QPushButton* exportButton_ = nullptr;
 

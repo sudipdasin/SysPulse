@@ -1,4 +1,5 @@
 #include "syspulse/result_state.hpp"
+#include "syspulse/dependency_help.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
 #include "syspulse/fluent_visuals.hpp"
@@ -101,6 +102,7 @@ struct Window::Impl {
     QLabel* breadcrumb=nullptr;
     QLabel* footer=nullptr;
     std::function<void()> refreshMemoryKernel;
+    std::function<void()> refreshSettingsIndex;
     PerformancePage* performance=nullptr;
     ProcessManagerWidget* processes=nullptr;
     ManagementPage* management=nullptr;
@@ -357,10 +359,14 @@ struct Window::Impl {
         auto* tile=panel("systemToolTile");auto* tl=new QVBoxLayout(tile);tl->setContentsMargins(12,10,12,10);tl->setSpacing(5);
         const auto detail=fluent::descriptionFor(title);
         const auto summary=detail.isEmpty()?QString("Open %1 in its native interface.").arg(title):detail;
-        const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nNot installed · install the distribution-supported utility separately.");
+        auto command=b->property("systemToolCommand");if(!command.isValid())command=b->property("desktopToolCommand");
+        const auto name=command.toString();
+        const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nUnavailable · "+dependencyHint(name));
         tile->setToolTip(tip);b->setToolTip(tip);b->setAccessibleDescription(summary);b->setObjectName("systemToolTileButton");b->setIcon(fluent::glyph(fluent::tabGlyph(title)));b->setIconSize(QSize(40,40));b->setMinimumHeight(54);
         tl->addWidget(b);auto* desc=text(summary,"toolDescription");desc->setToolTip(tip);tl->addWidget(desc);
-        auto* state=text(available?"Installed · native utility":"Not installed","toolAvailability");state->setProperty("available",available);state->setToolTip(tip);tl->addWidget(state);tl->addStretch();
+        auto* state=text(available?"Installed · native utility":"Not installed or not trusted","toolAvailability");state->setProperty("available",available);state->setToolTip(tip);tl->addWidget(state);
+        auto* dependency=button("Review missing dependency…",[this,name]{reviewDependency(w,name);},w);dependency->setObjectName("toolDependency");
+        dependency->setToolTip(dependencyHint(name));dependency->setVisible(!available&&!dependencyPackage(name).isEmpty());tl->addWidget(dependency);tl->addStretch();
         return tile;
     }
     QWidget* installedTools(const QString& description,const QVector<QPair<QString,QString>>& entries) {
@@ -642,17 +648,22 @@ struct Window::Impl {
         layout->addWidget(locate);layout->addWidget(text("Locating a setting never starts it. Unavailable utilities require separate installation.","muted"));
         const auto selected=[table,locate]{locate->setEnabled(table->currentRow()>=0&&!table->selectedItems().isEmpty()&&!table->isRowHidden(table->currentRow()));};
         QObject::connect(table,&QTableWidget::itemSelectionChanged,content,selected);
-        const auto update=[table,status,selected](const QString& query){
+        const auto update=[table,status,selected,controls](const QString& query){
             int visible=0;const auto tokens=query.simplified().split(' ',Qt::SkipEmptyParts);
             table->clearSelection();table->setCurrentItem(nullptr);
             for(int r=0;r<table->rowCount();++r){
-                const QString hay=table->item(r,0)->text()+" "+table->item(r,1)->text()+" "+table->item(r,2)->text();
+                const auto name=controls[r]->property("systemToolCommand").toString();
+                const bool installed=!tux::trustedSystemExecutable(name).isEmpty();
+                table->item(r,2)->setText(installed?"Installed":"Unavailable");table->item(r,2)->setToolTip(installed?"Trusted executable available":dependencyHint(name));
+                const QString hay=table->item(r,0)->text()+" "+table->item(r,1)->text()+" "+table->item(r,2)->text()+" "+dependencyPackage(name);
                 bool match=true;for(const auto& token:tokens)if(!hay.contains(token,Qt::CaseInsensitive)){match=false;break;}
                 table->setRowHidden(r,!match);if(match)++visible;
             }
             status->setText(QString("%1 of %2 native settings · Select an entry to locate it.").arg(visible).arg(table->rowCount()));selected();
         };
         QObject::connect(filter,&QLineEdit::textChanged,content,update);update(QString());
+        refreshSettingsIndex=[filter,update]{update(filter->text());};
+        QObject::connect(tabs,&QTabWidget::currentChanged,content,[this,tabs,content](int index){if(tabs->widget(index)==content&&refreshSettingsIndex)refreshSettingsIndex();});
         QObject::connect(locate,&QPushButton::clicked,content,[tabs,table,controls,categories]{
             const int row=table->currentRow();
             if(row<0||row>=controls.size()||table->isRowHidden(row)||table->selectedItems().isEmpty())return;
@@ -790,7 +801,8 @@ struct Window::Impl {
             const bool available=!tux::trustedSystemExecutable(command.toString()).isEmpty();control->setEnabled(available);
             auto* tile=control->parentWidget();if(!tile||tile->objectName()!="systemToolTile")continue;
             const auto summary=control->accessibleDescription();
-            const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nNot installed or not trusted · install the distribution-supported utility separately, then revisit this page.");
+            const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nUnavailable · "+dependencyHint(command.toString()));
+            if(auto* dependency=tile->findChild<QPushButton*>("toolDependency"))dependency->setVisible(!available&&!dependencyPackage(command.toString()).isEmpty());
             control->setToolTip(tip);tile->setToolTip(tip);
             if(auto* state=tile->findChild<QLabel*>("toolAvailability")){state->setText(available?"Installed · native utility":"Not installed or not trusted");state->setProperty("available",available);state->setToolTip(tip);state->style()->unpolish(state);state->style()->polish(state);}
         }
@@ -798,6 +810,7 @@ struct Window::Impl {
         breadcrumb->setText(QString(group)+" / "+nav[id]->property("displayTitle").toString());
         performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));
         if(id=="control"&&refreshMemoryKernel)refreshMemoryKernel();
+        if(id=="control"&&refreshSettingsIndex)refreshSettingsIndex();
         return true;
     }
     void findTool(const QString& query) {

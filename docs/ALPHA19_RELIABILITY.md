@@ -1,0 +1,3 @@
+# Alpha.19 existing feature reliability
+
+No catalog expansion. Fixed package guidance and native installer handoff for 69 known command names. No automatic install; explicit consent, trusted apturl only, fixed names, user reviews package manager and authorization; otherwise copy exact package name. Unknown/internal dependencies are not guessed. Refresh indexed settings from actual executable state. Mandatory virtual X11 + isolated D-Bus testing is added to the evaluation build; test real X11 diagnostics and XFCE compositor change/readback within disposable isolated configuration. No physical Mint hardware, full desktop or optional package installation is claimed. Preserve prior feature count and security gates.
