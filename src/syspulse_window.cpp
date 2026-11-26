@@ -4,6 +4,7 @@
 #include "syspulse/memory_relief.hpp"
 #include "syspulse/memory_plan.hpp"
 #include "syspulse/care_plan.hpp"
+#include "syspulse/maintenance_preview.hpp"
 #include <QDateTime>
 #include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
@@ -302,6 +303,7 @@ struct Window::Impl {
         grid->addWidget(button("Control Panel",[this]{navigate("control");},w),2,0);
         grid->addWidget(button("Optimize memory…",[this]{openMemoryOptimizer();},w),2,1);
         auto* care=button("System Care Center",[this]{openControlTab("systemCarePage");},w,true);care->setObjectName("openSystemCare");grid->addWidget(care,3,0,1,2);
+        auto* maintenance=button("Maintenance & boost",[this]{openControlTab("maintenanceCenterPage");},w);maintenance->setObjectName("openMaintenanceCenter");grid->addWidget(maintenance,4,0,1,2);
         ql->addLayout(grid);ql->addWidget(text(QString("%1 reviewed tools · Local reports · Explicit system changes").arg(tux::actions().size()),"muted"));ql->addStretch();lower->addWidget(quick,1);layout->addLayout(lower,1);
         layout->addWidget(text("No maintenance actions run when SysPulse starts.","muted"));
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
@@ -439,6 +441,66 @@ struct Window::Impl {
         if(auto* tabs=pages.value("control")->findChild<QTabWidget*>("controlPanelTabs"))
             for(int i=0;i<tabs->count();++i)if(tabs->widget(i)->objectName()==name){tabs->setCurrentIndex(i);break;}
     }
+    void locateMaintenanceTool(const QString& id) {
+        const auto& action=tux::action(id);
+        const auto page=destination(action);
+        auto* tools=toolboxes.value(page,nullptr);
+        if(!tools||!navigate(page)||!tools->locateTool(id))return;
+        for(auto* p=tools->parentWidget();p;p=p->parentWidget()){
+            if(auto* tabs=qobject_cast<QTabWidget*>(p)){
+                for(int i=0;i<tabs->count();++i)if(tabs->widget(i)==tools||tabs->widget(i)->isAncestorOf(tools)){tabs->setCurrentIndex(i);break;}
+                break;
+            }
+        }
+    }
+    QWidget* maintenanceCenterPage() {
+        auto* content=new QWidget;content->setObjectName("maintenanceCenterPage");
+        auto* layout=new QVBoxLayout(content);
+        layout->addWidget(text("Maintenance & boost","sectionTitle"));
+        layout->addWidget(text("Measure first, review the exact operation, then remeasure. No package removal, cache deletion or desktop change runs from this page automatically.","muted"));
+        auto* table=new QTableWidget(3,3);table->setObjectName("maintenanceComparison");
+        table->setHorizontalHeaderLabels({"Measurement","Baseline","Latest"});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->verticalHeader()->hide();
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+        const QStringList names={"Available RAM","Swap used / configured","APT archive logical size"};
+        for(int i=0;i<names.size();++i){table->setItem(i,0,new QTableWidgetItem(names[i]));table->setItem(i,1,new QTableWidgetItem("Not measured"));table->setItem(i,2,new QTableWidgetItem("Not measured"));}
+        auto* stamp=text("Capture a baseline before applying maintenance.","muted");stamp->setObjectName("maintenanceStatus");
+        auto* baseline=new QPushButton("Capture baseline");baseline->setObjectName("maintenanceBaseline");
+        auto* compare=new QPushButton("Recheck measurements");compare->setObjectName("maintenanceRecheck");compare->setEnabled(false);
+        auto* row=new QHBoxLayout;row->addWidget(baseline);row->addWidget(compare);row->addStretch();layout->addLayout(row);
+        const auto measure=[table,stamp](int column){
+            const auto ram=syspulse::triage::measure().ram;
+            const auto swap=syspulse::preview::currentSwap();
+            const auto cache=syspulse::preview::archives("/var/cache/apt/archives");
+            const auto mib=[](double bytes){return QString::number(bytes/1048576.0,'f',2)+" MiB";};
+            const auto available=ram?mib(ram->available*1024.0):QString("Unknown");
+            const auto used=swap?mib((swap->total-swap->free)*1024.0)+" / "+mib(swap->total*1024.0):QString("Unknown");
+            const auto cached=cache.complete?mib(cache.bytes)+" · "+QString::number(cache.files)+" files":QString("Unknown / incomplete");
+            const QStringList values={available,used,cached};
+            for(int i=0;i<values.size();++i)table->item(i,column)->setText(values[i]);
+            stamp->setText(QString("%1 captured at %2. Other workloads may change readings. Archive lengths are not guaranteed freed disk space.").arg(column==1?"Baseline":"Latest",QDateTime::currentDateTime().toString("HH:mm:ss")));
+        };
+        QObject::connect(baseline,&QPushButton::clicked,content,[table,compare,measure]{
+            measure(1);for(int i=0;i<3;++i)table->item(i,2)->setText("Not measured");compare->setEnabled(true);
+        });
+        QObject::connect(compare,&QPushButton::clicked,content,[measure]{measure(2);});
+        layout->addWidget(table,1);layout->addWidget(stamp);
+        auto* tools=new QGridLayout;
+        const auto add=[this,tools](int r,int c,const QString& title,const QString& id,const char* name){
+            auto* b=button(title,[this,id]{locateMaintenanceTool(id);},w);b->setObjectName(name);tools->addWidget(b,r,c);
+        };
+        add(0,0,"Preview unused packages","apt-preview","maintenanceAptPreview");
+        add(0,1,"Review downloaded-package cleanup","apt-clean","maintenanceAptClean");
+        add(1,0,"Review journal disk usage","journal-size","maintenanceJournal");
+        add(1,1,"Review SSD trim","trim","maintenanceTrim");
+        add(2,0,"Review compositor off (may reduce overhead)","compositor-off","maintenanceCompositorOff");
+        add(2,1,"Review compositor on (restore effect)","compositor-on","maintenanceCompositorOn");
+        add(3,0,"Inspect compressed swap","zram","maintenanceZram");
+        auto* memory=button("Review largest memory consumers",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(5);processes->reviewMemoryConsumers();},w);
+        tools->addWidget(memory,3,1);layout->addLayout(tools);
+        layout->addWidget(text("Actions open existing reviewed tools only. Package cleanup removes downloaded archives, not installed programs. Compositor changes can cause tearing; the opposite reviewed action is available. Do not disable swap or drop useful kernel caches.","muted"));
+        return content;
+    }
     QWidget* systemCarePage() {
         auto* content=new QWidget;content->setObjectName("systemCarePage");
         auto* layout=new QVBoxLayout(content);
@@ -481,7 +543,7 @@ struct Window::Impl {
             switch(static_cast<R>(table->item(r,0)->data(Qt::UserRole).toInt())){
             case R::Memory:openMemoryOptimizer();break;
             case R::Storage:navigate("storage");pages["storage"]->findChild<QTabWidget*>("storageWorkspaceTabs")->setCurrentIndex(0);break;
-            case R::Swap:findTool("Compressed swap status");break;
+            case R::Swap:locateMaintenanceTool("zram");break;
             case R::Cpu:navigate("performance");performance->detailTabs()->setCurrentIndex(1);break;
             case R::Io:navigate("performance");performance->detailTabs()->setCurrentIndex(3);break;
             }
@@ -555,6 +617,7 @@ struct Window::Impl {
         sl->addStretch();auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(system);tabs->addTab(scroll,"System tools");
         tabs->addTab(settingsIndex(tabs),"All settings");
         tabs->addTab(systemCarePage(),"System care");
+        tabs->addTab(maintenanceCenterPage(),"Maintenance");
         return workspace("Control Panel","Centralized desktop, hardware, accounts, storage, software and system administration. Uninstalled tools are disabled.",tabs);
     }
     QWidget* applicationUpdates() {

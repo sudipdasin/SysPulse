@@ -120,6 +120,13 @@ int main(int argc, char** argv) {
         require(stable.findChild<QPlainTextEdit*>("toolboxCommand")->toPlainText().contains("'df'"), "inspector shows quoted preview");
         require(stable.findChild<QPlainTextEdit*>("toolboxCommand")->isReadOnly(), "command preview is not executable input");
         require(executions == 0, "selection and search cannot execute tools");
+        stable.setSearch("no-such-tool");
+        require(stable.locateTool("storage"),"exact ID locates a hidden tool");
+        require(stable.findChild<QLabel*>("toolboxTitle")->text()=="Storage usage","exact tool title selected");
+        require(!stable.locateTool("apt-clean"),"read-only toolbox rejects mutation ID");
+        require(changes.locateTool("apt-clean"),"mutation ID locates reviewed tool only");
+        require(executions==0,"exact ID navigation never executes"); 
+        stable.setSearch("mounted filesystems free space");
 
         stable.setExecutionAllowed(false);
         require(!stable.findChild<QPushButton*>("toolboxRun")->isEnabled(), "global admission guard disables idle run");
