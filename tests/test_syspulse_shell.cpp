@@ -98,7 +98,7 @@ int main(int argc,char** argv) {
         require(cleanup,"review package cleanup link");cleanup->click();
         require(window.currentPageId()=="experimental","cleanup routes to reviewed change");
         auto* activePage=window.findChild<QWidget*>("sysPulsePages");
-        auto* selectedTools=activePage->findChildren<QWidget*>("toolboxPage");
+        const auto selectedTools=activePage->findChildren<QWidget*>("toolboxPage");
         bool exact=false;for(auto* page:selectedTools)if(page->isVisible())if(auto* title=page->findChild<QLabel*>("toolboxTitle"))exact=title->text()=="Clean downloaded packages";
         require(exact,"exact catalog action selected");
         require(reportTable->rowCount()==0,"measurement and locating cleanup do not execute mutations");
