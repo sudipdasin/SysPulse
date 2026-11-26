@@ -250,6 +250,19 @@ int ToolboxPage::toolCount() const { return catalogIndices_.size(); }
 
 void ToolboxPage::setSearch(const QString& query) { search_->setText(query); }
 
+bool ToolboxPage::locateTool(const QString& id) {
+    for(int row=0;row<tools_->rowCount();++row) {
+        const auto index=tools_->item(row,0)->data(Qt::UserRole).toInt();
+        if(tux::actions()[index].id!=id)continue;
+        search_->clear();
+        tools_->setCurrentCell(row,0);
+        tools_->scrollToItem(tools_->item(row,0));
+        updateSelection();
+        return true;
+    }
+    return false;
+}
+
 void ToolboxPage::setExecutionAllowed(bool allowed) {
     if (executionAllowed_ == allowed) return;
     executionAllowed_ = allowed;
