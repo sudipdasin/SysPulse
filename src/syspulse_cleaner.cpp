@@ -10,6 +10,10 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QGridLayout>
+#include <QScrollArea>
+#include <QApplication>
+#include <QClipboard>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -94,13 +98,13 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* summary=new QWidget;auto* sl=new QVBoxLayout(summary);
     sl->addWidget(label("Filesystem capacity (whole selected volume)","sectionTitle"));auto* disk=new Donut;disk->setObjectName("cleanerDiskChart");sl->addWidget(disk);
     sl->addWidget(label("Scanned file distribution (logical sizes, not disk blocks)","sectionTitle"));auto* types=new Donut;types->setObjectName("cleanerCategoryChart");sl->addWidget(types);
-    auto* totals=label("No scan data.","cleanerTotals");sl->addWidget(totals);sl->addStretch();tabs->addTab(summary,"Space overview");
+    auto* totals=label("No scan data.","cleanerTotals");sl->addWidget(totals);sl->addStretch();auto* summaryScroll=new QScrollArea;summaryScroll->setWidgetResizable(true);summaryScroll->setWidget(summary);tabs->addTab(summaryScroll,"Space overview");
     auto* largest=table({"Size","File","Location"},"cleanerLargest");auto* leftovers=table({"Size","File","Location"},"cleanerLeftovers");
     auto current=std::make_shared<c::Result>();auto token=std::make_shared<std::atomic_bool>(false);auto busy=std::make_shared<bool>(false);auto scannedAge=std::make_shared<unsigned>(7);
-    auto* filesPage=new QWidget;auto* fl=new QVBoxLayout(filesPage);fl->addWidget(label("Largest 250 regular files in the scanned scope. Hard-linked files may appear more than once; sizes are logical.","muted"));fl->addWidget(largest,1);
-    auto* openLargest=push("Open containing folder");fl->addWidget(openLargest);tabs->addTab(filesPage,"Largest files");
+    auto* filesPage=new QWidget;auto* fl=new QVBoxLayout(filesPage);fl->addWidget(label("Largest 250 regular files in scanned scope. Chart compares the top five only; location column shows each parent folder. Logical sizes may include hard links.","muted"));auto* bigChart=new Donut;bigChart->setObjectName("cleanerLargestChart");fl->addWidget(bigChart);fl->addWidget(largest,1);
+    auto* openLargest=push("Open containing folder");auto* copyLargest=push("Copy exact path");auto* largestActions=new QHBoxLayout;largestActions->addWidget(openLargest);largestActions->addWidget(copyLargest);fl->addLayout(largestActions);tabs->addTab(filesPage,"Largest files");
     auto* reviewPage=new QWidget;auto* rl=new QVBoxLayout(reviewPage);rl->addWidget(label("Possible temporary files, old backups, logs and partial downloads. Names alone cannot establish that a file is orphaned or safe to delete.","muted"));rl->addWidget(leftovers,1);
-    auto* openReview=push("Open containing folder");rl->addWidget(openReview);tabs->addTab(reviewPage,"Leftovers review");
+    auto* openReview=push("Open containing folder");auto* ownership=push("Check package ownership","cleanerOwnership");auto* ownershipStatus=label("Select a possible leftover for an optional package ownership lookup.","cleanerOwnershipStatus");auto* reviewActions=new QHBoxLayout;reviewActions->addWidget(openReview);reviewActions->addWidget(ownership);rl->addLayout(reviewActions);rl->addWidget(ownershipStatus);tabs->addTab(reviewPage,"Leftovers review");
     auto* cachePage=new QWidget;auto* cl=new QVBoxLayout(cachePage);cl->addWidget(label("Only old, single-link regular files owned by you inside your account's ~/.cache qualify. Close affected applications first. Select individual files; deletion is permanent.","muted"));
     auto* candidates=table({"Select","Size","File","Location"},"cleanerCandidates");cl->addWidget(candidates,1);
     auto* remove=push("Review and delete selected cache files…","cleanerDelete");remove->setEnabled(false);cl->addWidget(remove);
@@ -130,13 +134,31 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     const auto open=[page,current](QTableWidget* t,bool review){int i=t->currentRow();const auto& v=review?current->review:current->largest;if(i<0||i>=static_cast<int>(v.size()))return;
         const auto raw=v[i].path.parent_path().native();const auto decoded=QFile::decodeName(raw.c_str());if(QFile::encodeName(decoded)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||!QDesktopServices::openUrl(QUrl::fromLocalFile(decoded)))QMessageBox::information(page,"Open folder","The folder could not be opened.");};
     QObject::connect(openLargest,&QPushButton::clicked,page,[open,largest]{open(largest,false);});QObject::connect(openReview,&QPushButton::clicked,page,[open,leftovers]{open(leftovers,true);});
+    QObject::connect(copyLargest,&QPushButton::clicked,page,[current,largest]{
+        const int i=largest->currentRow();if(i<0||i>=static_cast<int>(current->largest.size()))return;
+        const auto raw=current->largest[i].path.native();const auto decoded=QFile::decodeName(raw.c_str());
+        if(QFile::encodeName(decoded)==QByteArray(raw.data(),static_cast<int>(raw.size())))QApplication::clipboard()->setText(decoded);
+    });
+    QObject::connect(ownership,&QPushButton::clicked,page,[=]{
+        const int i=leftovers->currentRow();if(*busy||i<0||i>=static_cast<int>(current->review.size()))return;
+        const auto raw=current->review[i].path.native();const auto path=QFile::decodeName(raw.c_str());
+        if(QFile::encodeName(path)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||path.contains('*')||path.contains('?')||path.contains('[')||path.contains('\\')||path.contains('\n')||path.contains('\r')){ownershipStatus->setText("Exact ownership lookup unavailable for this filename.");return;}
+        const auto dpkg=tux::trustedSystemExecutable("dpkg-query");if(dpkg.isEmpty()){ownershipStatus->setText("Package ownership lookup unavailable.");return;}
+        ownership->setEnabled(false);ownershipStatus->setText("Checking registered package ownership…");
+        AsyncCommand::run(page,dpkg,{"-S","--",path},5000,8192,[ownership,ownershipStatus,path](const AsyncCommandResult& result){
+            ownership->setEnabled(true);
+            if(!result.ok()){ownershipStatus->setText("No confirmed owner or lookup failed for "+path+". This does not establish that the file is orphaned or safe to remove.");return;}
+            QStringList owners;for(const auto& line:result.output.split('\n',Qt::SkipEmptyParts)){const int at=line.indexOf(": ");if(at>0&&line.mid(at+2)==path)owners<<line.left(at);}
+            ownershipStatus->setText(owners.isEmpty()?"No exact registered owner confirmed; not proof of an orphan.":"Registered owner: "+owners.join(", ")+" · "+path);
+        });
+    });
     const auto modeChanged=[modes,root,browse,minimum,age]{const int i=modes->currentIndex();root->setEnabled(i>=2);browse->setEnabled(i>=2);minimum->setEnabled(i==3);age->setEnabled(i==3);};
     QObject::connect(modes,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[modeChanged](int){modeChanged();});modeChanged();
     QObject::connect(browse,&QPushButton::clicked,page,[page,root]{const auto folder=QFileDialog::getExistingDirectory(page,"Select scan folder",root->text());if(!folder.isEmpty())root->setText(folder);});
     QObject::connect(cancel,&QPushButton::clicked,page,[token,status]{token->store(true);status->setText("Cancellation requested…");});
     QObject::connect(page,&QObject::destroyed,[token]{token->store(true);});
     QObject::connect(scan,&QPushButton::clicked,page,[=]{
-        if(*busy)return;
+        if(*busy||!ownership->isEnabled())return;
         const int mode=modes->currentIndex();const auto cache=c::homeCache();c::fs::path path;
         if(mode==0)path=cache;else if(mode==1)path=cache.empty()?c::fs::path{}:cache.parent_path();else path=QFile::encodeName(root->text()).constData();
         if(path.empty()||!path.is_absolute()){status->setText("Choose an absolute folder path.");return;}
@@ -144,7 +166,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(mode==3){limits.minBytes=static_cast<std::uint64_t>(minimum->value())*1048576;limits.ageDays=age->value();}
         *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(true);remove->setEnabled(false);
         modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);
-        *current={};fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);disk->setValues({});types->setValues({});totals->setText("Scan running…");
+        *current={};fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);disk->setValues({});types->setValues({});bigChart->setValues({});ownershipStatus->setText("Select a possible leftover for ownership lookup.");totals->setText("Scan running…");
         status->setText("Scanning "+pathText(path)+" · bounded, same filesystem, no symlink traversal…");
         auto result=std::make_shared<c::Result>();
         auto* thread=QThread::create([result,path,cache,limits,token]{try{*result=c::scan(path,cache,limits,*token);}catch(const std::exception&){result->error="Scan interrupted by a filesystem or resource error.";}}); 
@@ -153,6 +175,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);
             if(current->volume.known)disk->setValues({{"Used",current->volume.used},{"Available",current->volume.available},{"Reserved/free unavailable",current->volume.reserved}});
             QVector<QPair<QString,qulonglong>> series;for(int i=0;i<c::Count;++i)series.append({categories[i],current->categories[i]});types->setValues(series);
+            QVector<QPair<QString,qulonglong>> big;for(unsigned i=0;i<current->largest.size()&&i<5;++i)big.append({pathText(current->largest[i].path.filename()),current->largest[i].bytes});bigChart->setValues(big);
             status->setText(!current->error.empty()?QString::fromStdString(current->error):QString("%1 · %2 entries · %3 regular files · %4 skipped").arg(current->cancelled?"Cancelled — partial results":current->limited?"Limit reached — partial results":current->complete?"Scan complete":"Partial scan — inaccessible or excluded entries").arg(current->visited).arg(current->files).arg(current->skipped));
             totals->setText(QString("%1 largest files shown · %2 possible leftovers · %3 old cache candidates. Scan totals are logical bytes and may include hard links or sparse files.").arg(current->largest.size()).arg(current->review.size()).arg(current->candidates.size()));
             remove->setEnabled(current->error.empty()&&!current->cancelled&&!current->candidates.empty());
@@ -160,7 +183,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     });
     QObject::connect(remove,&QPushButton::clicked,page,[=]{
         if(*busy||current->cancelled)return;
-        std::vector<c::Entry> selected;std::uint64_t logical=0;for(int i=0;i<candidates->rowCount();++i)if(candidates->item(i,0)->checkState()==Qt::Checked){selected.push_back(current->candidates[i]);logical+=current->candidates[i].bytes;}
+        std::vector<c::Entry> selected;std::uint64_t logical=0;for(int i=0;i<candidates->rowCount();++i)if(candidates->item(i,0)->checkState()==Qt::Checked){const auto& e=current->candidates[i];if(e.bytes>std::numeric_limits<std::uint64_t>::max()-logical){QMessageBox::warning(page,"Cleanup","Selected sizes exceed the safe accounting limit.");return;}selected.push_back(e);logical+=e.bytes;}
         if(selected.empty()){QMessageBox::information(page,"Cleanup","Select the exact cache files to remove.");return;}
         if(selected.size()>100){QMessageBox::information(page,"Cleanup","Select at most 100 files per batch.");return;}
         if(QMessageBox::question(page,"Permanently remove selected cache files?",QString("Delete %1 selected cache files (%2 logical bytes)? Close affected applications first. Changed, linked or unsafe files will be refused. This is not reversible.").arg(selected.size()).arg(sizeText(logical)),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes)return;
