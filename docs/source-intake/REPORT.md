@@ -1,6 +1,6 @@
 # SysPulse source intake report
 
-Batch intake-001 — Linux references. Three standalone read-only Bash prototypes are included; native application integration pending. Nine other utility specifications are queued. No raw attachments, real configurations or logs included. Windows is planned, not implemented.
+Batch intake-001 — Linux references. Three standalone read-only Bash prototypes are included; SP-001 native integration partially implemented; remaining native integration pending. Nine other utility specifications are queued. No raw attachments, real configurations or logs included. Windows is planned, not implemented.
 
 | ID | Capability | Intake outcome |
 |---|---|---|
@@ -17,4 +17,6 @@ Batch intake-001 — Linux references. Three standalone read-only Bash prototype
 | SP-011 | Browser cache and launcher configuration | Specification |
 | SP-012 | Scheduled maintenance | Specification |
 
-Privacy: clean-room prototypes, no private identifiers or original logs. Machine-specific notes inform designs only. Known-identifier scanning is limited, not guaranteed anonymization. Testing: smoke checks on staging prototypes cover syntax and synthetic privacy omission; native desktop/hardware and C++ integration not yet tested. No claims of Windows testing. Hourly scheduling remains blocked pending available task capacity. Keep this report current alongside manifest and queue; record real test/commit evidence on each batch. See implementation queue for acceptance criteria.
+Privacy: clean-room prototypes, no private identifiers or original logs. Machine-specific notes inform designs only. Known-identifier scanning is limited, not guaranteed anonymization. Testing: smoke checks on staging prototypes cover syntax and synthetic privacy omission; native SP-001 preview built and local CTest passed; physical desktop/hardware and remaining C++ integration not yet tested. No claims of Windows testing. Hourly scheduling remains blocked pending available task capacity. Keep this report current alongside manifest and queue; record real test/commit evidence on each batch. See implementation queue for acceptance criteria.
+
+Native milestone: [0.1.0 preview](../PREVIEW_0.1.0.md), [implementation status](IMPLEMENTATION_STATUS.md). Signed-update fixture tests passed; no actual published release or enrolled key. Existing intake IDs preserved.

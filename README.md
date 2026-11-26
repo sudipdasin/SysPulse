@@ -2,8 +2,9 @@
 
 Open-source, lightweight system utilities for Linux and Windows: diagnose, maintain, repair, optimize and administer computers. Community development initially targets Linux Mint/XFCE, with native Windows support planned.
 
-**Status:** project migration and source-intake foundation; not an installable application release. The previous Tux Steward C++/Qt project is a candidate for reviewed feature migration, not a dependency or a completed port.
+**Status:** native Linux 0.1.0 source preview and source-intake foundation; no published release or verified production package. The previous Tux Steward C++/Qt project is a candidate for reviewed feature migration, not a dependency or a completed port.
 
+- [Build and install native preview](docs/PREVIEW_0.1.0.md)
 - [Developer handoff](docs/PROJECT_HANDOFF.md)
 - [Source intake report](docs/source-intake/REPORT.md)
 - [Implementation queue](docs/source-intake/IMPLEMENTATION_QUEUE.md)

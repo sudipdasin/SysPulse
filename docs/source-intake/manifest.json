@@ -6,7 +6,7 @@
       "id": "SP-001",
       "name": "System diagnostics",
       "intake": "read_only_prototype",
-      "integration": "pending"
+      "integration": "partial_native_preview"
     },
     {
       "id": "SP-002",
