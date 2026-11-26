@@ -4,8 +4,8 @@ set -euo pipefail
 umask 022
 [[ $# == 3 && $EUID != 0 ]] || { echo 'Usage (non-root): build-candidate.sh SOURCE WORK OUTPUT' >&2; exit 1; }
 readonly source_dir=$1 work=$2 output=$3
-readonly app_version=3.0.0-alpha.11 deb_version=3.0.0~alpha11~render1
-readonly baseline=1f9952f3f9f69e9ea5e78142a078d55bc6c85d9c
+readonly app_version=3.0.0-alpha.12 deb_version=3.0.0~alpha12~render1
+readonly baseline=ad9584d7d21e4f0f9bffce7113fdc501a6f2b803
 [[ -d $source_dir && -d $work && -d $output && -z $(ls -A -- "$work") && -z $(ls -A -- "$output") ]] || { echo 'Fresh work and output directories required' >&2; exit 1; }
 [[ $(dpkg --print-architecture) == amd64 ]] || { echo 'amd64 required' >&2; exit 1; }
 . /etc/os-release
@@ -30,7 +30,7 @@ packages=("$work/build/packages/"*.deb)
 deb=${packages[0]}
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]] || { echo 'Wrong DEB metadata' >&2; exit 1; }
 # All checks precede export. Never export raw build logs or credentials.
-name=syspulse-3.0.0-alpha.11-x86_64-ubuntu-22.04-render-eval.deb
+name=syspulse-3.0.0-alpha.12-x86_64-ubuntu-22.04-render-eval.deb
 cp -- "$deb" "$output/$name"
 (cd "$output" && sha256sum "$name" > SHA256SUMS && sha256sum -c SHA256SUMS)
 printf 'Source baseline: %s\nApplication version: %s\nDebian package version: %s\nBuild target: Ubuntu 22.04 amd64\nBuild, CTest, extra component tests and package verification: passed in build container\nSee INSTALL-STATUS.txt for separate container installation/upgrade evidence. Physical Mint XFCE and production signing/updates: NOT verified\nEvaluation candidate only; not an official release.\n' "$baseline" "$app_version" "$deb_version" > "$output/BUILD-STATUS.txt"

@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.11 Cleaner evaluation candidate.** Adds native four-mode storage scan, three usage charts, largest files and locations, possible leftover review, selected old user cache cleanup and installed package inventory. Full native tests and package lifecycle validation pending.
+**Alpha.12 Cleaner intelligence candidate.** Adds optional bounded full byte duplicate comparison and logical versus allocated block accounting with hard-link alias exclusion. Native and package lifecycle gates pending.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)
