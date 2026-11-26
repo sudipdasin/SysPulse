@@ -17,6 +17,8 @@
 #include <QTabWidget>
 #include <QThread>
 #include <QTimer>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
 namespace {
@@ -28,6 +30,9 @@ int main(int argc,char** argv) {
     QApplication app(argc,argv);app.setApplicationName("SysPulse");app.setApplicationVersion(tux::Version);
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     syspulse::applyPrecisionTheme();
+    QTemporaryDir preferences;
+    if(!preferences.isValid())return 1;
+    QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,preferences.path());
     try {
         syspulse::Window window(false);window.resize(1366,768);window.show();events(50);
         require(window.navigationCount()==13,"existing navigation plus Control Panel");
@@ -146,7 +151,16 @@ int main(int argc,char** argv) {
         auto* updateTimer=window.findChild<QTimer*>("cachedUpdateTimer");
         require(autoCheck&&updateTimer&&!autoCheck->isChecked()&&!updateTimer->isActive(),"cached update checks off by default");
         autoCheck->setChecked(true);require(updateTimer->isActive()&&updateTimer->interval()==1800000,"explicit session opt-in starts bounded polling");
+        {
+            QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+            require(settings.value("updates/automaticCachedCheck").toBool(),"opt-in saved to isolated user preferences");
+            syspulse::Window restarted(false);
+            auto* savedCheck=restarted.findChild<QCheckBox*>("automaticCachedUpdateCheck");
+            auto* savedTimer=restarted.findChild<QTimer*>("cachedUpdateTimer");
+            require(savedCheck&&savedTimer&&savedCheck->isChecked()&&savedTimer->isActive(),"opt-in restored on next launch");
+        }
         autoCheck->setChecked(false);require(!updateTimer->isActive(),"disable stops polling");
+        {QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");require(!settings.value("updates/automaticCachedCheck").toBool(),"opt-out saved");}
         search->setText("Experimental");QMetaObject::invokeMethod(search,"returnPressed");
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");

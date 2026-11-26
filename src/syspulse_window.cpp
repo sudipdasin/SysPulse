@@ -16,6 +16,7 @@
 #include "tux/async_command.hpp"
 #include "syspulse/apt_status.hpp"
 #include <QTimer>
+#include <QSettings>
 #include <QAction>
 #include <QMenu>
 #include "tux/health_dialog.hpp"
@@ -659,11 +660,21 @@ struct Window::Impl {
         managerButton->setObjectName("openSystemUpdateManager");managerButton->setEnabled(!tux::trustedSystemExecutable("mintupdate").isEmpty());row->addWidget(managerButton);
         auto* releaseButton=button("Official releases…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/releases"));},w);
         releaseButton->setObjectName("openOfficialReleases");row->addWidget(releaseButton);layout->addLayout(row);
-        auto* automatic=new QCheckBox("Automatically check cached APT versions every 30 minutes (this session)");
+        auto* automatic=new QCheckBox("Automatically check cached APT versions every 30 minutes while SysPulse is open");
         automatic->setObjectName("automaticCachedUpdateCheck");layout->addWidget(automatic);
         auto* timer=new QTimer(frame);timer->setObjectName("cachedUpdateTimer");timer->setInterval(30*60*1000);
         QObject::connect(timer,&QTimer::timeout,check,[check]{if(check->isEnabled())check->click();});
-        QObject::connect(automatic,&QCheckBox::toggled,frame,[timer](bool enabled){if(enabled)timer->start();else timer->stop();});
+        auto* preferenceStatus=text("","muted");preferenceStatus->setObjectName("updatePreferenceStatus");preferenceStatus->setTextFormat(Qt::PlainText);layout->addWidget(preferenceStatus);
+        QSettings saved(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+        const bool initial=saved.status()==QSettings::NoError&&saved.value("updates/automaticCachedCheck",false).toBool();
+        automatic->setChecked(initial);if(initial)timer->start();
+        if(saved.status()!=QSettings::NoError)preferenceStatus->setText("Update preference could not be read; automatic checks remain off.");
+        QObject::connect(automatic,&QCheckBox::toggled,frame,[timer,preferenceStatus](bool enabled){
+            if(enabled)timer->start();else timer->stop();
+            QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+            settings.setValue("updates/automaticCachedCheck",enabled);settings.sync();
+            preferenceStatus->setText(settings.status()==QSettings::NoError?"Update preference saved for the next launch.":"Preference could not be saved; this change applies only to the current session.");
+        });
         QObject::connect(check,&QPushButton::clicked,frame,[frame,check,status]{
             const auto apt=tux::trustedSystemExecutable("apt-cache");
             const auto dpkg=tux::trustedSystemExecutable("dpkg");
