@@ -79,8 +79,6 @@ QString unavailable(const Action& tool) {
         return "Requires X11; XWayland cannot control native Wayland devices.";
     if (((tool.admin||tool.changes)?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
         return "Missing dependency: "+tool.command.first();
-    if(tool.command.first()=="lsblk"&&(!QFileInfo("/sys/dev/block").isDir()||!QFileInfo("/sys/dev/block").isReadable()))
-        return "Block device inventory requires readable /sys/dev/block. Use a normal Linux desktop session or a VM with block devices exposed.";
     if (tool.admin && trustedSystemExecutable("pkexec").isEmpty())
         return "Missing dependency: pkexec (PolicyKit authentication agent required)";
     if(tool.id=="zswap-enable"&&!syspulse::system_memory::eligible())
@@ -122,6 +120,14 @@ Result execute(const QString& id, bool confirmed, int timeoutMs, Output output, 
     // Cancellation is deliberately unavailable to settings-changing/admin tasks.
     auto result=runCommand(command,timeoutMs,std::move(output),diagnosticCancellation(tool,cancel));
     result.action=tool.title;
+    // Do not block read-only health workflows based on a host filesystem
+    // assumption. Explain missing sysfs only after a real command failure.
+    if(tool.command.first()=="lsblk"&&result.code!=0&&!result.cancelled&&result.code!=124&&
+       (!QFileInfo("/sys/dev/block").isDir()||!QFileInfo("/sys/dev/block").isReadable())){
+        const QByteArray explanation="\nBlock inventory may be unavailable because /sys/dev/block is not readable. Retry on the desktop or a VM exposing block devices.\n";
+        if(result.output.size()+explanation.size()>OutputLimit){result.output=result.output.right(OutputLimit-explanation.size());result.truncated=true;}
+        result.output.append(explanation);
+    }
     return result;
 }
 QJsonObject Result::json() const {
