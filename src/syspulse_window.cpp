@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/fluent_visuals.hpp"
 #include "syspulse/cleaner_page.hpp"
 #include "syspulse/health_probe.hpp"
 #include "syspulse/memory_relief.hpp"
@@ -190,7 +191,7 @@ struct Window::Impl {
     void build() {
         w->setObjectName("sysPulseWindow");w->setWindowTitle(QString("SysPulse %1 · XFCE Edition").arg(tux::Version));
         w->resize(1366,768);w->setMinimumSize(1000,680);
-        auto* root=new QWidget(w);auto* outer=new QVBoxLayout(root);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
+        auto* root=new fluent::Backdrop(w);auto* outer=new QVBoxLayout(root);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
         auto* shell=new QHBoxLayout;shell->setContentsMargins(0,0,0,0);shell->setSpacing(0);
         outer->addLayout(shell,1);
         auto* sidebar=new QWidget;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(248);
@@ -201,8 +202,8 @@ struct Window::Impl {
         auto addNav=[this,sl](const QString& id,const QString& title) {
             auto* b=new QPushButton(QString(title).replace("&","&&"));b->setObjectName("navButton");b->setCheckable(true);b->setAutoExclusive(true);
             b->setProperty("displayTitle",title);
-            const QMap<QString,QStyle::StandardPixmap> icons={{"control",QStyle::SP_FileDialogContentsView},{"overview",QStyle::SP_ComputerIcon},{"performance",QStyle::SP_MediaPlay},{"storage",QStyle::SP_DriveHDIcon},{"management",QStyle::SP_FileDialogDetailedView},{"network",QStyle::SP_DriveNetIcon},{"desktop",QStyle::SP_DesktopIcon},{"security",QStyle::SP_MessageBoxInformation},{"schedules",QStyle::SP_BrowserReload},{"recovery",QStyle::SP_ArrowBack},{"reports",QStyle::SP_FileIcon},{"experimental",QStyle::SP_MessageBoxWarning},{"settings",QStyle::SP_DialogHelpButton}};
-            b->setIcon(w->style()->standardIcon(icons.value(id,QStyle::SP_FileIcon)));b->setIconSize(QSize(16,16));
+            b->setIcon(fluent::glyph(id));b->setIconSize(QSize(20,20));
+            b->setCursor(Qt::PointingHandCursor);b->setToolTip(title);
             b->setAccessibleName(title);b->setProperty("pageId",id);nav.insert(id,b);sl->addWidget(b);
             QObject::connect(b,&QPushButton::clicked,w,[this,id]{navigate(id);});
         };
@@ -214,13 +215,13 @@ struct Window::Impl {
         addNav("schedules","Schedules");addNav("recovery","Recovery");addNav("reports","Reports");addNav("experimental","Experimental");
         sl->addStretch(1);addNav("settings","Settings & help");
         shell->addWidget(sidebar);
-        auto* body=new QWidget;auto* bl=new QVBoxLayout(body);bl->setContentsMargins(0,0,0,0);bl->setSpacing(0);
+        auto* body=new QWidget;body->setObjectName("fluentBody");auto* bl=new QVBoxLayout(body);bl->setContentsMargins(0,0,0,0);bl->setSpacing(0);
         auto* utility=new QWidget;utility->setObjectName("utilityBar");auto* ul=new QHBoxLayout(utility);ul->setContentsMargins(24,12,24,12);
         breadcrumb=text("Workspace / Overview");breadcrumb->setObjectName("breadcrumb");ul->addWidget(breadcrumb,1);
-        search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->setMaximumWidth(420);ul->addWidget(search,1);
-        auto* helpButton=new QPushButton("Help");helpButton->setObjectName("helpMenuButton");
+        search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->addAction(fluent::glyph("search"),QLineEdit::LeadingPosition);search->setMaximumWidth(420);ul->addWidget(search,1);
+        auto* helpButton=new QPushButton(fluent::glyph("help"),"Help");helpButton->setIconSize(QSize(18,18));helpButton->setObjectName("helpMenuButton");
         auto* helpMenu=new QMenu(helpButton);
-        auto* updates=helpMenu->addAction("Update application…");updates->setObjectName("helpUpdateApplication");
+        auto* updates=helpMenu->addAction(fluent::glyph("updates"),"Update application…");updates->setObjectName("helpUpdateApplication");
         QObject::connect(updates,&QAction::triggered,w,[this]{
             navigate("settings");
             auto* page=pages.value("settings");
@@ -228,7 +229,7 @@ struct Window::Impl {
             auto* status=page->findChild<QLabel*>("applicationUpdateStatus");
             if(scroll&&status)scroll->ensureWidgetVisible(status);
         });
-        auto* settings=helpMenu->addAction("Settings & help");QObject::connect(settings,&QAction::triggered,w,[this]{navigate("settings");});
+        auto* settings=helpMenu->addAction(fluent::glyph("settings"),"Settings & help");QObject::connect(settings,&QAction::triggered,w,[this]{navigate("settings");});
         helpButton->setMenu(helpMenu);ul->addWidget(helpButton);bl->addWidget(utility);
         stack=new QStackedWidget;stack->setObjectName("sysPulsePages");bl->addWidget(stack,1);shell->addWidget(body,1);
         footer=text(QString(),"statusFooter");footer->setObjectName("statusFooter");outer->addWidget(footer);
@@ -263,6 +264,12 @@ struct Window::Impl {
         management->canMutate=[this]{for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
         management->onBusyChanged=[this](bool){updateFooter();};
         for(auto i=pages.cbegin();i!=pages.cend();++i){i.value()->setProperty("sysPulsePageId",i.key());stack->addWidget(i.value());}
+        for(auto* tabs:stack->findChildren<QTabWidget*>()) {
+            tabs->setIconSize(QSize(18,18));
+            for(int index=0;index<tabs->count();++index) {
+                if(tabs->tabIcon(index).isNull())tabs->setTabIcon(index,fluent::glyph(fluent::tabGlyph(tabs->tabText(index))));
+            }
+        }
         performance->onMetricsChanged=[this]{updateMetrics();};
         performance->onOpenStartup=[this]{navigate("management");management->showStartup();};
         performance->onOpenServices=[this]{navigate("management");management->showServices();};

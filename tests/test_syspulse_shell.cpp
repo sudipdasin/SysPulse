@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QAction>
+#include <QMenu>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QTableView>
@@ -36,6 +37,17 @@ int main(int argc,char** argv) {
     try {
         syspulse::Window window(false);window.resize(1366,768);window.show();events(50);
         require(window.navigationCount()==13,"existing navigation plus Control Panel");
+        int iconCount=0;
+        for(auto* button:window.findChildren<QPushButton*>())if(button->objectName()=="navButton"){
+            require(!button->icon().isNull()&&button->iconSize().width()==20,"every navigation item has a lightweight vector icon");
+            require(!button->accessibleName().isEmpty()&&!button->toolTip().isEmpty(),"navigation retains accessible labels and hints");++iconCount;
+        }
+        require(iconCount==13,"all thirteen destinations decorated");
+        require(window.findChild<QWidget*>("fluentBackdrop"),"cached local backdrop installed");
+        auto* help=window.findChild<QPushButton*>("helpMenuButton");
+        require(help&&help->menu()&&!help->icon().isNull(),"help menu has icon");
+        for(auto* action:help->menu()->actions())require(!action->icon().isNull(),"help commands have distinct icon glyphs");
+        for(auto* tabs:window.findChildren<QTabWidget*>())for(int i=0;i<tabs->count();++i)require(!tabs->tabIcon(i).isNull(),"workspace tabs have icons");
         require(window.currentPageId()=="overview","overview is the initial destination");
         const auto idleTimers = [&window] {
             int active = 0;
