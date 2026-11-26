@@ -9,7 +9,8 @@
 #include "tux/core.hpp"
 #include "tux/trusted_command.hpp"
 #include "tux/async_command.hpp"
-#include <QRegularExpression>
+#include "syspulse/apt_status.hpp"
+#include <QTimer>
 #include "tux/health_dialog.hpp"
 #include "tux/report_dialog.hpp"
 #include "tux/process_manager.hpp"
@@ -441,22 +442,32 @@ struct Window::Impl {
         managerButton->setObjectName("openSystemUpdateManager");managerButton->setEnabled(!tux::trustedSystemExecutable("mintupdate").isEmpty());row->addWidget(managerButton);
         auto* releaseButton=button("Official releases…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/releases"));},w);
         releaseButton->setObjectName("openOfficialReleases");row->addWidget(releaseButton);layout->addLayout(row);
+        auto* automatic=new QCheckBox("Automatically check cached APT versions every 30 minutes (this session)");
+        automatic->setObjectName("automaticCachedUpdateCheck");layout->addWidget(automatic);
+        auto* timer=new QTimer(frame);timer->setObjectName("cachedUpdateTimer");timer->setInterval(30*60*1000);
+        QObject::connect(timer,&QTimer::timeout,check,[check]{if(check->isEnabled())check->click();});
+        QObject::connect(automatic,&QCheckBox::toggled,frame,[timer](bool enabled){if(enabled)timer->start();else timer->stop();});
         QObject::connect(check,&QPushButton::clicked,frame,[frame,check,status]{
             const auto apt=tux::trustedSystemExecutable("apt-cache");
+            const auto dpkg=tux::trustedSystemExecutable("dpkg");
             const auto env=tux::trustedSystemExecutable("env");
-            if(apt.isEmpty()||env.isEmpty()){status->setText("APT version query is unavailable.");return;}
+            if(apt.isEmpty()||dpkg.isEmpty()||env.isEmpty()){status->setText("APT version query is unavailable.");return;}
             check->setEnabled(false);status->setText("Reading existing APT metadata locally…");
-            AsyncCommand::run(frame,env,{"LC_ALL=C",apt,"policy","syspulse"},5000,16384,[check,status](const AsyncCommandResult& result){
-                check->setEnabled(true);
-                if(!result.ok()){status->setText("APT query failed, timed out or returned incomplete output. No update status can be established.");return;}
-                const auto output=QString::fromUtf8(result.output);
-                const QRegularExpression installedRx("(?m)^  Installed: ([A-Za-z0-9.+:~()-]+)$");
-                const QRegularExpression candidateRx("(?m)^  Candidate: ([A-Za-z0-9.+:~()-]+)$");
-                const auto installed=installedRx.match(output),candidate=candidateRx.match(output);
-                if(!installed.hasMatch()||!candidate.hasMatch()){
-                    status->setText("No SysPulse version found in local APT metadata. Check the official release page; no automatic installation will be attempted.");return;
-                }
-                status->setText(QString("APT installed: %1 · Cached candidate: %2\nThis is local APT metadata, not proof of a current signed SysPulse release. Refresh and review packages in Update Manager.").arg(installed.captured(1),candidate.captured(1)));
+            AsyncCommand::run(frame,env,{"LC_ALL=C",apt,"policy","syspulse"},5000,16384,[frame,check,status,dpkg,env](const AsyncCommandResult& result){
+                if(!result.ok()){check->setEnabled(true);status->setText("APT query failed or returned incomplete output. Update status unknown.");return;}
+                const auto versions=syspulse::aptstatus::parse(result.output.toStdString());
+                if(!versions){check->setEnabled(true);status->setText("No valid SysPulse version pair found in local APT metadata.");return;}
+                const auto installed=QString::fromStdString(versions->installed),candidate=QString::fromStdString(versions->candidate);
+                const auto summary=QString("APT installed: %1 · Cached candidate: %2\n").arg(installed,candidate);
+                const auto caveat=QString("\nCached metadata only; refresh and verify repository trust in Update Manager.");
+                if(installed=="(none)"||candidate=="(none)"){check->setEnabled(true);status->setText(summary+"No installed/candidate pair to compare."+caveat);return;}
+                AsyncCommand::run(frame,env,{"LC_ALL=C",dpkg,"--compare-versions",candidate,"gt",installed},3000,1024,[check,status,summary,caveat](const AsyncCommandResult& comparison){
+                    check->setEnabled(true);
+                    if(comparison.timedOut||comparison.cancelled||comparison.truncated||!comparison.error.isEmpty()||!comparison.output.trimmed().isEmpty()||(comparison.exitCode!=0&&comparison.exitCode!=1)){
+                        status->setText(summary+"Version comparison unavailable."+caveat);return;
+                    }
+                    status->setText(summary+(comparison.exitCode==0?"A newer cached package candidate is available.":"No newer cached package candidate.")+caveat);
+                });
             });
         });
         layout->addWidget(text("Checking here is read-only and does not refresh repositories. Installation, trust enrollment and automatic repository checks require a configured signed release feed.","muted"));

@@ -3,6 +3,7 @@
 #include "syspulse/performance.hpp"
 #include "tux/core.hpp"
 #include <QApplication>
+#include <QCheckBox>
 #include <QElapsedTimer>
 #include <QDialog>
 #include <QLabel>
@@ -75,6 +76,11 @@ int main(int argc,char** argv) {
         require(reportTable->rowCount()==0,"memory relief does not fabricate diagnostic records");
         require(window.navigate("settings"),"application update controls accessible");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
+        auto* autoCheck=window.findChild<QCheckBox*>("automaticCachedUpdateCheck");
+        auto* updateTimer=window.findChild<QTimer*>("cachedUpdateTimer");
+        require(autoCheck&&updateTimer&&!autoCheck->isChecked()&&!updateTimer->isActive(),"cached update checks off by default");
+        autoCheck->setChecked(true);require(updateTimer->isActive()&&updateTimer->interval()==1800000,"explicit session opt-in starts bounded polling");
+        autoCheck->setChecked(false);require(!updateTimer->isActive(),"disable stops polling");
         search->setText("Experimental");QMetaObject::invokeMethod(search,"returnPressed");
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");
