@@ -1,26 +1,26 @@
-> **Migration correction:** The 0.x X11 previews below are historical experiments, not the established SysPulse application. The approved Qt 3.0.0-alpha.2 foundation is being staged for migration; see [continuity policy](docs/CONTINUITY.md). No new product UI or release from these previews.
+# SysPulse Community — established Qt migration candidate
 
-# SysPulse
+This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-Open-source, lightweight system utilities for Linux and Windows: diagnose, maintain, repair, optimize and administer computers. Community development initially targets Linux Mint/XFCE, with native Windows support planned.
+**Not a released or verified build.** All original C++ source, header, assets and regression-test files have been transferred and checked against their Git blobs. Build configuration retains the original Qt targets with generic package contact metadata. Full Qt compilation, CTest, desktop and packaging verification are pending. Historical X11 files still tracked here are not the product or supported update path.
 
-**Status:** native Linux 0.3.0 source preview and source-intake foundation; no published release or verified production package. The previous Tux Steward C++/Qt project is a candidate for reviewed feature migration, not a dependency or a completed port.
-
-- [Build and install native preview](docs/PREVIEW_0.3.0.md)
-- [Previous preview](docs/PREVIEW_0.1.0.md)
-- [Developer handoff](docs/PROJECT_HANDOFF.md)
+- [Continuity policy](docs/CONTINUITY.md)
+- [Migration status](docs/QT_MIGRATION_STATUS.md)
+- [Approved UI](docs/SYSPULSE_UI_SPECIFICATION.md)
+- [Original milestone scope (historical)](docs/SYSPULSE_MILESTONE.md)
+- [Privacy](PRIVACY.md)
 - [Source intake report](docs/source-intake/REPORT.md)
-- [Implementation queue](docs/source-intake/IMPLEMENTATION_QUEUE.md)
-- [Privacy policy](docs/source-intake/PRIVACY_POLICY.md)
-- [Utility manifest](docs/source-intake/manifest.json)
-- [Intake changelog](docs/source-intake/CHANGELOG.md)
+- [Offline VM verification](tools/vm/README.md)
 
-Linux read-only reference prototypes can be invoked using Bash: `bash source-intake/linux/capabilities.sh`, `bash source-intake/linux/diagnostics.sh --summary`, `bash source-intake/linux/browser-process-summary.sh`. No privileges or installation are required. Review any detailed local diagnostic output before sharing. Query success does not imply health.
+On a compatible disposable Linux Mint/Ubuntu XFCE VM with CMake, compiler and Qt 5.15 Core/Widgets/Network development files:
 
-GPL v3; see LICENSE. Future Pro development belongs in a separate repository and must comply with all upstream licenses. No Pro code is included here.
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+./build/syspulse --version
+```
 
-**Install the preview:** after installing the documented build dependencies, run `bash tools/install-user` as a normal user. Native CLI options: `--diagnostics`, `--capabilities`, `--browser-summary`, `--version`.
+Only run the GUI as a normal user. Validate package dependencies and provenance on the actual target platform. Do not use the historical X11 installer or updater; the mature application does not yet have verified signed full-bundle updates. No GitHub Actions or CircleCI, no hosted CI release publication. See the current gates before merging or publishing.
 
-## System Control Center 0.4.0 preview
-
-A separate native Linux control center provides 13 panels, 40 catalog entries, and read-only diagnostic triage. Build and install it alongside the existing health application using [Control Center preview instructions](docs/CONTROL_CENTER_0.4.0.md). This is not an official packaged release; optional system tools must be installed separately.
+GNU GPL v3; see LICENSE and upstream source attribution.
