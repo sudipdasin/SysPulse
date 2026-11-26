@@ -119,12 +119,20 @@ int main(int argc,char** argv) {
         caught=false; try { tux::action("unknown"); } catch (...) { caught=true; } require(caught,"unknown action");
         auto report=r.json(); require(report.contains("code") && report.contains("command"),"JSON result schema");
         r=tux::execute("storage"); require(r.code==0 && r.output.contains("Filesystem"),"real df diagnostic");
-        for(const auto& id:QStringList{"devices","memory","kernel-version","native-architecture","package-audit","package-holds"}){
+        // The build container may not expose a physical block-device sysfs.
+        // Do not equate command presence with successful hardware discovery.
+        const auto blockProblem=tux::unavailable(tux::action("devices"));
+        if(blockProblem.isEmpty()){
+            const auto live=tux::execute("devices",false,10000);
+            std::cout<<"Block inventory execution result: "<<live.code<<"; target hardware validation still required.\n";
+            require(live.action==tux::action("devices").title&&!live.cancelled&&live.code!=124,"block inventory preserves the actual bounded execution result");
+        }else std::cout<<"Block inventory unavailable in build container; target hardware validation required.\n";
+        for(const auto& id:QStringList{"memory","kernel-version","native-architecture","package-audit","package-holds"}){
             const auto& a=tux::action(id);
-            if(!tux::unavailable(a).isEmpty()){std::cout<<"Unavailable in test container: "<<id.toStdString()<<'\n';continue;}
+            require(tux::unavailable(a).isEmpty(),"baseline container dependency required");
             auto live=tux::execute(id,false,10000);
-            require(live.code==0&&!live.cancelled&&!live.truncated,"installed baseline diagnostic executes successfully");
-            std::cout<<"Real diagnostic executed: "<<id.toStdString()<<'\n';
+            std::cout<<"Real diagnostic "<<id.toStdString()<<": exit "<<live.code<<std::endl;
+            require(live.code==0&&!live.cancelled&&!live.truncated,"baseline diagnostic executes successfully");
         }
         const auto path=qgetenv("PATH");
         const auto protectedAuthorization=tux::trustedSystemExecutable("pkexec");

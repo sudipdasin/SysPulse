@@ -2,6 +2,7 @@
 #include "tux/trusted_command.hpp"
 #include "syspulse/system_memory.hpp"
 #include <QJsonArray>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <stdexcept>
@@ -78,6 +79,8 @@ QString unavailable(const Action& tool) {
         return "Requires X11; XWayland cannot control native Wayland devices.";
     if (((tool.admin||tool.changes)?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
         return "Missing dependency: "+tool.command.first();
+    if(tool.command.first()=="lsblk"&&(!QFileInfo("/sys/dev/block").isDir()||!QFileInfo("/sys/dev/block").isReadable()))
+        return "Block device inventory requires readable /sys/dev/block. Use a normal Linux desktop session or a VM with block devices exposed.";
     if (tool.admin && trustedSystemExecutable("pkexec").isEmpty())
         return "Missing dependency: pkexec (PolicyKit authentication agent required)";
     if(tool.id=="zswap-enable"&&!syspulse::system_memory::eligible())
