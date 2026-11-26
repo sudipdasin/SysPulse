@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "batch": "intake-001",
+  "utilities": [
+    {
+      "id": "SP-001",
+      "name": "System diagnostics",
+      "intake": "read_only_prototype",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-002",
+      "name": "Capability detection",
+      "intake": "read_only_prototype",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-003",
+      "name": "Browser process summary",
+      "intake": "read_only_prototype",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-004",
+      "name": "Input device control",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-005",
+      "name": "HDD maintenance",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-006",
+      "name": "SSD maintenance",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-007",
+      "name": "Filesystem repair",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-008",
+      "name": "Low-memory optimization",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-009",
+      "name": "Gaming dependencies",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-010",
+      "name": "Wine management",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-011",
+      "name": "Browser configuration",
+      "intake": "specification_only",
+      "integration": "pending"
+    },
+    {
+      "id": "SP-012",
+      "name": "Scheduled maintenance",
+      "intake": "specification_only",
+      "integration": "pending"
+    }
+  ]
+}

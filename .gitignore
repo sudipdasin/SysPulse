@@ -1,0 +1,15 @@
+/build/
+/build-*/
+/dist/
+*.log
+*.trace
+*.env
+.env*
+.suite_config
+*debug_trace*
+*health_report*
+reports/
+private/
+local-config/
+*.user
+*.swp
