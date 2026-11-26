@@ -94,6 +94,7 @@ struct Window::Impl {
     QLineEdit* search=nullptr;
     QLabel* breadcrumb=nullptr;
     QLabel* footer=nullptr;
+    std::function<void()> refreshMemoryKernel;
     PerformancePage* performance=nullptr;
     ProcessManagerWidget* processes=nullptr;
     ManagementPage* management=nullptr;
@@ -359,8 +360,10 @@ struct Window::Impl {
         auto* grid=new QGridLayout;grid->setSpacing(12);int index=0;
         const QVector<QPair<QString,QString>> apps={{"Display","xfce4-display-settings"},{"Keyboard","xfce4-keyboard-settings"},{"Mouse & touchpad","xfce4-mouse-settings"},{"Power manager","xfce4-power-manager-settings"},{"Panel","xfce4-panel"},{"Session","xfce4-session-settings"},{"Appearance","xfce4-appearance-settings"},{"Window manager","xfwm4-settings"}};
         for(const auto& item:apps) {
-            const auto program=QStandardPaths::findExecutable(item.second);
-            auto* b=button(item.first,[this,program,item]{
+            const auto program=tux::trustedSystemExecutable(item.second);
+            auto* b=button(item.first,[this,item]{
+                const auto program=tux::trustedSystemExecutable(item.second);
+                if(program.isEmpty()){QMessageBox::warning(w,item.first,"The trusted XFCE settings utility is unavailable.");return;}
                 QStringList args;if(item.second=="xfce4-panel")args<<"--preferences";
                 if(!QProcess::startDetached(program,args))QMessageBox::warning(w,item.first,"The desktop settings tool could not be opened.");
             },w);
@@ -422,9 +425,9 @@ struct Window::Impl {
             const auto disableProblem=tux::unavailable(tux::action("zswap-disable"));
             enable->setEnabled(enableProblem.isEmpty());disable->setEnabled(disableProblem.isEmpty());
             enable->setToolTip(enableProblem);disable->setToolTip(disableProblem);
-            kernelStatus->setText(QString("System-wide zswap: %1. %2").arg(state==S::Enabled?"Enabled":state==S::Disabled?"Disabled":"Unavailable / unknown",enableProblem.isEmpty()?"Compatible configuration detected; review and authorize to enable.":enableProblem));
+            kernelStatus->setText(QString("System-wide zswap: %1. %2").arg(state==S::Enabled?"Enabled":state==S::Disabled?"Disabled":"Unavailable / unknown",state==S::Enabled?"Compression is active; new swap writes can be compressed.":enableProblem.isEmpty()?"Compatible configuration detected; review and authorize to enable.":enableProblem));
         };
-        refreshKernel();
+        refreshMemoryKernel=refreshKernel;refreshKernel();
         auto* actions=new QHBoxLayout;
         auto* measure=button("Measure system memory",[status,describe,refreshKernel]{status->setText(describe());refreshKernel();},content);
         measure->setObjectName("measureMemory");actions->addWidget(measure);
@@ -616,6 +619,7 @@ struct Window::Impl {
     QWidget* controlPanelPage() {
         auto* tabs=new QTabWidget;tabs->setObjectName("controlPanelTabs");
         tabs->addTab(memoryOptimizerPage(),"Performance");
+        QObject::connect(tabs,&QTabWidget::currentChanged,tabs,[this](int index){if(index==0&&refreshMemoryKernel)refreshMemoryKernel();});
         const auto add=[this,tabs](const QString& title,const QString& description,const QVector<QPair<QString,QString>>& entries){
             auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);
             scroll->setWidget(installedTools(description,entries));tabs->addTab(scroll,title);
@@ -666,7 +670,7 @@ struct Window::Impl {
             const auto env=tux::trustedSystemExecutable("env");
             if(apt.isEmpty()||dpkg.isEmpty()||env.isEmpty()){status->setText("APT version query is unavailable.");return;}
             check->setEnabled(false);status->setText("Reading existing APT metadata locally…");
-            AsyncCommand::run(frame,env,{"LC_ALL=C",apt,"policy","syspulse"},5000,16384,[frame,check,status,dpkg,env](const AsyncCommandResult& result){
+            AsyncCommand::run(frame,env,{"-u","APT_CONFIG","LC_ALL=C",apt,"policy","syspulse"},5000,16384,[frame,check,status,dpkg,env](const AsyncCommandResult& result){
                 if(!result.ok()){check->setEnabled(true);status->setText("APT query failed or returned incomplete output. Update status unknown.");return;}
                 const auto versions=syspulse::aptstatus::parse(result.output.toStdString());
                 if(!versions){check->setEnabled(true);status->setText("No valid SysPulse version pair found in local APT metadata.");return;}
@@ -705,7 +709,9 @@ struct Window::Impl {
         current=id;stack->setCurrentWidget(pages[id]);nav[id]->setChecked(true);
         const auto group=(id=="overview"||id=="performance"||id=="storage")?"Workspace":(id=="control"||id=="management"||id=="network"||id=="desktop"||id=="security")?"System":"Tools";
         breadcrumb->setText(QString(group)+" / "+nav[id]->property("displayTitle").toString());
-        performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));return true;
+        performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));
+        if(id=="control"&&refreshMemoryKernel)refreshMemoryKernel();
+        return true;
     }
     void findTool(const QString& query) {
         const auto trimmed=query.trimmed();if(trimmed.isEmpty())return;

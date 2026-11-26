@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <charconv>
+#include <cerrno>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -32,18 +37,28 @@ struct Cache { std::uint64_t bytes=0; unsigned files=0; bool complete=false; };
 // Count direct regular .deb entries only. Never follow symlinks, descend, or delete.
 // Logical file lengths are not guaranteed recoverable disk blocks (hardlinks etc.).
 inline Cache archives(const std::filesystem::path& dir,unsigned limit=4096) {
-    namespace fs=std::filesystem;Cache out;std::error_code ec;
-    if(!fs::is_directory(fs::symlink_status(dir,ec))||ec||!limit)return out;
-    fs::directory_iterator it(dir,ec),end;if(ec)return out;
+    Cache out;if(!limit)return out;
+    const int fd=::open(dir.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(fd<0)return out;
+    DIR* stream=::fdopendir(fd);
+    if(!stream){::close(fd);return out;}
+    struct Close { DIR* stream; ~Close(){::closedir(stream);} } guard{stream};
     unsigned seen=0;
-    for(;it!=end;it.increment(ec)) {
-        if(ec||++seen>limit)return out;
-        auto status=it->symlink_status(ec);if(ec)return out;
-        if(!fs::is_regular_file(status)||it->path().extension()!=".deb")continue;
-        auto bytes=it->file_size(ec);if(ec||bytes>std::numeric_limits<std::uint64_t>::max()-out.bytes)return out;
+    for(;;){
+        errno=0;const auto* entry=::readdir(stream);
+        if(!entry){out.complete=errno==0;return out;}
+        const std::string name=entry->d_name;
+        if(name=="."||name=="..")continue;
+        if(++seen>limit)return out;
+        if(name.size()<=4||name.compare(name.size()-4,4,".deb")!=0)continue;
+        struct stat st{};
+        if(::fstatat(fd,name.c_str(),&st,AT_SYMLINK_NOFOLLOW)!=0)return out;
+        if(!S_ISREG(st.st_mode))continue;
+        if(st.st_size<0)return out;
+        const auto bytes=static_cast<std::uint64_t>(st.st_size);
+        if(bytes>std::numeric_limits<std::uint64_t>::max()-out.bytes)return out;
         out.bytes+=bytes;++out.files;
     }
-    out.complete=!ec;return out;
 }
 inline std::optional<Swap> currentSwap(){std::ifstream in("/proc/meminfo");return swap(in);}
 }
