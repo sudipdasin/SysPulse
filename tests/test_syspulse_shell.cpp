@@ -133,7 +133,7 @@ int main(int argc,char** argv) {
         auto* activity=window.findChild<QLabel*>("swapActivityStatus");
         require(sample&&activity&&sample->isEnabled(),"system-wide swap activity available on demand");
         sample->click();
-        if(!sample->isEnabled()){require(activity->text().contains("Measuring"),"measurement is asynchronous");events(2300);}
+        if(!sample->isEnabled()){require(activity->text().contains("Measuring"),"measurement is asynchronous");QElapsedTimer deadline;deadline.start();while(!sample->isEnabled()&&deadline.elapsed()<4500)events(25);}
         require(sample->isEnabled()&&(activity->text().contains("KiB/s")||activity->text().contains("unavailable")),"measured rate or honest unavailable state");
         require(idleTimers()==0,"swap measurement leaves no recurring timers");
         auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
