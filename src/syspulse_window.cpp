@@ -3,6 +3,8 @@
 #include "syspulse/health_probe.hpp"
 #include "syspulse/memory_relief.hpp"
 #include "syspulse/memory_plan.hpp"
+#include "syspulse/care_plan.hpp"
+#include <QDateTime>
 #include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
 #include "syspulse/management.hpp"
@@ -299,6 +301,7 @@ struct Window::Impl {
         grid->addWidget(button("XFCE settings",[this]{navigate("desktop");},w),1,1);
         grid->addWidget(button("Control Panel",[this]{navigate("control");},w),2,0);
         grid->addWidget(button("Optimize memory…",[this]{openMemoryOptimizer();},w),2,1);
+        auto* care=button("System Care Center",[this]{openControlTab("systemCarePage");},w,true);care->setObjectName("openSystemCare");grid->addWidget(care,3,0,1,2);
         ql->addLayout(grid);ql->addWidget(text(QString("%1 reviewed tools · Local reports · Explicit system changes").arg(tux::actions().size()),"muted"));ql->addStretch();lower->addWidget(quick,1);layout->addLayout(lower,1);
         layout->addWidget(text("No maintenance actions run when SysPulse starts.","muted"));
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
@@ -431,6 +434,60 @@ struct Window::Impl {
         sl->addWidget(button("Open memory history",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(2);},w));
         layout->addWidget(system);layout->addStretch();return content;
     }
+    void openControlTab(const QString& name) {
+        navigate("control");
+        if(auto* tabs=pages.value("control")->findChild<QTabWidget*>("controlPanelTabs"))
+            for(int i=0;i<tabs->count();++i)if(tabs->widget(i)->objectName()==name){tabs->setCurrentIndex(i);break;}
+    }
+    QWidget* systemCarePage() {
+        auto* content=new QWidget;content->setObjectName("systemCarePage");
+        auto* layout=new QVBoxLayout(content);
+        layout->addWidget(text("System Care Center","sectionTitle"));
+        layout->addWidget(text("Run a local read-only snapshot. Review the most urgent resource findings first, then open the relevant existing controls.","muted"));
+        auto* status=text("No snapshot taken. Run a quick scan to measure six resource indicators.","muted");status->setObjectName("careStatus");layout->addWidget(status);
+        auto* table=new QTableWidget(0,4);table->setObjectName("careFindings");
+        table->setHorizontalHeaderLabels({"Indicator","Measurement","Priority","Recommended action"});
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->setSelectionBehavior(QAbstractItemView::SelectRows);table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->verticalHeader()->hide();table->setWordWrap(true);table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(3,QHeaderView::Stretch);
+        auto* scan=new QPushButton("Quick scan");scan->setObjectName("runCareScan");scan->setProperty("primary",true);
+        auto* review=new QPushButton("Review selected finding");review->setObjectName("reviewCareFinding");review->setEnabled(false);
+        auto* row=new QHBoxLayout;row->addWidget(scan);row->addWidget(review);row->addStretch();layout->addLayout(row);layout->addWidget(table,1);
+        layout->addWidget(text("Thresholds are advisory, not a complete diagnosis. Missing readings stay unknown. The scan makes no system changes and sends no data.","muted"));
+        QObject::connect(table,&QTableWidget::itemSelectionChanged,content,[table,review]{review->setEnabled(table->currentRow()>=0&&!table->selectedItems().isEmpty());});
+        QObject::connect(scan,&QPushButton::clicked,content,[table,status,review]{
+            const auto snapshot=syspulse::triage::measure();const auto psi=syspulse::pressure::measure();
+            const auto findings=syspulse::care::plan(snapshot,psi);
+            const auto pct=[](const std::optional<syspulse::triage::Counters>& c){return syspulse::triage::valid(c)?QString::number(static_cast<double>(syspulse::triage::availablePercent(*c)),'f',1)+"% available":QString("Unknown");};
+            const auto stalls=[](const syspulse::pressure::Snapshot& p){return p.some?QString::number(p.some->avg10,'f',2)+"% (10s)":QString("Unknown");};
+            const QMap<QString,QString> values={{"Available RAM",pct(snapshot.ram)},{"Root filesystem space",pct(snapshot.root)},{"Swap configuration",snapshot.swap?QString::number(*snapshot.swap/1024.0,'f',1)+" MiB":QString("Unknown")},{"CPU stalls",stalls(psi[0])},{"Memory stalls",stalls(psi[1])},{"I/O stalls",stalls(psi[2])}};
+            table->clearSelection();table->setRowCount(static_cast<int>(findings.size()));
+            int urgent=0,warnings=0,unknown=0,r=0;
+            using S=syspulse::triage::Severity;
+            for(const auto& f:findings){
+                const QString title=QString::fromLatin1(f.title);
+                const QString level=f.severity==S::Critical?"High priority":f.severity==S::Warning?"Review":f.severity==S::Unknown?"Unknown":f.severity==S::Info?"Information":"Below threshold";
+                urgent+=f.severity==S::Critical;warnings+=f.severity==S::Warning;unknown+=f.severity==S::Unknown;
+                auto* item=new QTableWidgetItem(title);item->setData(Qt::UserRole,static_cast<int>(f.route));
+                table->setItem(r,0,item);table->setItem(r,1,new QTableWidgetItem(values.value(title,"Unknown")));
+                table->setItem(r,2,new QTableWidgetItem(level));table->setItem(r,3,new QTableWidgetItem(QString::fromLatin1(f.advice)));++r;
+            }
+            table->setCurrentItem(nullptr);table->clearSelection();review->setEnabled(false);table->resizeRowsToContents();
+            status->setText(QString("Snapshot %1 · %2 high priority · %3 review · %4 unknown.").arg(QDateTime::currentDateTime().toString("HH:mm:ss")).arg(urgent).arg(warnings).arg(unknown));
+        });
+        QObject::connect(review,&QPushButton::clicked,content,[this,table]{
+            const int r=table->currentRow();if(r<0||table->selectedItems().isEmpty()||!table->item(r,0))return;
+            using R=syspulse::care::Route;
+            switch(static_cast<R>(table->item(r,0)->data(Qt::UserRole).toInt())){
+            case R::Memory:openMemoryOptimizer();break;
+            case R::Storage:navigate("storage");pages["storage"]->findChild<QTabWidget*>("storageWorkspaceTabs")->setCurrentIndex(0);break;
+            case R::Swap:findTool("Compressed swap status");break;
+            case R::Cpu:navigate("performance");performance->detailTabs()->setCurrentIndex(1);break;
+            case R::Io:navigate("performance");performance->detailTabs()->setCurrentIndex(3);break;
+            }
+        });
+        return content;
+    }
     QWidget* settingsIndex(QTabWidget* tabs) {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
         auto* filter=new QLineEdit;filter->setObjectName("settingsIndexSearch");filter->setAccessibleName("Search all native settings");filter->setPlaceholderText("Search settings, category or availability");filter->setClearButtonEnabled(true);
@@ -497,6 +554,7 @@ struct Window::Impl {
         for(const auto& link:links)sl->addWidget(button(link.first,[this,link]{navigate(link.second);},w));
         sl->addStretch();auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(system);tabs->addTab(scroll,"System tools");
         tabs->addTab(settingsIndex(tabs),"All settings");
+        tabs->addTab(systemCarePage(),"System care");
         return workspace("Control Panel","Centralized desktop, hardware, accounts, storage, software and system administration. Uninstalled tools are disabled.",tabs);
     }
     QWidget* applicationUpdates() {
