@@ -32,3 +32,6 @@ Cleaner scope and existing action availability hardening only. No new intake ID 
 
 ### Alpha.18 reliability checkpoint
 No intake IDs promoted. Alpha.17 verified live: 40 CTest suites passed; five portable diagnostics exit 0; block inventory exit 1 remains unresolved. Alpha.18 stale-state and diagnostic outcome corrections plus target-runtime Cleaner regression gate. Native and lifecycle validation pending. Source 833d4634f813d7f97acf6c18654e1dad04cca42f.
+
+### Alpha.19 reliability checkpoint
+Alpha.18 Render deployment confirmed live, full native tests and install/runtime gate completed per deployment; public endpoint timed out on recheck. Alpha.19 addresses existing dependency remediation and stale settings index; adds disposable virtual X11 functional gates. No new intake IDs promoted. Source 673ba79f26df3ebf28dc22539cc2359582d96d5f. Native and lifecycle tests pending.

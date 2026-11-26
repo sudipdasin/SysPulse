@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QMessageBox>
 #include <QProcess>
+#include <QPushButton>
 namespace syspulse {
 inline QString dependencyPackage(const QString& command) {
     // Fixed distribution package names only; never derive an install target from user text.
