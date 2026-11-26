@@ -23,3 +23,6 @@ Native milestone: [0.1.0 preview](../PREVIEW_0.1.0.md), [implementation status](
 
 ### Native milestone 0.3.0
 SP-002 and SP-003 have native read-only GUI and CLI previews; SP-001 remains partial. Seven combined CTest suites passed, Xvfb startup and isolated non-root installation verified. Real Mint/XFCE interaction and live signed-release delivery remain pending.
+
+### Alpha.16 diagnostic expansion (source checkpoint)
+20 read-only catalog entries extend existing SP-001/SP-002 diagnostics and inspection aspects of SP-004–009/SP-012. This does not establish completion of device disabling, filesystem repair, Wine setup, browser configuration, maintenance scheduling or production updates. Exact source checkpoint: ef99e6fd7cd136c46780e63b420f4567e55f8c6e. Native/package test evidence must be recorded separately; no raw attached scripts or machine metadata incorporated.

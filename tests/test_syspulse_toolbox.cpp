@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/toolbox.hpp"
+#include <QComboBox>
+#include <QCheckBox>
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
@@ -100,6 +102,17 @@ int main(int argc, char** argv) {
             require(tux::actions()[changeTable->item(row, 0)->data(Qt::UserRole).toInt()].changes,
                     "experimental page contains only settings-changing tools");
         require(executions == 0 && !stable.isBusy(), "construction must never run commands");
+        auto* access=stable.findChild<QComboBox*>("toolboxAccessFilter");
+        auto* available=stable.findChild<QCheckBox*>("toolboxAvailableOnly");
+        require(access&&available,"access and availability controls present");
+        access->setCurrentIndex(2);int adminCount=0;
+        for(const auto& a:tux::actions())if(!a.changes&&a.admin)++adminCount;
+        require(visibleRows(stableTable)==adminCount,"administrator filter exact");
+        access->setCurrentIndex(1);require(visibleRows(stableTable)==readOnly-adminCount,"unprivileged filter exact");
+        available->setChecked(true);require(visibleRows(stableTable)==readOnly-adminCount,"injected fixture availability preserved");
+        access->setCurrentIndex(2);require(stable.locateTool("storage")&&access->currentIndex()==0&&!available->isChecked(),"exact locate resets incompatible filters");
+        for(int row=0;row<stableTable->rowCount();++row)require(!stableTable->item(row,0)->icon().isNull()&&!stableTable->item(row,0)->toolTip().isEmpty(),"catalog rows carry graphics and purpose");
+        require(executions==0,"filter and locate are read-only UI operations");
 
         syspulse::ToolboxPage storage({"Storage", "Maintenance"}, false, successful);
         int storageExpected = 0;
