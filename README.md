@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.6 evaluation candidate.** Alpha.5 passed 32/32 CTest suites and 56 additional checks and became live. Alpha.6 adds a measured maintenance comparison workspace, exact catalog action routing, and an actual DEB installation gate in a clean Ubuntu 24.04 container. Full native and installation tests pending at this checkpoint.
+**Alpha.7 evaluation candidate.** Alpha.6 passed native tests and actual Ubuntu 24.04 container installation. Alpha.7 adds explicitly reviewed system-wide zswap activation and reversal, verified kernel state, and safe eligibility checks. Native build, package validation and installed-helper checks pending; actual kernel mutation and real Mint XFCE validation require a suitable target VM.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)

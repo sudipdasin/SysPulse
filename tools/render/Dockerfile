@@ -17,18 +17,19 @@ FROM ubuntu:24.04 AS installcheck
 COPY --from=build /out/ /candidate/
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /candidate/*.deb fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha6~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha7~render1' \
     && useradd --create-home --uid 10001 tester
 USER tester
 ENV HOME=/home/tester QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/home/tester/runtime
 RUN mkdir -m 700 "$XDG_RUNTIME_DIR" \
-    && syspulse --version | grep -F '3.0.0-alpha.6' \
-    && tux-steward --version | grep -F '3.0.0-alpha.6' \
-    && tux-task-manager --version | grep -F '3.0.0-alpha.6' \
-    && tux-setup --version | grep -F '3.0.0-alpha.6' \
+    && syspulse --version | grep -F '3.0.0-alpha.7' \
+    && tux-steward --version | grep -F '3.0.0-alpha.7' \
+    && tux-task-manager --version | grep -F '3.0.0-alpha.7' \
+    && tux-setup --version | grep -F '3.0.0-alpha.7' \
     && syspulse --help >/dev/null \
+    && (rc=0; syspulse-memory-control enable >/tmp/helper-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/helper-guard.log) \
     && (rc=0; timeout 4s syspulse >/tmp/syspulse-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
-    && printf 'Ubuntu 24.04 amd64: actual local DEB installation, four installed executable versions, and unprivileged offscreen GUI startup passed. No XFCE VM or real desktop integration test.\n' > /home/tester/INSTALL-STATUS.txt
+    && printf 'Ubuntu 24.04 amd64: actual local DEB installation, four installed executable versions, unprivileged memory-helper rejection, and unprivileged offscreen GUI startup passed. No XFCE VM or real desktop integration test.\n' > /home/tester/INSTALL-STATUS.txt
 FROM python:3.11-slim-bookworm AS evaluation
 COPY --from=installcheck /home/tester/INSTALL-STATUS.txt /srv/artifacts/INSTALL-STATUS.txt
 COPY --from=build /out/ /srv/artifacts/
