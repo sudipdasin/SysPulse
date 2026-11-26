@@ -58,6 +58,13 @@ int main(int argc,char** argv) {
         int integrationCount=0;
         for(auto* b:window.findChildren<QPushButton*>())if(b->property("systemToolCommand").isValid())++integrationCount;
         require(integrationCount==26,"all optional tool integrations are present");
+        search->setText("Storage & cleanup / Disk management");
+        QMetaObject::invokeMethod(search,"returnPressed");events(20);
+        require(window.currentPageId()=="storage"&&storageTabs->currentIndex()==1,"qualified search reveals disk tool tab without launching");
+        search->setText("Security & privacy / Firewall");
+        QMetaObject::invokeMethod(search,"returnPressed");events(20);
+        require(window.currentPageId()=="security"&&securityTabs->currentIndex()==1,"qualified search distinguishes duplicate launcher names");
+        require(reportTable->rowCount()==0,"launcher search never executes a diagnostic or records a mutation");
         search->setText("Experimental");QMetaObject::invokeMethod(search,"returnPressed");
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");

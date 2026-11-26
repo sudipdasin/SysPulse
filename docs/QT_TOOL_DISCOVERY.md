@@ -1,0 +1,3 @@
+# Global navigation refinement — native validation candidate
+
+Existing global tool search includes 26 optional system-tool entries using qualified workspace / tool titles. Selecting a qualified result navigates to its original panel and relevant tab, focusing the control only when enabled. It never launches a tool or authorizes a system change. Existing catalog and page search remain. Duplicate labels such as Firewall are disambiguated. Settings links point to the canonical repository. Added Qt shell regression assertions for storage and security routing and empty activity. Static source inspection only: Qt 5.15 development headers unavailable; these tests have not run. Do not merge until native compilation and existing regression tests pass. No hosted CI.

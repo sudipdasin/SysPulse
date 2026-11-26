@@ -237,6 +237,13 @@ struct Window::Impl {
         performance->onOpenServices=[this]{navigate("management");management->showServices();};
         QStringList suggestions;for(auto i=nav.cbegin();i!=nav.cend();++i)suggestions.append(i.value()->property("displayTitle").toString());
         for(const auto& a:tux::actions())suggestions.append(a.title);
+        for(auto i=pages.cbegin();i!=pages.cend();++i) {
+            const auto label=nav[i.key()]->property("displayTitle").toString();
+            for(auto* control:i.value()->findChildren<QPushButton*>())
+                if(control->property("systemToolCommand").isValid())
+                    suggestions.append(label+" / "+control->text());
+        }
+        suggestions.removeDuplicates();
         auto* completer=new QCompleter(suggestions,search);completer->setCaseSensitivity(Qt::CaseInsensitive);completer->setFilterMode(Qt::MatchContains);search->setCompleter(completer);
         QObject::connect(search,&QLineEdit::returnPressed,w,[this]{findTool(search->text());});
         QObject::connect(completer,QOverload<const QString&>::of(&QCompleter::activated),w,[this](const QString& value){findTool(value);});
@@ -357,8 +364,8 @@ struct Window::Impl {
         al->addWidget(text("Privacy: no telemetry, no automatic report uploads, no background self-updates. Review detailed reports before sharing.","muted"));layout->addWidget(about);
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));layout->addWidget(preferences);
         auto* help=panel();auto* hl=new QHBoxLayout(help);hl->setContentsMargins(22,20,22,20);
-        hl->addWidget(button("Report a problem…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/tux-steward/issues/new/choose"));},w));
-        hl->addWidget(button("Contribute…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/tux-steward/blob/main/CONTRIBUTING.md"));},w));
+        hl->addWidget(button("Report a problem…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/issues/new/choose"));},w));
+        hl->addWidget(button("Contribute…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse"));},w));
         hl->addWidget(button("License",[this]{QMessageBox::information(w,"Free and open source","SysPulse is licensed under GNU GPL version 3 or later.\nCopyright Sudip Das.\nSee the included LICENSE for the complete terms.");},w));layout->addWidget(help);layout->addStretch();
         return workspace("Settings & help","Local preferences, project information and developer feedback.",content);
     }
@@ -372,6 +379,27 @@ struct Window::Impl {
     void findTool(const QString& query) {
         const auto trimmed=query.trimmed();if(trimmed.isEmpty())return;
         for(auto i=nav.cbegin();i!=nav.cend();++i)if(i.value()->property("displayTitle").toString().compare(trimmed,Qt::CaseInsensitive)==0){navigate(i.key());return;}
+        // Qualified titles disambiguate repeated labels. Search never launches a tool.
+        for(auto i=pages.cbegin();i!=pages.cend();++i) {
+            const auto label=nav[i.key()]->property("displayTitle").toString();
+            for(auto* control:i.value()->findChildren<QPushButton*>()) {
+                if(!control->property("systemToolCommand").isValid())continue;
+                if((label+" / "+control->text()).compare(trimmed,Qt::CaseInsensitive)!=0)continue;
+                navigate(i.key());
+                for(auto* ancestor=control->parentWidget();ancestor;ancestor=ancestor->parentWidget()) {
+                    if(auto* tabs=qobject_cast<QTabWidget*>(ancestor)) {
+                        for(int index=0;index<tabs->count();++index) {
+                            auto* tab=tabs->widget(index);
+                            if(tab==control || tab->isAncestorOf(control)){tabs->setCurrentIndex(index);break;}
+                        }
+                    }
+                    if(ancestor==i.value())break;
+                }
+                if(control->isEnabled())control->setFocus(Qt::OtherFocusReason);
+                search->setToolTip(control->isEnabled()?"Tool located. Select it to review the launch.":"Tool located, but unavailable on this system.");
+                return;
+            }
+        }
         for(const auto& a:tux::actions())if(tux::matches(a,trimmed)) {
             const auto id=destination(a);navigate(id);toolboxes[id]->setSearch(trimmed);
             if(id=="network")pages[id]->findChild<QTabWidget*>("networkWorkspaceTabs")->setCurrentIndex(1);
