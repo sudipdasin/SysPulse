@@ -118,6 +118,12 @@ int main(int argc,char** argv) {
         auto* systemStatus=window.findChild<QLabel*>("systemMemoryStatus");
         auto* undoCompression=window.findChild<QPushButton*>("disableSystemMemoryCompression");
         require(systemBoost&&systemStatus&&undoCompression&&systemStatus->text().contains("System-wide zswap:"),"system-wide compression controls and detected state");
+        systemStatus->setText("stale fixture");
+        window.navigate("overview");window.navigate("control");
+        require(systemStatus->text().contains("System-wide zswap:"),"return to Control Panel refreshes kernel state");
+        systemStatus->setText("stale fixture");
+        controlTabs->setCurrentIndex(1);controlTabs->setCurrentIndex(0);
+        require(systemStatus->text().contains("System-wide zswap:"),"return to performance tab refreshes kernel state");
         auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
         auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
         require(optimize&&memoryStatus,"one-click process-local memory relief available");
