@@ -1,0 +1,5 @@
+# Precision refinement — desktop design candidate
+
+Owner requested a professional and stylish app and web refresh. The established Qt application remains the product; no alternate executable or replacement shell. Refine the approved Precision identity with pale cool canvas (#F4F6FA), white cards, ink (#142336), slate (#506079), crimson (#B51235), selected tint (#FCE9ED), line (#DBE2EB). Retain Observatory and Forge, existing pages, object names, commands, privileges and reporting. Updated sidebar width, search width, header spacing, typography, selected-tab treatment, card borders and focus. Some inherited widgets have local styles; these are unchanged and require visual consistency review. No dark theme claimed.
+
+Static checks: stylesheet braces balanced, original navigation call count unchanged. These are not native Qt rendering or interaction tests. Qt development dependencies and direct repository DNS are unavailable locally. Validate full native build, inherited tests, focus, small-window clipping, scaling, contrast, screenshots and real XFCE desktop before merge into main. No GitHub Actions or CircleCI; no release.

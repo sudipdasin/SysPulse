@@ -44,7 +44,7 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(QPen(QColor("#C8102E"),3,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
+        p.setPen(QPen(QColor("#B51235"),3,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));
         p.drawPolyline(QPolygonF(QVector<QPointF>{{1,25},{10,25},{16,6},{23,42},{30,17},{34,25},{41,25}}));
     }
 };
@@ -175,8 +175,8 @@ struct Window::Impl {
         auto* root=new QWidget(w);auto* outer=new QVBoxLayout(root);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
         auto* shell=new QHBoxLayout;shell->setContentsMargins(0,0,0,0);shell->setSpacing(0);
         outer->addLayout(shell,1);
-        auto* sidebar=new QWidget;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(236);
-        auto* sl=new QVBoxLayout(sidebar);sl->setContentsMargins(12,16,12,10);sl->setSpacing(3);
+        auto* sidebar=new QWidget;sidebar->setObjectName("sidebar");sidebar->setFixedWidth(248);
+        auto* sl=new QVBoxLayout(sidebar);sl->setContentsMargins(12,14,12,10);sl->setSpacing(3);
         auto* brand=new QHBoxLayout;brand->setSpacing(7);brand->addWidget(new PulseMark);
         auto* brandText=new QVBoxLayout;brandText->setSpacing(0);brandText->addWidget(text("SysPulse","brand"));brandText->addWidget(text("XFCE Edition","brandEdition"));brand->addLayout(brandText);sl->addLayout(brand);
         sl->addSpacing(12);
@@ -197,9 +197,9 @@ struct Window::Impl {
         sl->addStretch(1);addNav("settings","Settings & help");
         shell->addWidget(sidebar);
         auto* body=new QWidget;auto* bl=new QVBoxLayout(body);bl->setContentsMargins(0,0,0,0);bl->setSpacing(0);
-        auto* utility=new QWidget;utility->setObjectName("utilityBar");auto* ul=new QHBoxLayout(utility);ul->setContentsMargins(22,10,20,10);
+        auto* utility=new QWidget;utility->setObjectName("utilityBar");auto* ul=new QHBoxLayout(utility);ul->setContentsMargins(24,12,24,12);
         breadcrumb=text("Workspace / Overview");breadcrumb->setObjectName("breadcrumb");ul->addWidget(breadcrumb,1);
-        search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->setMaximumWidth(340);ul->addWidget(search,1);
+        search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->setMaximumWidth(420);ul->addWidget(search,1);
         ul->addWidget(button("Help",[this]{navigate("settings");},w));bl->addWidget(utility);
         stack=new QStackedWidget;stack->setObjectName("sysPulsePages");bl->addWidget(stack,1);shell->addWidget(body,1);
         footer=text(QString(),"statusFooter");footer->setObjectName("statusFooter");outer->addWidget(footer);
