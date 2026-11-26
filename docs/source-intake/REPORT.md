@@ -29,3 +29,6 @@ SP-002 and SP-003 have native read-only GUI and CLI previews; SP-001 remains par
 
 ### Alpha.17 reliability freeze
 Cleaner scope and existing action availability hardening only. No new intake ID claimed complete. Real diagnostic execution and Quick-mode regression gates added; native/package verification required. Source checkpoint 6b9cd9a3f09441636d6a0f785332ec187d2b27bd.
+
+### Alpha.18 reliability checkpoint
+No intake IDs promoted. Alpha.17 verified live: 40 CTest suites passed; five portable diagnostics exit 0; block inventory exit 1 remains unresolved. Alpha.18 stale-state and diagnostic outcome corrections plus target-runtime Cleaner regression gate. Native and lifecycle validation pending. Source 833d4634f813d7f97acf6c18654e1dad04cca42f.

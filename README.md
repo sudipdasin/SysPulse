@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.17 reliability evaluation candidate.** Feature freeze: correct actual Cleaner scan scope, missing and redirected caches, failure and stale result handling; recheck launcher availability and execute baseline diagnostics in tests. See [reliability checkpoint](docs/ALPHA17_RELIABILITY_FREEZE.md).
+**Alpha.18 reliability evaluation candidate.** Invalidates stale Cleaner results, protects cleanup review scope, distinguishes incomplete diagnostic evidence and unverified changes, and requires Cleaner functional testing on the installed Ubuntu 24.04 runtime.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)
