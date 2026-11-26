@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
 #include "syspulse/health_probe.hpp"
+#include "syspulse/memory_relief.hpp"
+#include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
 #include "syspulse/management.hpp"
 #include "syspulse/toolbox.hpp"
@@ -185,7 +187,7 @@ struct Window::Impl {
         auto addNav=[this,sl](const QString& id,const QString& title) {
             auto* b=new QPushButton(QString(title).replace("&","&&"));b->setObjectName("navButton");b->setCheckable(true);b->setAutoExclusive(true);
             b->setProperty("displayTitle",title);
-            const QMap<QString,QStyle::StandardPixmap> icons={{"overview",QStyle::SP_ComputerIcon},{"performance",QStyle::SP_MediaPlay},{"storage",QStyle::SP_DriveHDIcon},{"management",QStyle::SP_FileDialogDetailedView},{"network",QStyle::SP_DriveNetIcon},{"desktop",QStyle::SP_DesktopIcon},{"security",QStyle::SP_MessageBoxInformation},{"schedules",QStyle::SP_BrowserReload},{"recovery",QStyle::SP_ArrowBack},{"reports",QStyle::SP_FileIcon},{"experimental",QStyle::SP_MessageBoxWarning},{"settings",QStyle::SP_DialogHelpButton}};
+            const QMap<QString,QStyle::StandardPixmap> icons={{"control",QStyle::SP_FileDialogContentsView},{"overview",QStyle::SP_ComputerIcon},{"performance",QStyle::SP_MediaPlay},{"storage",QStyle::SP_DriveHDIcon},{"management",QStyle::SP_FileDialogDetailedView},{"network",QStyle::SP_DriveNetIcon},{"desktop",QStyle::SP_DesktopIcon},{"security",QStyle::SP_MessageBoxInformation},{"schedules",QStyle::SP_BrowserReload},{"recovery",QStyle::SP_ArrowBack},{"reports",QStyle::SP_FileIcon},{"experimental",QStyle::SP_MessageBoxWarning},{"settings",QStyle::SP_DialogHelpButton}};
             b->setIcon(w->style()->standardIcon(icons.value(id,QStyle::SP_FileIcon)));b->setIconSize(QSize(16,16));
             b->setAccessibleName(title);b->setProperty("pageId",id);nav.insert(id,b);sl->addWidget(b);
             QObject::connect(b,&QPushButton::clicked,w,[this,id]{navigate(id);});
@@ -193,7 +195,7 @@ struct Window::Impl {
         sl->addWidget(text("WORKSPACE","navGroup"));
         addNav("overview","Overview");addNav("performance","Performance");addNav("storage","Storage & cleanup");
         sl->addWidget(text("SYSTEM","navGroup"));
-        addNav("management","Startup & services");addNav("network","Network");addNav("desktop","XFCE desktop");addNav("security","Security & privacy");
+        addNav("control","Control Panel");addNav("management","Startup & services");addNav("network","Network");addNav("desktop","XFCE desktop");addNav("security","Security & privacy");
         sl->addWidget(text("TOOLS","navGroup"));
         addNav("schedules","Schedules");addNav("recovery","Recovery");addNav("reports","Reports");addNav("experimental","Experimental");
         sl->addStretch(1);addNav("settings","Settings & help");
@@ -218,6 +220,7 @@ struct Window::Impl {
         storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
         pages.insert("storage",workspace("Storage & cleanup","Inspect storage and review maintenance commands. Native changes remain in Experimental.",storageTabs));
         pages.insert("management",management);
+        pages.insert("control",controlPanelPage());
         pages.insert("network",networkPage());
         pages.insert("desktop",desktopPage());
         auto* security=toolbox({"Diagnostics","Security"});toolboxes.insert("security",security);
@@ -278,6 +281,8 @@ struct Window::Impl {
         grid->addWidget(button("Services",[this]{navigate("management");management->showServices();},w),0,1);
         grid->addWidget(button("Disk usage",[this]{navigate("storage");},w),1,0);
         grid->addWidget(button("XFCE settings",[this]{navigate("desktop");},w),1,1);
+        grid->addWidget(button("Control Panel",[this]{navigate("control");},w),2,0);
+        grid->addWidget(button("Optimize memory…",[this]{openMemoryOptimizer();},w),2,1);
         ql->addLayout(grid);ql->addWidget(text(QString("%1 reviewed tools · Local reports · Explicit system changes").arg(tux::actions().size()),"muted"));ql->addStretch();lower->addWidget(quick,1);layout->addLayout(lower,1);
         layout->addWidget(text("No maintenance actions run when SysPulse starts.","muted"));
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
@@ -359,6 +364,64 @@ struct Window::Impl {
         layout->addWidget(text("The latest 20 task results stay in memory for this session. Summary is the default export; diagnostic details require a fresh opt-in. No report is sent automatically.","muted"));
         return workspace("Reports","Review analysis and tool outcomes before saving or sharing.",content);
     }
+    void openMemoryOptimizer() {
+        navigate("control");
+        if(auto* tabs=pages.value("control")->findChild<QTabWidget*>("controlPanelTabs"))
+            tabs->setCurrentIndex(0);
+    }
+    QWidget* memoryOptimizerPage() {
+        auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
+        auto* frame=panel();auto* fl=new QVBoxLayout(frame);fl->setContentsMargins(20,20,20,20);
+        fl->addWidget(text("Memory optimizer","sectionTitle"));
+        fl->addWidget(text("Measure available memory, swap and memory pressure. Reclaim unused SysPulse allocator pages without dropping system caches or stopping other applications.","muted"));
+        auto* status=text("Ready. Select Measure memory or Reduce SysPulse memory use.","muted");
+        status->setObjectName("memoryOptimizerStatus");status->setTextFormat(Qt::PlainText);fl->addWidget(status);
+        const auto describe=[]{
+            const auto snapshot=syspulse::triage::measure();const auto pressure=syspulse::pressure::measure();
+            const auto available=snapshot.ram?QString::number(snapshot.ram->available/1024.0,'f',1)+" MiB":"Unknown";
+            const auto swap=snapshot.swap?QString::number(*snapshot.swap/1024.0,'f',1)+" MiB":"Unknown";
+            const auto stalls=pressure[1].some?QString::number(pressure[1].some->avg10,'f',2)+"%":"Unknown";
+            return QString("System available RAM: %1 · Configured swap: %2\nMemory stall time (10s): %3").arg(available,swap,stalls);
+        };
+        auto* actions=new QHBoxLayout;
+        auto* measure=button("Measure memory",[status,describe]{status->setText(describe());},content);
+        measure->setObjectName("measureMemory");actions->addWidget(measure);
+        auto* optimize=button("Reduce SysPulse memory use",[status,describe]{
+            const auto result=syspulse::relief::trimSelf();
+            const auto show=[](const std::optional<std::uint64_t>& n){return n?QString::number(*n/1024.0,'f',1)+" MiB":"Unknown";};
+            const QString detail=!result.supported?"Allocator trim unavailable.":result.released?"Allocator reports unused pages released.":"No allocator pages released.";
+            status->setText(QString("SysPulse RSS before: %1 · after: %2\n%3 RSS is approximate; no system-wide speed gain is guaranteed.\n%4").arg(show(result.before),show(result.after),detail,describe()));
+        },content,true);
+        optimize->setObjectName("optimizeMemory");actions->addWidget(optimize);fl->addLayout(actions);layout->addWidget(frame);
+        auto* system=panel();auto* sl=new QVBoxLayout(system);sl->setContentsMargins(20,20,20,20);
+        sl->addWidget(text("System-wide memory and responsiveness","sectionTitle"));
+        sl->addWidget(text("For larger savings, review memory-heavy applications, startup entries and compressed swap. Close only workloads you choose; system changes use their normal review and authorization.","muted"));
+        sl->addWidget(button("Review running processes",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(5);},w));
+        sl->addWidget(button("Review startup applications",[this]{navigate("management");management->showStartup();},w));
+        sl->addWidget(button("Inspect compressed swap",[this]{findTool("Compressed swap status");},w));
+        sl->addWidget(button("Open memory history",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(2);},w));
+        layout->addWidget(system);layout->addStretch();return content;
+    }
+    QWidget* controlPanelPage() {
+        auto* tabs=new QTabWidget;tabs->setObjectName("controlPanelTabs");
+        tabs->addTab(memoryOptimizerPage(),"Performance");
+        const auto add=[this,tabs](const QString& title,const QString& description,const QVector<QPair<QString,QString>>& entries){
+            auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);
+            scroll->setWidget(installedTools(description,entries));tabs->addTab(scroll,title);
+        };
+        add("Desktop","Open the installed XFCE configuration utilities.",{{"Appearance","xfce4-appearance-settings"},{"Window manager","xfwm4-settings"},{"Window manager tweaks","xfwm4-tweaks-settings"},{"Desktop background","xfdesktop-settings"},{"Display resolution","xfce4-display-settings"},{"Keyboard","xfce4-keyboard-settings"},{"Mouse and touchpad","xfce4-mouse-settings"},{"Power manager","xfce4-power-manager-settings"},{"Session and startup","xfce4-session-settings"},{"Preferred applications","exo-preferred-applications"},{"Accessibility","xfce4-accessibility-settings"},{"Notifications","xfce4-notifyd-config"},{"File manager","thunar-settings"}});
+        add("Hardware","Manage installed hardware and drivers in their native tools.",{{"Driver manager","driver-manager"},{"Printers","system-config-printer"},{"Sound","pavucontrol"},{"Bluetooth","blueman-manager"},{"Hardware information","hardinfo"},{"Color management","gcm-viewer"}});
+        add("Accounts","Manage identity and login settings. Native tools control their own authorization.",{{"Users and groups","users-admin"},{"Mint user manager","mintusers"},{"Login window","lightdm-settings"},{"Password and keys","seahorse"}});
+        add("Storage","Review disks and backups before changing partitions or recovering files.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk space analyzer","baobab"},{"Cache cleanup","bleachbit"},{"System snapshots","timeshift-gtk"},{"Personal backups","deja-dup"},{"File recovery","qphotorec"}});
+        add("Network and security","Changes may affect connectivity or protection. Review native prompts.",{{"Network connections","nm-connection-editor"},{"Firewall","gufw"},{"System logs","gnome-logs"}});
+        add("Software","Use distribution-supported software tools.",{{"System updates","mintupdate"},{"Software manager","mintinstall"},{"Package manager","synaptic"},{"Software sources","mintsources"}});
+        auto* system=new QWidget;auto* sl=new QVBoxLayout(system);
+        sl->addWidget(text("Built-in SysPulse administration","sectionTitle"));
+        const QVector<QPair<QString,QString>> links={{"System information and diagnostics","overview"},{"Processes and resource history","performance"},{"Startup applications and services","management"},{"Storage diagnostics and cleanup","storage"},{"Network monitoring","network"},{"Security and log diagnostics","security"},{"Scheduled tasks","schedules"},{"Recovery and undo","recovery"},{"Reviewed system changes","experimental"},{"Application updates and preferences","settings"},{"Reports","reports"}};
+        for(const auto& link:links)sl->addWidget(button(link.first,[this,link]{navigate(link.second);},w));
+        sl->addStretch();auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(system);tabs->addTab(scroll,"System tools");
+        return workspace("Control Panel","Centralized desktop, hardware, accounts, storage, software and system administration. Uninstalled tools are disabled.",tabs);
+    }
     QWidget* applicationUpdates() {
         auto* frame=panel();auto* layout=new QVBoxLayout(frame);
         layout->setContentsMargins(22,20,22,20);
@@ -410,12 +473,13 @@ struct Window::Impl {
         hl->addWidget(button("Report a problem…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/issues/new/choose"));},w));
         hl->addWidget(button("Contribute…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse"));},w));
         hl->addWidget(button("License",[this]{QMessageBox::information(w,"Free and open source","SysPulse is licensed under GNU GPL version 3 or later.\nCopyright Sudip Das.\nSee the included LICENSE for the complete terms.");},w));layout->addWidget(help);layout->addStretch();
-        return workspace("Settings & help","Local preferences, project information and developer feedback.",content);
+        auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
+        return workspace("Settings & help","Local preferences, project information and developer feedback.",scroll);
     }
     bool navigate(const QString& id) {
         if(!pages.contains(id))return false;
         current=id;stack->setCurrentWidget(pages[id]);nav[id]->setChecked(true);
-        const auto group=(id=="overview"||id=="performance"||id=="storage")?"Workspace":(id=="management"||id=="network"||id=="desktop"||id=="security")?"System":"Tools";
+        const auto group=(id=="overview"||id=="performance"||id=="storage")?"Workspace":(id=="control"||id=="management"||id=="network"||id=="desktop"||id=="security")?"System":"Tools";
         breadcrumb->setText(QString(group)+" / "+nav[id]->property("displayTitle").toString());
         performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));return true;
     }

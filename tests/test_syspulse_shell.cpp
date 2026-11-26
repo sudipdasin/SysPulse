@@ -25,7 +25,7 @@ int main(int argc,char** argv) {
     syspulse::applyPrecisionTheme();
     try {
         syspulse::Window window(false);window.resize(1366,768);window.show();events(50);
-        require(window.navigationCount()==12,"complete persistent navigation");
+        require(window.navigationCount()==13,"existing navigation plus Control Panel");
         require(window.currentPageId()=="overview","overview is the initial destination");
         const auto idleTimers = [&window] {
             int active = 0;
@@ -35,7 +35,7 @@ int main(int argc,char** argv) {
         require(idleTimers()==0,"sampling-disabled idle shell has no recurring admission or other polling timer");
         auto* reportTable=window.findChild<QTableWidget*>("sessionReports");
         require(reportTable&&reportTable->rowCount()==0,"opening the app does not manufacture diagnostic results");
-        const QStringList destinations={"overview","performance","storage","management","network","desktop","security","schedules","recovery","reports","experimental","settings"};
+        const QStringList destinations={"overview","performance","storage","control","management","network","desktop","security","schedules","recovery","reports","experimental","settings"};
         for(const auto& id:destinations) {
             require(window.navigate(id),"navigation target available");events(25);
             require(window.currentPageId()==id,"navigation updates actual workspace");
@@ -57,7 +57,7 @@ int main(int argc,char** argv) {
         require(storageTabs->currentIndex()==0,"existing search restores the diagnostic tab");
         int integrationCount=0;
         for(auto* b:window.findChildren<QPushButton*>())if(b->property("systemToolCommand").isValid())++integrationCount;
-        require(integrationCount==26,"all optional tool integrations are present");
+        require(integrationCount==63,"existing and Control Panel optional tool integrations are present");
         search->setText("Storage & cleanup / Disk management");
         QMetaObject::invokeMethod(search,"returnPressed");events(20);
         require(window.currentPageId()=="storage"&&storageTabs->currentIndex()==1,"qualified search reveals disk tool tab without launching");
@@ -65,6 +65,16 @@ int main(int argc,char** argv) {
         QMetaObject::invokeMethod(search,"returnPressed");events(20);
         require(window.currentPageId()=="security"&&securityTabs->currentIndex()==1,"qualified search distinguishes duplicate launcher names");
         require(reportTable->rowCount()==0,"launcher search never executes a diagnostic or records a mutation");
+        require(window.navigate("control"),"Control Panel accessible");
+        auto* controlTabs=window.findChild<QTabWidget*>("controlPanelTabs");
+        require(controlTabs&&controlTabs->count()==8,"all Control Panel categories present");
+        auto* optimize=window.findChild<QPushButton*>("optimizeMemory");
+        auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
+        require(optimize&&memoryStatus,"one-click process-local memory relief available");
+        optimize->click();require(memoryStatus->text().contains("SysPulse RSS before:"),"memory action reports measured scope");
+        require(reportTable->rowCount()==0,"memory relief does not fabricate diagnostic records");
+        require(window.navigate("settings"),"application update controls accessible");
+        require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         search->setText("Experimental");QMetaObject::invokeMethod(search,"returnPressed");
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");
