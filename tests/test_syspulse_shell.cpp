@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QAction>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QTableView>
 #include <QElapsedTimer>
 #include <QDialog>

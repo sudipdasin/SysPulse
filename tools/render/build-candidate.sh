@@ -4,8 +4,8 @@ set -euo pipefail
 umask 022
 [[ $# == 3 && $EUID != 0 ]] || { echo 'Usage (non-root): build-candidate.sh SOURCE WORK OUTPUT' >&2; exit 1; }
 readonly source_dir=$1 work=$2 output=$3
-readonly app_version=3.0.0-alpha.3 deb_version=3.0.0~alpha3~render1
-readonly baseline=76e1343f2a7e35dd47a07b607a8ca3f531ed1c85
+readonly app_version=3.0.0-alpha.4 deb_version=3.0.0~alpha4~render1
+readonly baseline=1093a3eb01eba8cc170782f06fab310379a171be
 [[ -d $source_dir && -d $work && -d $output && -z $(ls -A -- "$work") && -z $(ls -A -- "$output") ]] || { echo 'Fresh work and output directories required' >&2; exit 1; }
 [[ $(dpkg --print-architecture) == amd64 ]] || { echo 'amd64 required' >&2; exit 1; }
 . /etc/os-release
@@ -21,6 +21,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -pedantic -I"$source_dir/include" "$source_
 "$work/pressure-test"
 python3 "$source_dir/tests/test_stage_update.py"
 python3 "$source_dir/tests/test_release_assets.py"
+python3 "$source_dir/tests/test_apt_snapshot.py"
 cpack --config "$work/build/CPackConfig.cmake" -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version"
 cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$app_version" -P "$source_dir/tests/verify_packages.cmake"
 shopt -s nullglob
@@ -29,7 +30,7 @@ packages=("$work/build/packages/"*.deb)
 deb=${packages[0]}
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]] || { echo 'Wrong DEB metadata' >&2; exit 1; }
 # All checks precede export. Never export raw build logs or credentials.
-name=syspulse-3.0.0-alpha.3-x86_64-ubuntu-22.04-render-eval.deb
+name=syspulse-3.0.0-alpha.4-x86_64-ubuntu-22.04-render-eval.deb
 cp -- "$deb" "$output/$name"
 (cd "$output" && sha256sum "$name" > SHA256SUMS && sha256sum -c SHA256SUMS)
 printf 'Source baseline: %s\nApplication version: %s\nDebian package version: %s\nBuild target: Ubuntu 22.04 amd64\nBuild, CTest, extra component tests and package verification: passed in build container\nPhysical XFCE, target VM install/upgrade, production signing and automatic updates: NOT verified\nEvaluation candidate only; not an official release.\n' "$baseline" "$app_version" "$deb_version" > "$output/BUILD-STATUS.txt"

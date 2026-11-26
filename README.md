@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Not a released or verified build.** All original C++ source, header, assets and regression-test files have been transferred and checked against their Git blobs. Build configuration retains the original Qt targets with generic package contact metadata. Full Qt compilation, CTest, desktop and packaging verification are pending. Historical X11 files still tracked here are not the product or supported update path.
+**Alpha.4 evaluation candidate.** Alpha.3 was compiled on Render (Ubuntu 22.04 amd64) with 29/29 CTest suites and 46 additional component checks passing; its actual evaluation DEB was generated and the artifact service deployed. Alpha.4 adds local APT version comparison and opt-in session polling, memory-pressure advice, RAM-sorted process review, monitoring pause/resume and a direct Help update action. Alpha.4 full native tests and package verification are pending. Real target XFCE VM and signed automatic update tests remain mandatory. Historical X11 files still tracked here are not the product or supported update path.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)

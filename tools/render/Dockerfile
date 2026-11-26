@@ -1,6 +1,6 @@
 FROM ubuntu:22.04 AS build
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential cmake qtbase5-dev dpkg-dev desktop-file-utils python3 openssl file \
+    build-essential cmake qtbase5-dev dpkg-dev desktop-file-utils python3 openssl gnupg file \
     fonts-dejavu-core ca-certificates xdg-utils procps iproute2 util-linux dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --uid 10001 builder && mkdir -p /src /work /out && chown builder:builder /src /work /out
