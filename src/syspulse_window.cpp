@@ -282,8 +282,8 @@ struct Window::Impl {
         for(auto i=pages.cbegin();i!=pages.cend();++i) {
             const auto label=nav[i.key()]->property("displayTitle").toString();
             for(auto* control:i.value()->findChildren<QPushButton*>())
-                if(control->property("systemToolCommand").isValid())
-                    suggestions.append(label+" / "+control->text());
+                if(control->property("systemToolCommand").isValid()||control->property("desktopToolCommand").isValid())
+                    suggestions.append(label+" / "+fluent::plainTitle(control->text()));
         }
         suggestions.removeDuplicates();
         auto* completer=new QCompleter(suggestions,search);completer->setCaseSensitivity(Qt::CaseInsensitive);completer->setFilterMode(Qt::MatchContains);search->setCompleter(completer);
@@ -396,7 +396,7 @@ struct Window::Impl {
             },w);
             b->setEnabled(!program.isEmpty());b->setProperty("desktopToolCommand",item.second);grid->addWidget(toolTile(b,item.first,!program.isEmpty()),index/3,index%3);++index;
         }
-        layout->addLayout(grid);layout->addStretch();tabs->addTab(settings,"Desktop settings");
+        layout->addLayout(grid);layout->addStretch();auto* desktopScroll=new QScrollArea;desktopScroll->setWidgetResizable(true);desktopScroll->setWidget(settings);tabs->addTab(desktopScroll,"Desktop settings");
         auto* diagnostic=toolbox({"Performance","Input","Gaming","Desktop"});toolboxes.insert("desktop",diagnostic);tabs->addTab(diagnostic,"Diagnostics & integrations");
         tabs->addTab(installedTools("Administration tools are optional and run separately using their own authorization.",{{"Settings manager","xfce4-settings-manager"},{"Desktop preferences","xfdesktop-settings"},{"Driver manager","driver-manager"},{"Users and groups","users-admin"},{"Mint users","mintusers"},{"Login window","lightdm-settings"},{"Printers","system-config-printer"},{"Hardware information","hardinfo"},{"Password and keys","seahorse"}}),"Administration tools");
         return workspace("XFCE desktop","Desktop, input, power and installed Linux integrations.",tabs);
@@ -794,8 +794,8 @@ struct Window::Impl {
         for(auto i=pages.cbegin();i!=pages.cend();++i) {
             const auto label=nav[i.key()]->property("displayTitle").toString();
             for(auto* control:i.value()->findChildren<QPushButton*>()) {
-                if(!control->property("systemToolCommand").isValid())continue;
-                if((label+" / "+control->text()).compare(trimmed,Qt::CaseInsensitive)!=0)continue;
+                if(!control->property("systemToolCommand").isValid()&&!control->property("desktopToolCommand").isValid())continue;
+                if((label+" / "+fluent::plainTitle(control->text())).compare(trimmed,Qt::CaseInsensitive)!=0)continue;
                 navigate(i.key());
                 for(auto* ancestor=control->parentWidget();ancestor;ancestor=ancestor->parentWidget()) {
                     if(auto* tabs=qobject_cast<QTabWidget*>(ancestor)) {
@@ -804,12 +804,16 @@ struct Window::Impl {
                             if(tab==control || tab->isAncestorOf(control)){tabs->setCurrentIndex(index);break;}
                         }
                     }
+                    if(auto* scroll=qobject_cast<QScrollArea*>(ancestor))scroll->ensureWidgetVisible(control);
                     if(ancestor==i.value())break;
                 }
                 if(control->isEnabled())control->setFocus(Qt::OtherFocusReason);
                 search->setToolTip(control->isEnabled()?"Tool located. Select it to review the launch.":"Tool located, but unavailable on this system.");
                 return;
             }
+        }
+        for(const auto& a:tux::actions())if(a.title.compare(trimmed,Qt::CaseInsensitive)==0||a.id.compare(trimmed,Qt::CaseInsensitive)==0) {
+            locateMaintenanceTool(a.id);return;
         }
         for(const auto& a:tux::actions())if(tux::matches(a,trimmed)) {
             const auto id=destination(a);navigate(id);toolboxes[id]->setSearch(trimmed);

@@ -119,6 +119,15 @@ int main(int argc,char** argv) {
         QMetaObject::invokeMethod(search,"returnPressed");events(20);
         require(window.currentPageId()=="security"&&securityTabs->currentIndex()==1,"qualified search distinguishes duplicate launcher names");
         require(reportTable->rowCount()==0,"launcher search never executes a diagnostic or records a mutation");
+        search->setText("XFCE desktop / Display");QMetaObject::invokeMethod(search,"returnPressed");
+        require(window.currentPageId()=="desktop"&&window.findChild<QTabWidget*>("desktopWorkspaceTabs")->currentIndex()==0,"desktop launchers are searchable without execution");
+        for(const auto& id:QStringList{"cpu-topology","kernel-version","uptime-summary","systemd-state","boot-history","discard-support","disk-transport","package-holds","package-origins","native-architecture","pci-inventory","usb-inventory","display-modes","compositor-state","graphics-renderer","link-counters","socket-summary","network-manager-state","system-timer-files","user-timer-files"}) {
+            search->setText(id);QMetaObject::invokeMethod(search,"returnPressed");
+            bool selected=false;
+            for(auto* table:window.findChildren<QTableWidget*>("toolboxTools"))if(table->isVisible()&&table->currentRow()>=0&&table->item(table->currentRow(),0)&&table->item(table->currentRow(),0)->text()==tux::action(id).title)selected=true;
+            require(selected,"exact new diagnostic ID routes to selected tool without launching");
+        }
+        require(reportTable->rowCount()==0,"twenty new diagnostic routes never execute tasks");
         require(window.navigate("control"),"Control Panel accessible");
         auto* controlTabs=window.findChild<QTabWidget*>("controlPanelTabs");
         require(controlTabs&&controlTabs->count()==11,"all Control Panel categories, index, care and maintenance present");

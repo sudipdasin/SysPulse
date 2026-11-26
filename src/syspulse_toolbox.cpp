@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/toolbox.hpp"
+#include "syspulse/fluent_visuals.hpp"
+#include <QComboBox>
 #include "tux/trusted_command.hpp"
 #include <QCheckBox>
 #include <QCoreApplication>
@@ -114,6 +116,11 @@ ToolboxPage::ToolboxPage(const QStringList& groups, bool experimental,
     search_->setPlaceholderText("Filter tools by name or purpose");
     search_->setClearButtonEnabled(true);
     toolbar->addWidget(search_, 1);
+    accessFilter_=new QComboBox;accessFilter_->setObjectName("toolboxAccessFilter");accessFilter_->setAccessibleName("Filter by required authorization");
+    accessFilter_->addItems({"All access","No administrator","Administrator"});accessFilter_->setToolTip("Filter the existing tools by administrator approval requirement.");
+    toolbar->addWidget(accessFilter_);
+    availableOnly_=new QCheckBox("Available only");availableOnly_->setObjectName("toolboxAvailableOnly");availableOnly_->setToolTip("Hide tools whose required dependency or verified precondition is unavailable. No command is executed.");
+    toolbar->addWidget(availableOnly_);
     count_ = wrappedLabel({}, "toolboxCount");
     toolbar->addWidget(count_);
     layout->addLayout(toolbar);
@@ -222,12 +229,14 @@ ToolboxPage::ToolboxPage(const QStringList& groups, bool experimental,
         tools_->insertRow(row);
         auto* name = new QTableWidgetItem(tool.title);
         name->setData(Qt::UserRole, index);
-        name->setToolTip(tool.description);
+        name->setToolTip(tool.description);name->setIcon(fluent::glyph(fluent::tabGlyph(tool.title)));
         tools_->setItem(row, 0, name);
         tools_->setItem(row, 1, new QTableWidgetItem(tool.group));
         tools_->setItem(row, 2, new QTableWidgetItem(tool.admin ? "Administrator" : tool.changes ? "Changes settings" : "Read only"));
     }
     connect(search_, &QLineEdit::textChanged, this, [this] { filter(); });
+    connect(accessFilter_,QOverload<int>::of(&QComboBox::currentIndexChanged),this,[this]{filter();});
+    connect(availableOnly_,&QCheckBox::toggled,this,[this]{filter();});
     connect(tools_, &QTableWidget::itemSelectionChanged, this, [this] { updateSelection(); });
     connect(runButton_, &QPushButton::clicked, this, [this] { reviewAndRun(); });
     connect(stopButton_, &QPushButton::clicked, this, [this] { requestStop(); });
@@ -255,7 +264,7 @@ bool ToolboxPage::locateTool(const QString& id) {
     for(int row=0;row<tools_->rowCount();++row) {
         const auto index=tools_->item(row,0)->data(Qt::UserRole).toInt();
         if(tux::actions()[index].id!=id)continue;
-        search_->clear();
+        accessFilter_->setCurrentIndex(0);availableOnly_->setChecked(false);search_->clear();filter();
         tools_->setCurrentCell(row,0);
         tools_->scrollToItem(tools_->item(row,0));
         updateSelection();
@@ -281,7 +290,10 @@ void ToolboxPage::filter() {
     int first = -1;
     for (int row = 0; row < tools_->rowCount(); ++row) {
         const auto index = tools_->item(row, 0)->data(Qt::UserRole).toInt();
-        const bool matches = tux::matches(tux::actions()[index], search_->text());
+        const auto& tool=tux::actions()[index];
+        const auto access=accessFilter_->currentIndex();
+        const bool matchAccess=access==0||(access==1&&!tool.admin)||(access==2&&tool.admin);
+        const bool matches = matchAccess&&tux::matches(tool, search_->text())&&(!availableOnly_->isChecked()||injectedExecutor_||tux::unavailable(tool).isEmpty());
         tools_->setRowHidden(row, !matches);
         if (matches) {
             ++visible;

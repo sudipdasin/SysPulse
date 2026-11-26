@@ -9,6 +9,8 @@
 
 class QLabel;
 class QLineEdit;
+class QComboBox;
+class QCheckBox;
 class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
@@ -60,6 +62,8 @@ private:
     QTableWidget* tools_ = nullptr;
     QTableWidget* historyTable_ = nullptr;
     QLineEdit* search_ = nullptr;
+    QComboBox* accessFilter_ = nullptr;
+    QCheckBox* availableOnly_ = nullptr;
     QLabel* count_ = nullptr;
     QLabel* title_ = nullptr;
     QLabel* description_ = nullptr;

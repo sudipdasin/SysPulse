@@ -42,7 +42,36 @@ int main(int argc,char** argv) {
         return tux::runCommand({self,"--child",mode},ms,std::move(cb));
     };
     try {
-        require(tux::actions().size()==37,"35 existing tools plus two reviewed system-wide memory controls");
+        require(tux::actions().size()==57,"37 inherited tools plus twenty read-only diagnostic entries");
+        const QStringList added={"cpu-topology","kernel-version","uptime-summary","systemd-state","boot-history","discard-support","disk-transport","package-holds","package-origins","native-architecture","pci-inventory","usb-inventory","display-modes","compositor-state","graphics-renderer","link-counters","socket-summary","network-manager-state","system-timer-files","user-timer-files"};
+        for(const auto& id:added) {
+            const auto& a=tux::action(id);
+            require(!a.changes&&!a.admin,"new diagnostic is unprivileged and read only");
+            require(!a.title.isEmpty()&&!a.description.isEmpty()&&!a.command.isEmpty(),"diagnostic metadata and fixed command are present");
+            require(tux::matches(a,a.title),"diagnostic discoverable by full title");
+            require(a.command.first()!="sh"&&a.command.first()!="bash","new probe never invokes shell");
+        }
+        require(tux::action("cpu-topology").command==QStringList{"lscpu"},"cpu-topology fixed argument contract");
+        require(tux::action("kernel-version").command==QStringList{"uname","-srmo"},"kernel-version fixed argument contract");
+        require(tux::action("uptime-summary").command==QStringList{"uptime","-p"},"uptime-summary fixed argument contract");
+        require(tux::action("systemd-state").command==QStringList{"systemctl","is-system-running"},"systemd-state fixed argument contract");
+        require(tux::action("boot-history").command==QStringList{"journalctl","--list-boots","--no-pager"},"boot-history fixed argument contract");
+        require(tux::action("discard-support").command==QStringList{"lsblk","--discard"},"discard-support fixed argument contract");
+        require(tux::action("disk-transport").command==QStringList{"lsblk","-o","NAME,TYPE,SIZE,ROTA,TRAN"},"disk-transport fixed argument contract");
+        require(tux::action("package-holds").command==QStringList{"apt-mark","showhold"},"package-holds fixed argument contract");
+        require(tux::action("package-origins").command==QStringList{"apt-cache","policy"},"package-origins fixed argument contract");
+        require(tux::action("native-architecture").command==QStringList{"dpkg","--print-architecture"},"native-architecture fixed argument contract");
+        require(tux::action("pci-inventory").command==QStringList{"lspci","-nn"},"pci-inventory fixed argument contract");
+        require(tux::action("usb-inventory").command==QStringList{"lsusb"},"usb-inventory fixed argument contract");
+        require(tux::action("display-modes").command==QStringList{"xrandr","--query"},"display-modes fixed argument contract");
+        require(tux::action("compositor-state").command==QStringList{"xfconf-query","-c","xfwm4","-p","/general/use_compositing"},"compositor-state fixed argument contract");
+        require(tux::action("graphics-renderer").command==QStringList{"glxinfo","-B"},"graphics-renderer fixed argument contract");
+        require(tux::action("link-counters").command==QStringList{"ip","-s","link"},"link-counters fixed argument contract");
+        require(tux::action("socket-summary").command==QStringList{"ss","-s"},"socket-summary fixed argument contract");
+        require(tux::action("network-manager-state").command==QStringList{"nmcli","general","status"},"network-manager-state fixed argument contract");
+        require(tux::action("system-timer-files").command==QStringList{"systemctl","list-unit-files","--type=timer","--no-pager"},"system-timer-files fixed argument contract");
+        require(tux::action("user-timer-files").command==QStringList{"systemctl","--user","list-unit-files","--type=timer","--no-pager"},"user-timer-files fixed argument contract");
+        require(tux::action("display-modes").x11&&tux::action("graphics-renderer").x11,"X11 queries gated");
         require(tux::action("zswap-enable").admin&&tux::action("zswap-enable").changes&&tux::action("zswap-disable").admin&&tux::action("zswap-disable").changes,"kernel controls require review and authorization");
         QSet<QString> ids;
         for (const auto& a:tux::actions()) {
