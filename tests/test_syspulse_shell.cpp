@@ -4,6 +4,9 @@
 #include "tux/core.hpp"
 #include <QApplication>
 #include <QCheckBox>
+#include <QAction>
+#include <QHeaderView>
+#include <QTableView>
 #include <QElapsedTimer>
 #include <QDialog>
 #include <QLabel>
@@ -73,8 +76,19 @@ int main(int argc,char** argv) {
         auto* memoryStatus=window.findChild<QLabel*>("memoryOptimizerStatus");
         require(optimize&&memoryStatus,"one-click process-local memory relief available");
         optimize->click();require(memoryStatus->text().contains("SysPulse RSS before:"),"memory action reports measured scope");
+        require(memoryStatus->text().contains("System available RAM before:"),"real system measurement displayed without attribution");
+        auto* review=window.findChild<QPushButton*>("reviewMemoryConsumers");
+        require(review,"memory-heavy process review available");review->click();events(25);
+        auto* processTable=window.findChild<QTableView*>("processTable");
+        require(window.currentPageId()=="performance"&&tabs->currentIndex()==5&&processTable,"review opens actual processes");
+        require(processTable->horizontalHeader()->sortIndicatorSection()==2&&processTable->horizontalHeader()->sortIndicatorOrder()==Qt::DescendingOrder,"processes sorted by memory");
+        require(!processTable->selectionModel()->hasSelection(),"review does not select a process for termination");
+        window.navigate("control");
+        auto* pause=window.findChild<QPushButton*>("pauseOptimizerSampling");auto* resume=window.findChild<QPushButton*>("resumeOptimizerSampling");
+        auto* monitor=static_cast<syspulse::PerformancePage*>(window.findChild<QWidget*>("syspulsePerformancePage"));
+        require(pause&&resume&&monitor,"explicit low overhead controls");pause->click();require(monitor->isPaused(),"pause stops sampling");resume->click();require(!monitor->isPaused(),"resume restores sampling preference");
         require(reportTable->rowCount()==0,"memory relief does not fabricate diagnostic records");
-        require(window.navigate("settings"),"application update controls accessible");
+        auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         auto* autoCheck=window.findChild<QCheckBox*>("automaticCachedUpdateCheck");
         auto* updateTimer=window.findChild<QTimer*>("cachedUpdateTimer");

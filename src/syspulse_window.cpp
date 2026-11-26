@@ -2,6 +2,7 @@
 #include "syspulse/window.hpp"
 #include "syspulse/health_probe.hpp"
 #include "syspulse/memory_relief.hpp"
+#include "syspulse/memory_plan.hpp"
 #include "syspulse/pressure.hpp"
 #include "syspulse/performance.hpp"
 #include "syspulse/management.hpp"
@@ -11,6 +12,8 @@
 #include "tux/async_command.hpp"
 #include "syspulse/apt_status.hpp"
 #include <QTimer>
+#include <QAction>
+#include <QMenu>
 #include "tux/health_dialog.hpp"
 #include "tux/report_dialog.hpp"
 #include "tux/process_manager.hpp"
@@ -88,6 +91,7 @@ struct Window::Impl {
     QLabel* breadcrumb=nullptr;
     QLabel* footer=nullptr;
     PerformancePage* performance=nullptr;
+    ProcessManagerWidget* processes=nullptr;
     ManagementPage* management=nullptr;
     QMap<QString,QWidget*> pages;
     QMap<QString,QPushButton*> nav;
@@ -205,13 +209,24 @@ struct Window::Impl {
         auto* utility=new QWidget;utility->setObjectName("utilityBar");auto* ul=new QHBoxLayout(utility);ul->setContentsMargins(24,12,24,12);
         breadcrumb=text("Workspace / Overview");breadcrumb->setObjectName("breadcrumb");ul->addWidget(breadcrumb,1);
         search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->setMaximumWidth(420);ul->addWidget(search,1);
-        ul->addWidget(button("Help",[this]{navigate("settings");},w));bl->addWidget(utility);
+        auto* helpButton=new QPushButton("Help");helpButton->setObjectName("helpMenuButton");
+        auto* helpMenu=new QMenu(helpButton);
+        auto* updates=helpMenu->addAction("Update application…");updates->setObjectName("helpUpdateApplication");
+        QObject::connect(updates,&QAction::triggered,w,[this]{
+            navigate("settings");
+            auto* page=pages.value("settings");
+            auto* scroll=page->findChild<QScrollArea*>();
+            auto* status=page->findChild<QLabel*>("applicationUpdateStatus");
+            if(scroll&&status)scroll->ensureWidgetVisible(status);
+        });
+        auto* settings=helpMenu->addAction("Settings & help");QObject::connect(settings,&QAction::triggered,w,[this]{navigate("settings");});
+        helpButton->setMenu(helpMenu);ul->addWidget(helpButton);bl->addWidget(utility);
         stack=new QStackedWidget;stack->setObjectName("sysPulsePages");bl->addWidget(stack,1);shell->addWidget(body,1);
         footer=text(QString(),"statusFooter");footer->setObjectName("statusFooter");outer->addWidget(footer);
         w->setCentralWidget(root);
         performance=new PerformancePage;
         performance->setSamplingEnabled(sampling);
-        auto* processes=new ProcessManagerWidget(nullptr,false);
+        processes=new ProcessManagerWidget(nullptr,false);
         performance->detailTabs()->addTab(processes,"Processes");
         management=new ManagementPage;
         pages.insert("overview",overview());
@@ -382,22 +397,35 @@ struct Window::Impl {
             const auto available=snapshot.ram?QString::number(snapshot.ram->available/1024.0,'f',1)+" MiB":"Unknown";
             const auto swap=snapshot.swap?QString::number(*snapshot.swap/1024.0,'f',1)+" MiB":"Unknown";
             const auto stalls=pressure[1].some?QString::number(pressure[1].some->avg10,'f',2)+"%":"Unknown";
-            return QString("System available RAM: %1 · Configured swap: %2\nMemory stall time (10s): %3").arg(available,swap,stalls);
+            std::optional<std::uint64_t> total,free;
+            std::optional<double> psi;
+            if(snapshot.ram){total=snapshot.ram->total;free=snapshot.ram->available;}
+            if(pressure[1].some)psi=pressure[1].some->avg10;
+            const auto plan=syspulse::memoryplan::assess(total,free,psi);
+            return QString("System available RAM: %1 · Configured swap: %2\nMemory stall time (10s): %3\n%4").arg(available,swap,stalls,QString::fromLatin1(plan.advice));
         };
         auto* actions=new QHBoxLayout;
         auto* measure=button("Measure memory",[status,describe]{status->setText(describe());},content);
         measure->setObjectName("measureMemory");actions->addWidget(measure);
         auto* optimize=button("Reduce SysPulse memory use",[status,describe]{
+            const auto before=syspulse::triage::measure();
             const auto result=syspulse::relief::trimSelf();
+            const auto after=syspulse::triage::measure();
             const auto show=[](const std::optional<std::uint64_t>& n){return n?QString::number(*n/1024.0,'f',1)+" MiB":"Unknown";};
             const QString detail=!result.supported?"Allocator trim unavailable.":result.released?"Allocator reports unused pages released.":"No allocator pages released.";
-            status->setText(QString("SysPulse RSS before: %1 · after: %2\n%3 RSS is approximate; no system-wide speed gain is guaranteed.\n%4").arg(show(result.before),show(result.after),detail,describe()));
+            const auto available=[](const syspulse::triage::Snapshot& v)->std::optional<std::uint64_t>{if(v.ram)return v.ram->available;return {};};
+            status->setText(QString("SysPulse RSS before: %1 · after: %2\nSystem available RAM before: %3 · after: %4\n%5 System RAM changes include other workloads; no speed gain is guaranteed.\n%6").arg(show(result.before),show(result.after),show(available(before)),show(available(after)),detail,describe()));
         },content,true);
         optimize->setObjectName("optimizeMemory");actions->addWidget(optimize);fl->addLayout(actions);layout->addWidget(frame);
         auto* system=panel();auto* sl=new QVBoxLayout(system);sl->setContentsMargins(20,20,20,20);
         sl->addWidget(text("System-wide memory and responsiveness","sectionTitle"));
         sl->addWidget(text("For larger savings, review memory-heavy applications, startup entries and compressed swap. Close only workloads you choose; system changes use their normal review and authorization.","muted"));
-        sl->addWidget(button("Review running processes",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(5);},w));
+        auto* review=button("Review largest memory consumers",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(5);processes->reviewMemoryConsumers();},w);
+        review->setObjectName("reviewMemoryConsumers");sl->addWidget(review);
+        auto* pause=button("Pause SysPulse resource sampling",[this]{performance->setPaused(true);},w);
+        pause->setObjectName("pauseOptimizerSampling");sl->addWidget(pause);
+        auto* resume=button("Resume SysPulse resource sampling",[this]{performance->setPaused(false);},w);
+        resume->setObjectName("resumeOptimizerSampling");sl->addWidget(resume);
         sl->addWidget(button("Review startup applications",[this]{navigate("management");management->showStartup();},w));
         sl->addWidget(button("Inspect compressed swap",[this]{findTool("Compressed swap status");},w));
         sl->addWidget(button("Open memory history",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(2);},w));

@@ -18,6 +18,7 @@ class ProcessTableModel;
 class ProcessManagerWidget final : public QWidget {
 public:
     explicit ProcessManagerWidget(QWidget *parent = nullptr, bool includeSystemTabs = true);
+    void reviewMemoryConsumers();
 
 protected:
     void showEvent(QShowEvent *event) override;

@@ -1,0 +1,11 @@
+# Signed APT snapshot checkpoint
+
+Offline release tooling for the mandatory complete XFCE DEB distribution policy. This is not a published update feed or an installed updater.
+
+The builder accepts an already verified SysPulse amd64 DEB, externally obtained SHA-256, canonical Debian version and an explicit OpenPGP signing fingerprint. It checks the copied package identity and digest, builds a flat Packages index, creates Release metadata with seven-day validity, signs InRelease and Release.gpg, and retains a new snapshot directory. Run as an unprivileged release operator in a trusted private working parent with a controlled GPG keyring. Never supply a test key for production. The output is not filesystem-enforced immutable; the release operator must protect it from modification and publish snapshots atomically. Only one package per snapshot; this is not yet a channel manager. The tool does not authenticate its expected digest, sign individual DEBs, provision client trust, choose a live version, host files, or install packages. A production workflow must independently verify the release and signing key, manage freshness and authenticated stable/preview channels, retain recovery versions and test real target upgrades.
+
+## Executed tests
+
+Debian 13 local container, unprivileged nobody account, synthetic DEB and disposable RSA signing key, no actual installation. Ten Python unittest methods passed. Both GPG signatures validated; package hash, expiry and permissions checked. Wrong digest/version, existing output, invalid/unknown signer and tampered signed metadata rejected. Real apt-get update and apt-cache policy used an isolated file:// repository and isolated APT state: synthetic installed alpha1 recognized, candidate alpha2 discovered. APT rejected a missing trusted signing key and modified Packages index. No live repository or actual package upgrade tested. Builder and expanded test blob hashes matched local tested files.
+
+Qt5 development headers, QEMU and local direct GitHub DNS remain unavailable. No official SysPulse DEB produced, no production signing key or hosted feed configured. Do not treat synthetic test package as a release. No GitHub Actions or CircleCI. Maintain original Qt application and full target validation gate.
