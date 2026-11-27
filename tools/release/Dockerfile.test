@@ -56,8 +56,19 @@ USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" && syspulse --version | grep -F '3.0.0-alpha.33' && test "$(sha256sum /usr/share/syspulse/update-keys/alpha.gpg | cut -d' ' -f1)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' && syspulse-apt-update check alpha | grep -Fx 'CURRENT 3.0.0~alpha33~render1' && printf 'Exact Alpha.32 signed prior package and unchanged Alpha.33 evaluation DEB verified by SHA-256. Actual APT tamper rejection, actual updater signed fixture upgrade, preferences, launch, pinned prior recovery, re-upgrade and owner public anchor readback passed. No production signing. This is supplementary exact-byte upgrade evidence, not a new build or full GUI regression.\n' > "$HOME/EXACT-UPGRADE.txt"
 
+FROM ubuntu:24.04 AS diagnosticcheck
+RUN apt-get update && apt-get install -y --no-install-recommends python3 systemd procps iproute2 util-linux && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 diagnostic && mkdir -p /out && chown diagnostic:diagnostic /out
+COPY tools/syspulse-diagnostics /tmp/syspulse-diagnostics
+COPY tools/render/test-diagnostic-learning-runtime.py /tmp/test-diagnostic-learning-runtime.py
+USER diagnostic
+RUN python3 /tmp/syspulse-diagnostics self-test > /out/DIAGNOSTICS-TEST.txt 2>&1 || { cat /out/DIAGNOSTICS-TEST.txt; exit 1; }
+RUN cat /out/DIAGNOSTICS-TEST.txt
+RUN python3 /tmp/test-diagnostic-learning-runtime.py /tmp/syspulse-diagnostics > /out/DIAGNOSTICS-RUNTIME.txt && cat /out/DIAGNOSTICS-RUNTIME.txt
+
 FROM python:3.11-slim-bookworm
 COPY --from=test /out/ /srv/results/
+COPY --from=diagnosticcheck /out/ /srv/results/
 COPY --from=installcheck /home/tester/EXACT-UPGRADE.txt /srv/results/
 USER 10001:10001
 EXPOSE 10000
