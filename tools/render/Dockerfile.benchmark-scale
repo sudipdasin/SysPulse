@@ -1,0 +1,12 @@
+FROM ubuntu:22.04 AS benchmark
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++ ca-certificates time && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 builder && mkdir /work /out && chown builder:builder /work /out
+COPY --chown=builder:builder include/ /src/include/
+COPY --chown=builder:builder tests/benchmark_cleaner.cpp /src/tests/benchmark_cleaner.cpp
+USER builder
+RUN g++ -O2 -std=c++17 -Wall -Wextra -I/src/include /src/tests/benchmark_cleaner.cpp -o /work/cleaner-probe && /usr/bin/time -v -o /out/RESOURCE.txt /work/cleaner-probe > /out/SCALE.jsonl && cat /out/SCALE.jsonl /out/RESOURCE.txt
+FROM python:3.11-slim-bookworm
+COPY --from=benchmark /out/ /srv/artifacts/
+USER 10001:10001
+EXPOSE 10000
+CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/artifacts/"]
