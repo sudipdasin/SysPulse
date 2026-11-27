@@ -209,7 +209,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         const bool mayTrash=*hasResults&&!*busy&&!*scannedAsAdmin&&!current->cancelled&&current->error.empty();
         trashLargest->setEnabled(mayTrash&&largest->currentRow()>=0&&largest->currentRow()<static_cast<int>(current->largest.size()));
         trashReview->setEnabled(mayTrash&&leftovers->currentRow()>=0&&leftovers->currentRow()<static_cast<int>(current->review.size()));
-        selection->setText(eligible?QString("%1 selected · %2 logical bytes · %3 eligible files. Maximum 100 per reviewed batch.").arg(count).arg(sizeText(bytes)).arg(candidates->rowCount()):QString("No eligible deletion batch. Redirected cache locations, protected data and personal files remain inspection-only."));
+        selection->setText(eligible?QString("%1 selected · %2 logical bytes · %3 eligible files. Maximum 100 per reviewed batch.").arg(count).arg(sizeText(bytes)).arg(candidates->rowCount()):QString("No eligible permanent cache-deletion batch. Normal-user scans may still offer individually reviewed files in Largest files or Leftovers review."));
     };
     QObject::connect(candidates,&QTableWidget::itemChanged,page,[selectionChanged](QTableWidgetItem*){selectionChanged();});
     QObject::connect(largest,&QTableWidget::itemSelectionChanged,page,selectionChanged);QObject::connect(leftovers,&QTableWidget::itemSelectionChanged,page,selectionChanged);
@@ -315,7 +315,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             }
             if(current->permissionDenied)status->setText(status->text()+" · protected entries not scanned; use authorized system cleanup tools where applicable. Do not run SysPulse as root.");
             if(current->missingCache)status->setText("Cache directory does not exist yet · nothing to scan or clean. Deep scan remains available.");
-            else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · inspection only: redirected cache may contain unrelated files. Use Cleanup candidates for system cache actions.");
+            else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · no automatic deletion: redirected cache may contain unrelated files. Review individual files for Trash or use system cache actions.");
             else if(current->readOnly)status->setText(status->text()+(admin?" · administrator metadata inspection only; no deletion":" · inspection only (nonstandard or unavailable cleanup cache)"));
             current->duplicateInput.clear();
             selectionChanged();
