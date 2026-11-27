@@ -1,0 +1,24 @@
+# Alpha.35 AI-assisted maintenance intelligence
+
+Owner directive 2026-11-27: investigate difficult diagnostics using online public research and optional free-tier AI, learn from verified outcomes, and integrate evidence into safe maintenance. Alpha.34 remains a tested baseline. No external service may supply executable commands, determine privileges, bypass review, alter the release trust anchor or write application code.
+
+## Pipeline
+1. Local Analyze System checks logs and hardware/resource status; classify into fixed taxonomy, not raw messages. User opts into web search, Groq and/or Gemini per analysis. Healthy/no-finding cases make no request.
+2. Three workers run concurrently: Stack Exchange Ask Ubuntu public search and accepted-answer concept extraction, Groq chat completion (llama-3.1-8b-instant), Gemini generateContent (gemini-3.1-flash-lite). Only fixed platform/category labels and broad context are sent; no exact metrics, files, paths, logs, names, machine IDs, user text, credentials in URLs, or raw web content to AI. Provider sees network IP and generic request. API keys are looked up only through optional desktop Secret Service (secret-tool). Missing keys or connectivity fall back to local analysis. Provider billing status cannot be attested by these API endpoints; only configure free accounts with billing disabled. No paid fallback or automatic retry. Models, pricing and quotas can change.
+3. Enforce fixed TLS endpoints/no redirects/no proxies, response caps, timeout, strict JSON, enum-only output, no tools/function calling. Public answer body is parsed only to recognized concepts; retain title, attribution, source/answer links, concepts, response statuses, model IDs and structured advice. Never trust arbitrary returned links or commands. No raw AI prose.
+4. SQLite v2 migration preserves prior diagnostic/outcome data. Each analysis binds evidence by ID, with 24-hour same-profile/provider cache, one research claim, rolling 4 sessions/24h and at least 60s between requests, provider backoff. Clearing diagnostic history removes retained evidence but preserves request budget to avoid bypass. Only opt-in sessions consult cached online evidence. Prior results are evidence, not validated repairs. Record interrupted investigation separately.
+5. Cross-model agreement and public-answer concept overlap rank known read-only routes. Up to four fixed local follow-up probes, no root, run in parallel and feed actual results back into the assessment. Fresh checks run even when external evidence is cached. Additional checks can only restrict the existing Boost permissions/defaults. Agreement may suppress a default; never grants action authority or overrides learned failures. Every mutation still uses existing native eligibility, one-use reservation, fresh checks and explicit review. No remotely generated shell commands or unrestricted self-modifying code.
+6. History shows research-associated action outcomes and local learned behavior; association is not proof of causal AI benefit. Future core-feature changes must use reviewed source branches, tests and signed releases. Do not implement executable learning from untrusted online text.
+
+## Credential setup (optional)
+Install libsecret-tools if necessary with the OS package manager and ensure the desktop Secret Service is available. Create free-only keys at official provider consoles. In a terminal:
+```sh
+secret-tool store --label='SysPulse Groq' application syspulse provider groq
+secret-tool store --label='SysPulse Gemini' application syspulse provider gemini
+```
+Enter the key in the prompt, not command arguments, source, logs or chat. To revoke, remove the entry with secret-tool clear application syspulse provider PROVIDER and revoke in the provider console. SysPulse does not embed shared keys. Gemini free tier may use inputs to improve products; only static taxonomy is permitted. No online research by default; checkboxes are opt-in.
+
+Provider references: https://api.stackexchange.com/docs/advanced-search ; https://api.stackexchange.com/docs/throttle ; https://console.groq.com/docs/rate-limits ; https://console.groq.com/docs/text-chat ; https://ai.google.dev/gemini-api/docs/pricing ; https://ai.google.dev/gemini-api/docs/ .
+
+## Test evidence
+First independent no-secret Alpha.35 test deployment dep-dc4mdpui0phs73aqaa10: 38 diagnostic/database and 16 adapter tests passed. Live Ask Ubuntu lookup on synthetic package_failure retrieved two accepted-answer references and recognized concepts. Both live AI services correctly reported not_configured; no real AI API response tested. New follow-up changes and native GUI/build require revalidation. Alpha.34 native candidate had 55 CTest suites and installed Analyze-to-Boost self-memory workflow pass; original signed feed remains separate. No GitHub Actions, CircleCI, paid resources or production signing.
