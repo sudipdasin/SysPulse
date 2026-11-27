@@ -186,6 +186,8 @@ int main(int argc,char** argv) {
         require(controlTabs->currentIndex()==0,"care routes to existing memory optimizer");
         require(reportTable->rowCount()==0,"care scan and navigation never manufacture diagnostic reports");
         require(window.findChild<QPushButton*>("quickBoost")&&window.findChild<QPushButton*>("maintenanceQuickBoost"),"visible primary Boost controls");
+        require(!window.findChild<QPushButton*>("quickBoost")->isEnabled()&&!window.findChild<QPushButton*>("maintenanceQuickBoost")->isEnabled(),"Boost locked without fresh analysis");
+        require(window.findChild<QPushButton*>("diagnosticHistory"),"local learning history control present");
         require(window.findChild<QPushButton*>("quickDesktopProfiles")&&window.findChild<QPushButton*>("lastBoostResults")&&!window.findChild<QPushButton*>("lastBoostResults")->isEnabled(),"visible preset and saved results controls without fabricated receipt");
         auto* maintenance=window.findChild<QPushButton*>("openMaintenanceCenter");
         auto* baseline=window.findChild<QPushButton*>("maintenanceBaseline");
@@ -285,8 +287,8 @@ int main(int argc,char** argv) {
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");
         auto* analyze=window.findChild<QPushButton*>("analyzeSystem");require(analyze,"analysis action exists");
-        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="healthCheckDialog";if(dialog)dialog->reject();});
-        analyze->click();require(reviewed,"analysis opens the reviewed plan before executing");require(reportTable->rowCount()==0,"cancelling analysis leaves reports empty");
+        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="deepAnalysisReview";if(dialog)dialog->reject();});
+        analyze->click();require(reviewed,"analysis opens the reviewed plan before executing");require(reportTable->rowCount()==0,"cancelling analysis leaves reports empty");require(!window.findChild<QPushButton*>("quickBoost")->isEnabled(),"cancelled analysis cannot authorize Boost");
         syspulse::PerformancePage performance;performance.setSamplingEnabled(false);performance.setPaused(true);performance.refresh();
         require(performance.isPaused(),"manual refresh does not silently resume paused monitoring");
         performance.setPaused(false);performance.setSamplingEnabled(true);performance.refresh();events(150);performance.refresh();
