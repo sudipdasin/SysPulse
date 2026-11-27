@@ -330,10 +330,24 @@ RUN sha256sum -c "$HOME/preference.sha256" \
 
 
 
+FROM hybrid36 AS outcome38
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+USER hybrid
+RUN mkdir /home/hybrid/alpha38 && git -C /home/hybrid/alpha38 init --quiet && git -C /home/hybrid/alpha38 -c protocol.file.allow=never -c http.sslVerify=true -c http.followRedirects=false fetch --depth 1 https://github.com/sudipdasin/SysPulse.git 803ba8600963f4d520a02775e7d29b3b4f49efd8 && git -C /home/hybrid/alpha38 checkout --quiet --detach FETCH_HEAD && test "$(git -C /home/hybrid/alpha38 rev-parse HEAD)" = "803ba8600963f4d520a02775e7d29b3b4f49efd8"
+RUN cd /home/hybrid/alpha38 && python3 tests/test_outcome_verification.py > /out/ALPHA38-OUTCOME-TESTS.txt 2>&1 && cat /out/ALPHA38-OUTCOME-TESTS.txt
+RUN cd /home/hybrid/alpha38 && python3 tests/test_recovery_observations.py > /out/ALPHA38-RECOVERY-TESTS.txt 2>&1 && cat /out/ALPHA38-RECOVERY-TESTS.txt
+RUN cd /home/hybrid/alpha38 && python3 tools/syspulse-diagnostics self-test > /out/ALPHA38-DB-TESTS.txt 2>&1 || { cat /out/ALPHA38-DB-TESTS.txt; exit 1; }
+RUN cd /home/hybrid/alpha38 && python3 tests/test_hybrid_engine.py > /out/ALPHA38-HYBRID-TESTS.txt 2>&1 && python3 tests/test_research_adapters.py > /out/ALPHA38-RESEARCH-TESTS.txt 2>&1
+RUN cd /home/hybrid/alpha38 && python3 tools/render/test-diagnostic-learning-runtime.py tools/syspulse-diagnostics > /out/ALPHA38-CLI.txt && cat /out/ALPHA38-CLI.txt
+RUN cd /home/hybrid/alpha38 && python3 tests/benchmark_diagnostic_detection.py > /out/ALPHA38-TUNED.json && python3 tests/benchmark_diagnostic_holdout.py > /out/ALPHA38-REPLAY.json && cat /out/ALPHA38-TUNED.json /out/ALPHA38-REPLAY.json
+RUN cat /out/ALPHA38-DB-TESTS.txt /out/ALPHA38-HYBRID-TESTS.txt /out/ALPHA38-RESEARCH-TESTS.txt
+
 FROM python:3.11-slim-bookworm
 COPY --from=test /out/ /srv/results/
 COPY --from=hybrid36 /out/ /srv/results/
 COPY --from=hybrid37 /out/ /srv/results/
+COPY --from=outcome38 /out/ /srv/results/
 COPY --from=build37 /out/ /srv/results/alpha37/
 COPY --from=installcheck37 /home/tester/INSTALL-STATUS.txt /srv/results/alpha37/INSTALL-STATUS.txt
 COPY --from=installcheck37 /home/tester/AI37-INSTALLED-RESEARCH.txt /srv/results/alpha37/AI37-INSTALLED-RESEARCH.txt
@@ -341,6 +355,7 @@ COPY --from=diagnosticcheck /out/ /srv/results/
 COPY --from=installcheck /home/tester/EXACT-UPGRADE.txt /srv/results/
 COPY --from=build34 /out/ /srv/results/alpha34/
 COPY --from=installcheck34 /home/tester/INSTALL-STATUS.txt /srv/results/alpha34/INSTALL-STATUS.txt
+RUN printf '%s  %s\n' f68860c151d8e4e9be89bf6ae0aabac424b27452dbd9a01bf75c9b479cc72e16 /srv/results/alpha37/syspulse-3.0.0-alpha.37-x86_64-ubuntu-22.04-render-eval.deb | sha256sum -c -
 USER 10001:10001
 EXPOSE 10000
 CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/results/"]
