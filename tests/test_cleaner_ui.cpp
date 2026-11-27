@@ -27,6 +27,11 @@ int main(int argc,char** argv){
     QString routed;std::unique_ptr<QWidget> page(syspulse::cleanerPage([&](const QString& id){routed=id;}));page->resize(1024,700);page->show();
     auto* mode=page->findChild<QComboBox*>("cleanerMode");auto* path=page->findChild<QLineEdit*>("cleanerRoot");auto* scan=page->findChild<QPushButton*>("cleanerScan");auto* cancel=page->findChild<QPushButton*>("cleanerCancel");auto* status=page->findChild<QLabel*>("cleanerStatus");auto* largest=page->findChild<QTableWidget*>("cleanerLargest");auto* leftovers=page->findChild<QTableWidget*>("cleanerLeftovers");auto* candidates=page->findChild<QTableWidget*>("cleanerCandidates");auto* remove=page->findChild<QPushButton*>("cleanerDelete");auto* tabs=page->findChild<QTabWidget*>("cleanerTabs");auto* minimum=page->findChild<QSpinBox*>("cleanerMinimum");
     if(!mode||!path||!scan||!cancel||!status||!largest||!leftovers||!candidates||!remove||!tabs||!minimum||mode->count()!=4||tabs->count()!=6||remove->isEnabled()||cancel->isEnabled())return 2;
+    auto* quick=page->findChild<QPushButton*>("cleanerQuickReview");auto* batch=page->findChild<QPushButton*>("cleanerSelectBatch");auto* clear=page->findChild<QPushButton*>("cleanerClearBatch");auto* trash=page->findChild<QPushButton*>("cleanerTrashLargest");auto* trim=page->findChild<QPushButton*>("cleanerTrim");auto* extended=page->findChild<QCheckBox*>("cleanerExtendedScan");
+    if(!quick||!batch||!clear||!trash||!trim||!extended||batch->isEnabled()||clear->isEnabled()||trash->isEnabled()||extended->isChecked())return 30;
+    quick->click();if(tabs->tabText(tabs->currentIndex())!="Cleanup candidates")return 31;
+    trim->click();if(routed!="trim")return 32;
+    tabs->setCurrentIndex(0);
     const auto await=[&](QPushButton* b){QElapsedTimer time;time.start();while(!b->isEnabled()&&time.elapsed()<18000){app.processEvents();QThread::msleep(5);}return b->isEnabled();};
     if(path->text()!=QString::fromStdString(cacheDir.string()))return 15;
     auto* volumes=page->findChild<QComboBox*>("cleanerVolume");auto* budget=page->findChild<QComboBox*>("cleanerVolumeBudget");auto* browse=page->findChild<QPushButton*>("cleanerBrowse");
@@ -44,6 +49,10 @@ int main(int argc,char** argv){
     mode->setCurrentIndex(3);path->setText(fixture.path());scan->click();
     if(scan->isEnabled()||!cancel->isEnabled()||!await(scan))return 3;
     if(!status->text().contains("Scan complete")||largest->rowCount()!=2||largest->item(0,1)->text()!="largest.iso"||largest->item(0,2)->text()!=fixture.path()||leftovers->rowCount()!=1||candidates->rowCount()!=0||remove->isEnabled())return 4;
+    tabs->setCurrentIndex(1);largest->selectRow(0);app.processEvents();
+    if(!trash->isEnabled()||batch->isEnabled()||remove->isEnabled())return 33;
+    extended->setChecked(true);if(largest->rowCount()!=0||trash->isEnabled())return 34;
+    extended->setChecked(false);scan->click();if(!await(scan)||largest->rowCount()!=2)return 35;
     if(page->findChild<QWidget*>("cleanerLargestChart")->accessibleName().isEmpty()||page->findChild<QWidget*>("cleanerDiskChart")->accessibleName().isEmpty())return 5;
     path->setText(fixture.path()+"/other");if(largest->rowCount()!=0||leftovers->rowCount()!=0||remove->isEnabled()||!status->text().contains("settings changed"))return 20;
     path->setText(fixture.path());scan->click();if(!await(scan)||largest->rowCount()!=2)return 21;
