@@ -36,6 +36,7 @@ def policy(p):
     require(type(p["schema"]) is int and p["schema"]==2,"Unsupported policy schema")
     for k in ("project","package","channel"):
         require(isinstance(p[k],str) and re.fullmatch(r"[a-z0-9][a-z0-9+.-]{1,63}",p[k]),"Invalid project namespace")
+    require(p["channel"] in ("alpha","beta","stable"),"Unsupported release channel")
     require(p["architecture"] in ("amd64","arm64"),"Unsupported architecture")
     require(isinstance(p["repository"],str) and re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git",p["repository"]),"Invalid repository")
     for k in ("feed_branch","catalogue_branch"):
@@ -50,6 +51,7 @@ def policy(p):
     safe_version(p["minimum_version"])
     require(isinstance(p["artifact_hosts"],list) and 0<len(p["artifact_hosts"])<=16 and all(isinstance(h,str) and re.fullmatch(r"[a-z0-9][a-z0-9.-]{2,127}",h) and "." in h and not h.endswith(".") for h in p["artifact_hosts"]) and len(set(p["artifact_hosts"]))==len(p["artifact_hosts"]),"Invalid host allowlist")
     require(type(p["minimum_suites"]) is int and 1<=p["minimum_suites"]<=100000 and type(p["require_physical"]) is bool,"Invalid test policy")
+    require(p["channel"]!="stable" or p["require_physical"],"Stable channel requires physical acceptance")
     return p
 def filename(p,v):return "pool/"+p["package"]+"_"+safe_version(v)+"_"+p["architecture"]+".deb"
 def candidate(p,c):
