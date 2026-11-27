@@ -271,6 +271,7 @@ struct Window::Impl {
     }
     void analyzeClassic() {
         if(!maintenanceAvailable())return;DiagnosticGuard guard(this);
+        analysisId.clear();analysisStatus->setText("Advanced diagnostics do not authorize Boost. Run full Analyze system first.");
         for(auto* page:allToolboxes)if(page->isBusy())return;
         tux::HealthDialog dialog(w);dialog.setWindowTitle("Analyze system · SysPulse");
         dialog.setStyleSheet(QString());
@@ -1165,7 +1166,7 @@ struct Window::Impl {
         }else lines<<"APT cleanup: not selected.";
         if(ownMemory->isChecked()){
             const auto result=syspulse::relief::trimSelf();const auto fmt=[mib](const std::optional<std::uint64_t>& n){return n?mib(*n*1024):QString("Unknown");};
-            const auto released=result.before&&result.after&&*result.before>*result.after?(*result.before-*result.after)*1024:0;
+            const auto released=result.before&&result.after&&*result.before>*result.after&&result.released?(*result.before-*result.after)*1024:0;
             outcome("own_memory",!result.supported?"skipped":released?"success":"no_effect",released);
             lines<<QString("SysPulse RSS: %1 → %2. %3").arg(fmt(result.before),fmt(result.after),!result.supported?"Allocator trim unavailable.":result.released?"Allocator reported unused pages released.":"No unused pages reported released.");
         }
