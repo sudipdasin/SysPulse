@@ -199,9 +199,25 @@ RUN python3 /src/tests/test_research_adapters.py > /out/HYBRID36-RESEARCH-TESTS.
 RUN cat /out/HYBRID36-TESTS.txt /out/HYBRID36-DB-TESTS.txt /out/HYBRID36-RESEARCH-TESTS.txt
 RUN smartctl --version > /out/HYBRID36-SMART-VERSION.txt && python3 /src/tools/syspulse-diagnostics analyze > /out/HYBRID36-SMOKE-PRIVATE.json && python3 -c 'import json,pathlib; p=pathlib.Path("/out/HYBRID36-SMOKE-PRIVATE.json"); a=json.loads(p.read_text()); assert a["state"]=="ready"; s=next(x for x in a["sources"] if x["name"]=="smart-disk-health"); print("Real non-root analysis completed; SMART coverage: "+s["status"]+"; "+str(len(a["sources"]))+" source checks; masked patterns and local recipes present; no disk mutations"); assert "patterns" in a and "recipes" in a and "cleaner_catalog" in a; p.unlink()' > /out/HYBRID36-SMOKE.txt && cat /out/HYBRID36-SMOKE.txt
 
+FROM hybrid36 AS hybrid37
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends g++ && rm -rf /var/lib/apt/lists/*
+COPY include/syspulse/cleaner.hpp include/syspulse/maintenance_preview.hpp /src/include/syspulse/
+COPY hybrid37/include/syspulse/boost.hpp /src/include/syspulse/
+COPY hybrid37/tools/ /src/tools/
+COPY hybrid37/tests/ /src/tests/
+RUN g++ -std=c++17 -O2 -Wall -Wextra -I/src/include /src/tests/test_boost.cpp -o /usr/local/bin/test-boost37
+USER hybrid
+RUN /usr/local/bin/test-boost37 > /out/CLEANING37-TEST.txt && cat /out/CLEANING37-TEST.txt
+RUN python3 /src/tools/syspulse-diagnostics self-test > /out/CLEANING37-DB-TEST.txt 2>&1 || { cat /out/CLEANING37-DB-TEST.txt; exit 1; }
+RUN python3 /src/tests/test_research_adapters.py > /out/CLEANING37-RESEARCH-TEST.txt 2>&1 || { cat /out/CLEANING37-RESEARCH-TEST.txt; exit 1; }
+RUN python3 /src/tests/benchmark_diagnostic_detection.py > /out/DETECTION36-BASELINE.json && cat /out/DETECTION36-BASELINE.json
+RUN cat /out/CLEANING37-DB-TEST.txt /out/CLEANING37-RESEARCH-TEST.txt
+
 FROM python:3.11-slim-bookworm
 COPY --from=test /out/ /srv/results/
 COPY --from=hybrid36 /out/ /srv/results/
+COPY --from=hybrid37 /out/ /srv/results/
 COPY --from=diagnosticcheck /out/ /srv/results/
 COPY --from=installcheck /home/tester/EXACT-UPGRADE.txt /srv/results/
 COPY --from=build34 /out/ /srv/results/alpha34/
