@@ -24,8 +24,13 @@ docker buildx build --platform linux/amd64 --target artifacts \
   --output "type=local,dest=$out" "$tmp"
 (
  cd "$out"
+ name=syspulse-3.0.0-alpha.39-x86_64-ubuntu-22.04-render-eval.deb
+ for file in SOURCE-CHECKOUT.txt BUILD-STATUS.txt SHA256SUMS INSTALL-STATUS.txt "$name"; do
+   [[ -f $file && ! -L $file && -s $file ]] || { echo "Missing or unsafe artifact: $file" >&2; exit 1; }
+ done
  [[ $(cat SOURCE-CHECKOUT.txt) == "$commit" ]]
- sha256sum -c SHA256SUMS
- test -s INSTALL-STATUS.txt
+ [[ $(grep '^Source commit:' BUILD-STATUS.txt) == "Source commit: $commit" ]]
+ # The export contract contains exactly one known package, not arbitrary manifest paths.
+ [[ $(sha256sum -- "$name") == "$(cat SHA256SUMS)" ]]
 )
 printf 'Local evaluation artifacts: %s\nNo production publication or installation performed.\n' "$out"
