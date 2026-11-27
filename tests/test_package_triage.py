@@ -21,6 +21,9 @@ class Tests(unittest.TestCase):
         clean="0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded."
         for status,raw,bounded in (("ok",clean,True),("timeout",clean,False),("ok","",False),("ok",clean+"\nInst a",False),("ok",clean+"\n"+clean,False),("ok",clean+"\nE: access denied",False)):
             self.assertEqual(p.solver_result(status,raw,bounded)["status"],"unknown")
+    def test_warning_not_healthy(self):
+        raw="0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\nW: Ignoring inaccessible preferences file"
+        self.assertEqual(p.solver_result("ok",raw,False)["status"],"unknown")
     def test_integrity(self):
         raw="missing     /usr/share/doc/dpkg/AUTHORS\n??5?????? c /etc/example\n??5??????   /usr/bin/dpkg\nmissing     /var/lib/example"
         r=p.integrity_result("ok",raw,False)
