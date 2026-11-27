@@ -13,8 +13,9 @@ int main(int argc,char** argv){
  using namespace tux::admin;
  const QStringList update={"update","alpha","3.0.0~alpha26~render1"},volume={"volume","/","standard"},service={"service","restart","test.service"};
  const QStringList memory={"memory","swappiness","120"},packages={"packages","wine","install"};
- for(const auto& request:{update,volume,service,memory,packages})if(decodeRequest(encodeRequest(request))!=request||typedCommand(request).isEmpty())return 6;
- for(const auto& invalid:QVector<QStringList>{{"update","alpha","--bad"},{"update","unknown","3.0.0"},{"volume","relative","extended"},{"volume","/","delete"},{"service","edit","x.service"},{"service","start","--evil.service"},{"service","start","x.service;sh"},{"service","start","*.service"},{"sh","-c","id"},{"memory","swappiness","201"},{"memory","swappiness","-1"},{"memory","vm.other","60"},{"memory","swappiness","060"},{"packages","--bad","install"},{"packages","wine","remove"}})if(!typedCommand(invalid).isEmpty()||!encodeRequest(invalid).isEmpty())return 7;
+ const QStringList wifi={"network","wifi","on"},power={"power","profile","balanced"};
+ for(const auto& request:{update,volume,service,memory,packages,wifi,power})if(decodeRequest(encodeRequest(request))!=request||typedCommand(request).isEmpty())return 6;
+ for(const auto& invalid:QVector<QStringList>{{"update","alpha","--bad"},{"update","unknown","3.0.0"},{"volume","relative","extended"},{"volume","/","delete"},{"service","edit","x.service"},{"service","start","--evil.service"},{"service","start","x.service;sh"},{"service","start","*.service"},{"sh","-c","id"},{"memory","swappiness","201"},{"memory","swappiness","-1"},{"memory","vm.other","60"},{"memory","swappiness","060"},{"packages","--bad","install"},{"packages","wine","remove"},{"network","wifi","reset"},{"power","profile","turbo"}})if(!typedCommand(invalid).isEmpty()||!encodeRequest(invalid).isEmpty())return 7;
  if(typedCommand(memory)!=QStringList{"sysctl","-w","vm.swappiness=120"}||!typedCommand(packages).contains("--no-remove")||!typedCommand(packages).contains("wine"))return 10;
  r.output=QByteArray(1024*1024,'a');if(!decode(encode(r),decoded,MaxScanOutput)||decoded.output!=r.output||decode(encode(r),decoded))return 8;
  if(!decodeRequest("[\"volume\",123,\"standard\"]").isEmpty()||!decodeRequest(QByteArray(MaxRequest+1,'x')).isEmpty())return 9;
