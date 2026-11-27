@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QHash>
 #include <QJsonArray>
 #include <QRegularExpression>
 namespace tux::admin {
@@ -33,6 +34,24 @@ inline QStringList typedCommand(const QStringList& fields){
         bool ok=false;const int value=b.toInt(&ok);
         if(a!="swappiness"||!number.match(b).hasMatch()||!ok||value>200)return {};
         return {"sysctl","-w","vm.swappiness="+b};
+    }
+    if(kind=="packages"){
+        // Explicit fixed distribution package groups; no user-entered package names,
+        // third-party repositories, removal, downgrade or unauthenticated packages.
+        if(b!="install")return {};
+        static const QHash<QString,QStringList> groups={
+            {"wine",{"wine","winetricks","cabextract"}},
+            {"lutris",{"lutris"}},
+            {"graphics",{"vulkan-tools","mesa-utils","mesa-vulkan-drivers","gamemode"}},
+            {"power",{"tlp"}},
+            {"preload",{"preload"}},
+            {"disk",{"gnome-disk-utility","gparted","smartmontools"}},
+            {"backup",{"timeshift","deja-dup"}}
+        };
+        QStringList command={"apt-get","--no-remove","--assume-yes","-o","Dpkg::Options::=--force-confdef","-o","Dpkg::Options::=--force-confold"};
+        if(a=="repair"){command<<"--fix-broken"<<"install";return command;}
+        if(!groups.contains(a))return {};
+        command<<"install";command.append(groups.value(a));return command;
     }
     if(kind=="service"){
         static const QSet<QString> verbs={"start","stop","restart","enable","disable"};
