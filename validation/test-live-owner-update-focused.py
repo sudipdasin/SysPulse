@@ -6,7 +6,7 @@ No production signing secrets, key substitution, URL override, or simulated inst
 import base64, hashlib, json, os, pathlib, socket, subprocess, sys, tempfile, urllib.request
 
 VERSION = "3.0.0~alpha26~render1"
-BASELINE = "3.0.0~alpha26"
+BASELINE = "3.0.0~alpha25~render1"
 DIGEST = "1ed875f39d95531a79a8685019d6409505c8cff05bed98186a37e8611037d70f"
 KEY_DIGEST = "1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6"
 NAME = "syspulse-3.0.0-alpha.26-x86_64-ubuntu-22.04-render-eval.deb"
@@ -46,6 +46,7 @@ print(u["check"]("alpha",u["resolve_key"]("alpha"),u["BASE"]+"alpha/"))
 def main():
     if os.geteuid() != 0 or sys.argv[1:] != ["--disposable-container"] or os.environ.get("SYSPULSE_DISPOSABLE_TEST") != "owner-feed-alpha26" or not pathlib.Path("/syspulse-disposable-marker").is_file():
         raise SystemExit("Refusing non-disposable environment")
+    run("/usr/bin/dpkg", "--compare-versions", VERSION, "gt", BASELINE)
     out = pathlib.Path("/verified-production")
     out.mkdir(mode=0o755)
     package = out / NAME
