@@ -99,7 +99,7 @@ ToolboxPage::ToolboxPage(const QStringList& groups, bool experimental,
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
     auto* introduction = wrappedLabel(
-        experimental_ ? QStringLiteral("Experimental changes · Review each operation before applying it. These tools change settings or remove cached data.")
+        experimental_ ? QStringLiteral("Maintenance actions · Review each operation before applying it. These tools change settings or remove cached data.")
                       : QStringLiteral("Inspect your system with reviewed, read-only tools. Select a tool to see its scope and exact command."),
         "toolboxIntroduction");
     layout->addWidget(introduction);
@@ -331,8 +331,8 @@ void ToolboxPage::updateSelection() {
     const bool help=!missing.isEmpty()&&!dependencyPackage(missing).isEmpty();
     dependencyButton_->setProperty("dependencyCommand",missing);dependencyButton_->setToolTip(help?dependencyHint(missing):"Review optional package availability.");
     dependencyButton_->setVisible(help);dependencyButton_->setEnabled(help&&!busy_&&executionAllowed_);
-    access_->setText(!problem.isEmpty() ? problem+(help?" · "+dependencyHint(missing):QString(" · Correct the stated prerequisite, then refresh availability.")) : tool.admin ? (tool.changes ? "Administrator approval required · Experimental" : "Read only · Administrator approval required")
-                                 : tool.changes ? "Changes settings · Experimental" : "Read only · No administrator approval");
+    access_->setText(!problem.isEmpty() ? problem+(help?" · "+dependencyHint(missing):QString(" · Correct the stated prerequisite, then refresh availability.")) : tool.admin ? (tool.changes ? "Administrator approval required · Reviewed action" : "Read only · Administrator approval required")
+                                 : tool.changes ? "Changes settings · Reviewed action" : "Read only · No administrator approval");
     runButton_->setText(tool.changes ? "Review change…" : "Review diagnostic…");
     runButton_->setToolTip(!executionAllowed_ ? "Another SysPulse task is running. Wait for it to finish."
                           : problem.isEmpty() ? "Review scope and command before starting" : problem);
