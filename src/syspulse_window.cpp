@@ -288,6 +288,16 @@ struct Window::Impl {
                 interval<<"Short observational sample, not a long-term benchmark or causal performance claim.";
             }
         }
+        QStringList integrity;
+        for(const auto& v:result.value("sources").toArray()){
+            const auto row=v.toObject();if(row.value("name").toString()!="dpkg-core-integrity")continue;
+            for(const auto& item:row.value("integrity").toArray()){
+                const auto p=item.toObject();integrity<<QString("%1 · %2").arg(p.value("package").toString(),p.value("status").toString());
+                integrity<<QString("  Core files: %1; configuration: %2; documentation: %3; other: %4").arg(p.value("core_file_changes").toInt()).arg(p.value("configuration_changes").toInt()).arg(p.value("documentation_changes").toInt()).arg(p.value("other_changes").toInt());
+            }
+        }
+        integrity<<"Installed metadata verification, not an authenticity check. Documentation or configuration differences may be legitimate. No repair executed.";
+        make("Core package integrity",integrity);
         make("APT repair preview",solver);make("Live interval metrics",interval);
         make("Learned patterns",patterns);make("Repair knowledge",recipes);make("Disk health",hardware);make("Cleaner discovery",cleaners);const auto external=result.value("research").toObject();make("AI & web evidence",researchLines(external));layout->addWidget(tabs,1);
         layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
