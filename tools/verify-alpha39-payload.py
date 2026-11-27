@@ -10,7 +10,7 @@ import tarfile
 
 ANCHOR = "1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6"
 PROGRAMS = ("syspulse", "tux-steward", "tux-task-manager", "tux-setup", "syspulse-memory-control", "syspulse-volume-scan", "syspulse-admin-session", "syspulse-apt-update", "syspulse-input-control", "syspulse-brave-profile", "syspulse-desktop-recovery", "syspulse-schedule-profile", "syspulse-hdd-profile", "syspulse-desktop-profile", "syspulse-diagnostics")
-MODULES = ("syspulse_research.py", "syspulse_hybrid.py", "syspulse_outcomes.py", "syspulse_recovery.py", "syspulse_native_probes.py", "syspulse_integrity.py", "syspulse_smart_evidence.py")
+MODULES = ("syspulse_research.py", "syspulse_hybrid.py", "syspulse_outcomes.py", "syspulse_recovery.py", "syspulse_native_probes.py", "syspulse_integrity.py", "syspulse_smart_evidence.py", "syspulse_package_evidence.py")
 TIMERS = ("syspulse-weekly-clean.service", "syspulse-weekly-clean.timer", "syspulse-daily-clean.timer", "syspulse-monthly-clean.timer")
 KEY = "usr/share/syspulse/update-keys/alpha.gpg"
 KEY_HASH = "usr/share/syspulse/update-keys/alpha.sha256"
