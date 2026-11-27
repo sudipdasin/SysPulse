@@ -184,17 +184,23 @@ inline bool reviewedTrashEligible(const Entry& entry){
 inline bool removeCache(const fs::path& cache,const Entry& entry,unsigned ageDays,std::time_t now=std::time(nullptr)){
     if(!entry.removable||!inside(entry.path,cache)||entry.path.filename().empty())return false;
     Fd anchor(openDir(cache));struct stat base{},st{};
-    if(anchor.n<0||::fstat(anchor.n,&base)||base.st_uid!=::getuid())return false;
+    if(anchor.n<0||::fstat(anchor.n,&base)||base.st_uid!=::getuid()||!S_ISDIR(base.st_mode))return false;
+    const auto baseMount=mountId(anchor.n);if(!baseMount)return false;
     Fd parent(::fcntl(anchor.n,F_DUPFD_CLOEXEC,3));if(parent.n<0)return false;
     auto rel=entry.path.lexically_relative(cache);
     for(const auto& part:rel.parent_path()){
         if(part.empty()||part=="."||part=="..")return false;
         Fd next(::openat(parent.n,part.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));struct stat dir{};
-        if(next.n<0||::fstat(next.n,&dir)||dir.st_dev!=base.st_dev||dir.st_uid!=::getuid())return false;
+        if(next.n<0||::fstat(next.n,&dir)||dir.st_dev!=base.st_dev||dir.st_uid!=::getuid()||mountId(next.n)!=baseMount)return false;
         ::close(parent.n);parent.n=next.n;next.n=-1;
     }
     if(::fstatat(parent.n,entry.path.filename().c_str(),&st,AT_SYMLINK_NOFOLLOW))return false;
     if(st.st_dev!=base.st_dev||st.st_dev!=entry.dev||st.st_ino!=entry.ino||st.st_uid!=entry.uid||st.st_size<0||static_cast<std::uint64_t>(st.st_size)!=entry.bytes||!sameTime(st.st_mtim,entry.mtime)||!sameTime(st.st_ctim,entry.ctime)||!safeCache(st,ageDays,now))return false;
+    // Exclude even same-device bind-mounted files. Descriptor identity is checked
+    // against the reviewed entry; a same-user rename between check and unlink remains
+    // a filesystem race, so only explicit cache files are eligible.
+    Fd target(::openat(parent.n,entry.path.filename().c_str(),O_PATH|O_NOFOLLOW|O_CLOEXEC));struct stat actual{};
+    if(target.n<0||mountId(target.n)!=baseMount||::fstat(target.n,&actual)||actual.st_dev!=st.st_dev||actual.st_ino!=st.st_ino||actual.st_uid!=st.st_uid||actual.st_size!=st.st_size||!sameTime(actual.st_mtim,st.st_mtim)||!sameTime(actual.st_ctim,st.st_ctim)||!safeCache(actual,ageDays,now))return false;
     return ::unlinkat(parent.n,entry.path.filename().c_str(),0)==0;
 }
 }
