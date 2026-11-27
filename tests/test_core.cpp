@@ -42,7 +42,7 @@ int main(int argc,char** argv) {
         return tux::runCommand({self,"--child",mode},ms,std::move(cb));
     };
     try {
-        require(tux::actions().size()==58,"57 existing tools plus reversible SSD timer control");
+        require(tux::actions().size()==61,"58 existing tools plus three reviewed package and journal actions");
         const QStringList added={"cpu-topology","kernel-version","uptime-summary","systemd-state","boot-history","discard-support","disk-transport","package-holds","package-origins","native-architecture","pci-inventory","usb-inventory","display-modes","compositor-state","graphics-renderer","link-counters","socket-summary","network-manager-state","system-timer-files","user-timer-files"};
         for(const auto& id:added) {
             const auto& a=tux::action(id);
@@ -74,6 +74,9 @@ int main(int argc,char** argv) {
         require(tux::action("display-modes").x11&&tux::action("graphics-renderer").x11,"X11 queries gated");
         require(tux::action("zswap-enable").admin&&tux::action("zswap-enable").changes&&tux::action("zswap-disable").admin&&tux::action("zswap-disable").changes,"kernel controls require review and authorization");
         require(tux::action("trim-disable").admin&&tux::action("trim-disable").changes&&tux::action("trim-disable").command==QStringList{"systemctl","disable","--now","fstrim.timer"},"fixed reviewed timer disable action");
+        require(tux::action("apt-refresh").command==QStringList{"apt-get","update"}&&tux::action("apt-refresh").admin&&tux::action("apt-refresh").changes,"fixed package-list refresh");
+        require(tux::action("apt-autoclean").command==QStringList{"apt-get","autoclean"}&&tux::action("apt-autoclean").admin&&tux::action("apt-autoclean").changes,"fixed obsolete archive cleanup");
+        require(tux::action("journal-cap").command==QStringList{"journalctl","--vacuum-size=100M"}&&tux::action("journal-cap").admin&&tux::action("journal-cap").changes,"fixed archived journal size policy");
         QSet<QString> ids;
         for (const auto& a:tux::actions()) {
             ids.insert(a.id);
