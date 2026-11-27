@@ -14,7 +14,7 @@ def apt_result(status,raw,bounded):
     summaries=[]; malformed=False; warning=False; removal_disabled=False
     for raw_line in lines:
         line=raw_line.strip()
-        m=SUMMARY.fullmatch(line.strip())
+        m=SUMMARY.fullmatch(line)
         if m:
             if any(len(x)>6 for x in m.groups()):return result
             summaries.append(tuple(map(int,m.groups())))
