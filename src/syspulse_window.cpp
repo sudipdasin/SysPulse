@@ -13,6 +13,7 @@
 #include "syspulse/window.hpp"
 #include "syspulse/fluent_visuals.hpp"
 #include "syspulse/cleaner_page.hpp"
+#include "syspulse/offline_filesystem.hpp"
 #include "syspulse/health_probe.hpp"
 #include "syspulse/memory_relief.hpp"
 #include "syspulse/memory_plan.hpp"
@@ -280,7 +281,7 @@ struct Window::Impl {
         auto* storage=toolbox({"Storage","Maintenance"});toolboxes.insert("storage",storage);
         auto* storageTabs=new QTabWidget;storageTabs->setObjectName("storageWorkspaceTabs");storageTabs->addTab(storage,"Diagnostics & cleanup");
         storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
-        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");storageTabs->setCurrentIndex(2);
+        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");storageTabs->addTab(offlineDiskPage(),"Filesystem repair");storageTabs->setCurrentIndex(2);
         pages.insert("storage",workspace("Storage & cleanup","Scan disks, review and delete eligible cache files, or run reviewed system maintenance actions.",storageTabs));
         pages.insert("management",management);
         pages.insert("control",controlPanelPage());
@@ -416,6 +417,73 @@ struct Window::Impl {
             grid->addWidget(toolTile(b,entry.first,!program.isEmpty()),index/2,index%2);++index;
         }
         layout->addLayout(grid);layout->addStretch();return content;
+    }
+    QWidget* offlineDiskPage() {
+        auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
+        layout->addWidget(text("Offline filesystem check and repair","sectionTitle"));
+        layout->addWidget(text("Only unmounted ext2/3/4 volumes with unique UUIDs are offered. Back up data first. Use the Disks utility to unmount normally; SysPulse will never force unmount, repair a mounted system volume, or run an automatic repair. UDisks manages its own desktop authorization.","muted"));
+        auto* devices=new QComboBox;devices->setObjectName("offlineFilesystemDevice");layout->addWidget(devices);
+        auto* state=text("Refresh to find eligible offline filesystems.","muted");state->setObjectName("offlineFilesystemStatus");state->setTextFormat(Qt::PlainText);layout->addWidget(state);
+        auto* refresh=new QPushButton("Refresh offline devices");refresh->setObjectName("offlineFilesystemRefresh");
+        auto* check=new QPushButton("Check selected filesystem…");check->setObjectName("offlineFilesystemCheck");check->setEnabled(false);
+        auto* repair=new QPushButton("Repair selected filesystem…");repair->setObjectName("offlineFilesystemRepair");repair->setEnabled(false);
+        auto* row=new QHBoxLayout;row->addWidget(refresh);row->addWidget(check);row->addWidget(repair);layout->addLayout(row);
+        auto inventory=std::make_shared<QVector<offline::Device>>();
+        auto checked=std::make_shared<std::optional<offline::Device>>();
+        const QStringList listArgs={"--json","--list","--output","PATH,UUID,FSTYPE,MAJ:MIN,TYPE,RO,MOUNTPOINTS,SIZE"};
+        const auto reload=[=]{
+            checked->reset();inventory->clear();devices->clear();check->setEnabled(false);repair->setEnabled(false);
+            const auto ls=tux::trustedSystemExecutable("lsblk");
+            if(ls.isEmpty()){state->setText("Trusted lsblk not installed.");return;}
+            refresh->setEnabled(false);state->setText("Reading block device inventory…");
+            AsyncCommand::run(content,ls,listArgs,12000,262144,[=](const AsyncCommandResult& r){
+                refresh->setEnabled(true);
+                if(!r.ok()){state->setText("Unable to verify device inventory.");return;}
+                *inventory=offline::candidates(r.output);
+                for(const auto& d:*inventory)devices->addItem(d.path+" · "+d.type+" · "+d.size+" · "+d.uuid);
+                check->setEnabled(!inventory->isEmpty());
+                state->setText(inventory->isEmpty()?"No eligible unmounted ext filesystem found.":"Select an offline device and run the read-only check.");
+            });
+        };
+        QObject::connect(refresh,&QPushButton::clicked,content,reload);
+        QObject::connect(devices,QOverload<int>::of(&QComboBox::currentIndexChanged),content,[=](int){checked->reset();repair->setEnabled(false);});
+        const auto operate=[=](bool fixing){
+            const int index=devices->currentIndex();if(index<0||index>=inventory->size()||!refresh->isEnabled())return;
+            const auto selected=inventory->at(index);
+            if(fixing&&(!*checked||!(checked->value()==selected)))return;
+            if(QMessageBox::question(content,fixing?"Review offline repair":"Review offline check",QString("%1\nDevice: %2\nUUID: %3\nType: %4\nSize: %5\n%6").arg(fixing?"Repair may change filesystem metadata and recover or discard damaged data. Confirm that you have a backup.":"Check consistency without repairing the filesystem.").arg(selected.path,selected.uuid,selected.type,selected.size,fixing?"Proceed with repair?":"Proceed with check?"),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            const auto ls=tux::trustedSystemExecutable("lsblk"),udisks=tux::trustedSystemExecutable("udisksctl"),gdbus=tux::trustedSystemExecutable("gdbus");
+            if(ls.isEmpty()||udisks.isEmpty()||gdbus.isEmpty()){state->setText("Required trusted lsblk, udisksctl or gdbus unavailable. Install disk tools first.");return;}
+            refresh->setEnabled(false);devices->setEnabled(false);check->setEnabled(false);repair->setEnabled(false);
+            const auto end=[=]{refresh->setEnabled(true);devices->setEnabled(true);check->setEnabled(true);};
+            state->setText("Revalidating device and mount state…");
+            AsyncCommand::run(content,ls,listArgs,12000,262144,[=](const AsyncCommandResult& a){
+                if(!a.ok()||!offline::candidates(a.output).contains(selected)){state->setText("Device changed or became mounted. Refresh before retrying.");checked->reset();end();return;}
+                AsyncCommand::run(content,udisks,{"info","--block-device",selected.path},10000,65536,[=](const AsyncCommandResult& b){
+                    const auto object=b.ok()?offline::objectPath(b.output):QString{};
+                    const auto args=offline::arguments(object,fixing);
+                    if(args.isEmpty()){state->setText("Could not verify the UDisks device object.");checked->reset();end();return;}
+                    // UDisks rejects mounted/unsupported filesystems at execution; no forced unmount.
+                    ReviewedProgress progress(content);progress.setWindowTitle(fixing?"Repairing offline filesystem":"Checking offline filesystem");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+                    auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for UDisks and desktop authorization. Do not disconnect the device or shut down."));
+                    AsyncCommand::runAction(&progress,gdbus,args,65536,[&](const AsyncCommandResult& c){
+                        const int answer=c.ok()?offline::boolReply(c.output):-1;
+                        checked->reset();
+                        if(answer==1)state->setText(fixing?"UDisks reported repair success. Run a fresh consistency check.":"UDisks reported the filesystem consistent.");
+                        else if(answer==0&&!fixing){*checked=selected;state->setText("UDisks reported an inconsistent filesystem. Repair may be reviewed after backup.");}
+                        else state->setText("Operation not confirmed. Inspect UDisks/Disks before retrying. "+QString::fromUtf8(c.output).left(1800));
+                        progress.done(0);
+                    });
+                    progress.exec();end();repair->setEnabled(checked->has_value());
+                });
+            });
+        };
+        QObject::connect(check,&QPushButton::clicked,content,[operate]{operate(false);});QObject::connect(repair,&QPushButton::clicked,content,[operate]{operate(true);});
+        layout->addWidget(button("Open Disks for mount/unmount and SMART information…",[this]{
+            const auto exe=tux::trustedSystemExecutable("gnome-disks");if(exe.isEmpty()){reviewPackageGroup("disk");return;}
+            if(!QProcess::startDetached(exe,QStringList{}))QMessageBox::warning(w,"Disks","Could not open Disks.");
+        },content));
+        layout->addStretch();return content;
     }
     void reviewPackageGroup(const QString& group) {
         const QStringList request={"packages",group,"install"};
