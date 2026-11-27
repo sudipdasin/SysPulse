@@ -158,7 +158,14 @@ struct Window::Impl {
         p->onResult=[this](const tux::Result& r){remember(r);};
         p->onBusyChanged=[this](bool){updateFooter();};return p;
     }
+    void refreshActionIndicators() {
+        const bool active=tux::admin::active(),busy=tux::admin::busy();
+        if(auto* b=w->findChild<QPushButton*>("globalAdminSession"))b->setText(active?"Admin: unlocked":busy?"Admin: busy":"Admin: locked");
+        if(auto* b=w->findChild<QPushButton*>("globalAdminLock"))b->setEnabled(active&&!busy);
+        if(auto* b=w->findChild<QPushButton*>("sidebarApplicationUpdates")){const auto* install=w->findChild<QPushButton*>("installApplicationUpdate");b->setText(install&&install->isEnabled()?"Update available":"Application updates");}
+    }
     void updateFooter() {
+        refreshActionIndicators();
         bool busy=false;for(auto* p:allToolboxes)busy=busy||p->isBusy();
         const bool systemBusy=management&&management->isBusy();
         for(auto* page:allToolboxes)page->setExecutionAllowed(!systemBusy&&(!busy||page->isBusy()));
@@ -242,7 +249,7 @@ struct Window::Impl {
         search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->addAction(fluent::glyph("search"),QLineEdit::LeadingPosition);search->setMaximumWidth(420);ul->addWidget(search,1);
         auto* adminShortcut=button("Admin: locked",[this]{openSettingsSection("adminSessionStatus");},w);adminShortcut->setObjectName("globalAdminSession");ul->addWidget(adminShortcut);
         auto* quickLock=button("Lock",[this]{if(auto* lock=w->findChild<QPushButton*>("lockAdminSession"))lock->click();},w);quickLock->setObjectName("globalAdminLock");quickLock->setEnabled(false);ul->addWidget(quickLock);
-        auto* sessionIndicator=new QTimer(w);sessionIndicator->setInterval(750);QObject::connect(sessionIndicator,&QTimer::timeout,w,[=]{const bool active=tux::admin::active(),busy=tux::admin::busy();const QString title=active?"Admin: unlocked":busy?"Admin: busy":"Admin: locked";if(adminShortcut->text()!=title)adminShortcut->setText(title);quickLock->setEnabled(active&&!busy);if(auto* install=w->findChild<QPushButton*>("installApplicationUpdate")){const QString label=install->isEnabled()?"Update available":"Application updates";if(updateShortcut->text()!=label)updateShortcut->setText(label);}});sessionIndicator->start();
+        // Global controls are refreshed by actual state transitions; no idle polling.
         auto* helpButton=new QPushButton(fluent::glyph("help"),"Help");helpButton->setIconSize(QSize(18,18));helpButton->setObjectName("helpMenuButton");
         auto* helpMenu=new QMenu(helpButton);
         auto* updates=helpMenu->addAction(fluent::glyph("updates"),"Update application…");updates->setObjectName("helpUpdateApplication");
@@ -751,12 +758,12 @@ struct Window::Impl {
         });
         auto reviewed=std::make_shared<QString>();
         QObject::connect(channel,QOverload<int>::of(&QComboBox::currentIndexChanged),frame,[=](int){
-            reviewed->clear();install->setEnabled(false);status->setText("Channel changed. Check again before installing.");
+            reviewed->clear();install->setEnabled(false);refreshActionIndicators();status->setText("Channel changed. Check again before installing.");
             QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");settings.setValue("updates/channel",channel->currentData());settings.sync();
         });
         QObject::connect(check,&QPushButton::clicked,frame,[=]{
             const auto helper=tux::trustedSystemExecutable("syspulse-apt-update");
-            reviewed->clear();install->setEnabled(false);
+            reviewed->clear();install->setEnabled(false);refreshActionIndicators();
             if(helper.isEmpty()){status->setText("Installed update helper unavailable. Reinstall the complete SysPulse DEB.");return;}
             check->setEnabled(false);channel->setEnabled(false);status->setText("Refreshing the selected signed repository…");
             AsyncCommand::run(frame,helper,{"check",channel->currentData().toString()},120000,4096,[=](const AsyncCommandResult& result){
@@ -769,7 +776,7 @@ struct Window::Impl {
                 const auto match=valid.match(line);
                 if(!match.hasMatch()){status->setText("Unexpected update metadata. Nothing authorized.");return;}
                 *reviewed=match.captured(1);status->setText("Signed update available: "+*reviewed+" · Review official release notes before installation.");
-                install->setEnabled(!tux::trustedSystemExecutable("pkexec").isEmpty());
+                install->setEnabled(!tux::trustedSystemExecutable("pkexec").isEmpty());refreshActionIndicators();
             });
         });
         QObject::connect(install,&QPushButton::clicked,frame,[=]{
@@ -778,7 +785,7 @@ struct Window::Impl {
             if(helper.isEmpty()||auth.isEmpty()){status->setText("PolicyKit or the update helper is unavailable.");return;}
             const auto expected=*reviewed;const auto selectedChannel=channel->currentData().toString();
             if(QMessageBox::question(frame,"Review application upgrade","Install complete signed SysPulse package "+expected+" from "+selectedChannel+"? System package manager authorization is required. Existing settings are preserved. Close other SysPulse tools first. Do not interrupt installation. Recovery is manual if needed.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
-            reviewed->clear();install->setEnabled(false);check->setEnabled(false);channel->setEnabled(false);
+            reviewed->clear();install->setEnabled(false);check->setEnabled(false);channel->setEnabled(false);refreshActionIndicators();
             class UpdateProgress final:public QDialog {public:using QDialog::QDialog;void reject() override {}protected:void closeEvent(QCloseEvent* e) override {e->ignore();}};
             UpdateProgress progress(frame);progress.setWindowTitle("Installing signed SysPulse update");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
             auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator authorization and APT completion. Do not close SysPulse or shut down during installation."));
@@ -809,19 +816,19 @@ struct Window::Impl {
         auto* sessionTimer=new QTimer(authorization);sessionTimer->setInterval(1000);
         QObject::connect(remember,&QCheckBox::toggled,authorization,[=](bool checked){
             if(!checked){if(!tux::admin::lock()){remember->blockSignals(true);remember->setChecked(true);remember->blockSignals(false);authStatus->setText("Wait for the active administrator action to finish before locking.");return;}sessionTimer->stop();relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");}
-            unlock->setEnabled(checked&&!tux::admin::active());
+            unlock->setEnabled(checked&&!tux::admin::active());refreshActionIndicators();
         });
-        QObject::connect(relock,&QPushButton::clicked,authorization,[=]{if(!tux::admin::lock()){authStatus->setText("Wait for the active administrator action to finish.");return;}remember->setChecked(false);relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");});
+        QObject::connect(relock,&QPushButton::clicked,authorization,[=]{if(!tux::admin::lock()){authStatus->setText("Wait for the active administrator action to finish.");return;}remember->setChecked(false);relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");refreshActionIndicators();});
         QObject::connect(unlock,&QPushButton::clicked,authorization,[=]{
             if(!remember->isChecked()||tux::admin::busy())return;
-            remember->setEnabled(false);unlock->setEnabled(false);relock->setEnabled(false);authStatus->setText("Waiting for desktop administrator authentication…");
+            remember->setEnabled(false);unlock->setEnabled(false);relock->setEnabled(false);authStatus->setText("Waiting for desktop administrator authentication…");if(auto* b=w->findChild<QPushButton*>("globalAdminSession"))b->setText("Admin: authenticating");
             auto message=std::make_shared<QString>();auto success=std::make_shared<bool>(false);
             auto* worker=QThread::create([message,success]{*success=tux::admin::unlock(*message);});
             worker->setObjectName("adminSessionUnlockWorker");worker->setParent(authorization);
-            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);if(*success)sessionTimer->start();else sessionTimer->stop();authStatus->setText(*success?"Unlocked · supported internal administrator operations can reuse authorization until locked or closed.":*message);});
+            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);if(*success)sessionTimer->start();else sessionTimer->stop();authStatus->setText(*success?"Unlocked · supported internal administrator operations can reuse authorization until locked or closed.":*message);refreshActionIndicators();});
             QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();
         });
-        QObject::connect(sessionTimer,&QTimer::timeout,authorization,[=]{if(remember->isEnabled()&&relock->isEnabled()&&!tux::admin::active()&&!tux::admin::busy()){sessionTimer->stop();relock->setEnabled(false);unlock->setEnabled(remember->isChecked());authStatus->setText("Session ended. Unlock again before retrying a reviewed action.");}});
+        QObject::connect(sessionTimer,&QTimer::timeout,authorization,[=]{if(remember->isEnabled()&&relock->isEnabled()&&!tux::admin::active()&&!tux::admin::busy()){sessionTimer->stop();relock->setEnabled(false);unlock->setEnabled(remember->isChecked());authStatus->setText("Session ended. Unlock again before retrying a reviewed action.");}refreshActionIndicators();});
         layout->addWidget(authorization);
         layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));
@@ -876,6 +883,7 @@ struct Window::Impl {
         performance->setSamplingEnabled(sampling&&(id=="overview"||id=="performance"));
         if(id=="control"&&refreshMemoryKernel)refreshMemoryKernel();
         if(id=="control"&&refreshSettingsIndex)refreshSettingsIndex();
+        refreshActionIndicators();
         return true;
     }
     void findTool(const QString& query) {
