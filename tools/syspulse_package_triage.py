@@ -21,6 +21,8 @@ def solver_result(status, raw, bounded):
         if any(re.search(r"unmet dependencies|held broken packages|unable to correct problems", x, re.I) for x in lines):
             result["status"] = "unresolved"
         return result
+    if any(x.startswith(("W:", "N:")) for x in lines):
+        return result
     summaries = [SUMMARY.fullmatch(x) for x in lines if SUMMARY.fullmatch(x)]
     if len(summaries) != 1:
         return result
