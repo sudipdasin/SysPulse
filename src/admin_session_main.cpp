@@ -44,7 +44,7 @@ int main(int argc,char** argv){
             const auto typed=tux::admin::decodeRequest(request);
             if(typed.isEmpty())return 1;
             const auto command=tux::admin::typedCommand(typed);
-            const auto result=runTyped(command,typed[0]=="volume"?tux::admin::MaxScanOutput:typed[0]=="service"?65536:4096);
+            const auto result=runTyped(command,typed[0]=="volume"?tux::admin::MaxScanOutput:(typed[0]=="service"||typed[0]=="packages")?65536:4096);
             const auto reply=tux::admin::encode(result);std::cout.write(reply.constData(),reply.size());std::cout<<'\n'<<std::flush;
             continue;
         }
