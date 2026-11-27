@@ -20,6 +20,7 @@
 #include "syspulse/care_plan.hpp"
 #include "syspulse/maintenance_preview.hpp"
 #include "syspulse/boost.hpp"
+#include "syspulse/boost_receipt.hpp"
 #include <QStorageInfo>
 #include "syspulse/system_memory.hpp"
 #include "syspulse/swap_activity.hpp"
@@ -134,6 +135,7 @@ struct Window::Impl {
     QLabel* reportStatus=nullptr;
     QLabel* cpu=nullptr;QLabel* memory=nullptr;QLabel* disk=nullptr;QLabel* network=nullptr;
     QLabel* analysisStatus=nullptr;
+    QLabel* lastBoostStatus=nullptr;QPushButton* lastBoostButton=nullptr;
     QString current="overview";
     QStringList history;
     int historyIndex=-1;
@@ -335,7 +337,10 @@ struct Window::Impl {
         auto* mark=new PulseMark;mark->setFixedSize(60,70);hl->addWidget(mark);
         auto* heroText=new QVBoxLayout;heroText->addWidget(text("Keep your computer running smoothly","sectionTitle"));
         analysisStatus=text("Boost safely cleans eligible generated thumbnails and downloaded packages, with a review and measured results. Analyze system for detailed diagnostics.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
-        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(boostButton);actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);hl->addLayout(heroText,1);
+        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(boostButton);actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
+        auto* shortcuts=new QHBoxLayout;auto* profiles=button("Performance presets…",[this]{openDesktopProfiles();},w);profiles->setObjectName("quickDesktopProfiles");shortcuts->addWidget(profiles);
+        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
+        lastBoostStatus=text("No saved Boost receipt.","muted");lastBoostStatus->setObjectName("lastBoostStatus");lastBoostStatus->setTextFormat(Qt::PlainText);heroText->addWidget(lastBoostStatus);refreshBoostReceipt();hl->addLayout(heroText,1);
         hl->addWidget(text("SAFE BOOST\nNo app removal\nNo personal-file deletion","muted"));layout->addWidget(hero);
         auto* metrics=new QGridLayout;metrics->setSpacing(12);
         auto metric=[this,metrics](int column,const QString& label,QLabel** value,const QString& color,int tab) {
@@ -948,6 +953,61 @@ struct Window::Impl {
             }
         }
     }
+    std::optional<syspulse::boostlog::Receipt> boostReceipt() {
+        QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+        if(settings.status()!=QSettings::NoError)return {};
+        return syspulse::boostlog::decode(settings.value("boost/lastReceipt").toByteArray());
+    }
+    void refreshBoostReceipt() {
+        const auto receipt=boostReceipt();
+        if(lastBoostButton)lastBoostButton->setEnabled(receipt.has_value());
+        if(lastBoostStatus)lastBoostStatus->setText(receipt?QString("Last Boost: %1 · %2").arg(QDateTime::fromString(receipt->utc,Qt::ISODate).toLocalTime().toString("yyyy-MM-dd HH:mm"),receipt->needsReview?"Some actions need review":"Results recorded"):QString("No saved Boost receipt."));
+    }
+    void showBoostReceipt() {
+        const auto receipt=boostReceipt();if(!receipt){refreshBoostReceipt();return;}
+        QMessageBox dialog(w);dialog.setWindowTitle("Last Boost results");dialog.setTextFormat(Qt::PlainText);dialog.setText(QString("Recorded %1\n\n%2").arg(receipt->utc,receipt->lines.join("\n\n")));dialog.setIcon(receipt->needsReview?QMessageBox::Warning:QMessageBox::Information);
+        auto* clear=dialog.addButton("Clear local receipt",QMessageBox::ActionRole);dialog.addButton(QMessageBox::Close);dialog.exec();
+        if(dialog.clickedButton()==clear){
+            QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");settings.remove("boost/lastReceipt");settings.sync();if(settings.status()!=QSettings::NoError)QMessageBox::warning(w,"Boost","Could not clear saved receipt.");refreshBoostReceipt();
+        }
+    }
+    void openDesktopProfiles() {
+        const auto exe=tux::trustedSystemExecutable("syspulse-desktop-profile");
+        if(exe.isEmpty()){QMessageBox::warning(w,"Performance presets","Installed desktop profile helper is unavailable.");return;}
+        const auto call=[&](const QStringList& args,bool mutation){
+            ReviewedProgress progress(w);progress.setWindowTitle("Desktop performance presets");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text(mutation?"Applying reviewed settings and verifying recovery state…":"Reading supported XFCE settings…"));
+            AsyncCommandResult result;const auto done=[&](const AsyncCommandResult& r){result=r;progress.done(0);};
+            if(mutation)AsyncCommand::runAction(&progress,exe,args,8192,done);else AsyncCommand::run(&progress,exe,args,20000,8192,done);
+            progress.exec();return result;
+        };
+        const auto current=call({"status"},false);
+        const auto fail=[&](const AsyncCommandResult& result){QMessageBox dialog(w);dialog.setWindowTitle("Desktop preset unavailable");dialog.setTextFormat(Qt::PlainText);dialog.setIcon(QMessageBox::Warning);dialog.setText("Operation not verified. No automatic retry. "+QString::fromUtf8(result.output).left(1000));dialog.exec();};
+        QJsonParseError err;const auto doc=QJsonDocument::fromJson(current.output,&err);const auto status=doc.object();
+        if(!current.ok()||err.error!=QJsonParseError::NoError||!status.value("recovery_pending").isBool()||!status.value("values").isObject()){fail(current);return;}
+        const bool pending=status.value("recovery_pending").toBool();
+        const auto values=status.value("values").toObject();
+        const auto readable=[](const QString& key){return key=="compositing"?QString("Window compositing"):key=="animations"?QString("GTK animations"):QString("Unsupported setting");};
+        QDialog choose(w);choose.setWindowTitle("Performance presets");choose.resize(540,300);auto* layout=new QVBoxLayout(&choose);
+        layout->addWidget(text("Choose your desktop experience","sectionTitle"));
+        layout->addWidget(text("These presets modify supported XFCE visual settings only, without root access. They do not overclock your CPU, disable services or guarantee higher game FPS.","muted"));
+        QString summary;for(auto i=values.begin();i!=values.end();++i)if(i.value().isBool())summary+=readable(i.key())+": "+(i.value().toBool()?"On":"Off")+"\n";
+        auto* state=text(summary.isEmpty()?"No supported desktop settings detected.":summary,"muted");state->setTextFormat(Qt::PlainText);layout->addWidget(state);
+        auto* choices=new QComboBox;choices->setObjectName("desktopPresetChoice");
+        if(pending){choices->addItem("Restore original desktop settings","restore");layout->addWidget(text("An earlier preset or interrupted operation has saved recovery data. Restore it before applying a different preset.","muted"));}
+        else {choices->addItem("Responsive desktop · fewer visual effects","responsive");choices->addItem("Visual quality · enable supported effects","visual");}
+        layout->addWidget(choices);
+        auto* review=new QPushButton("Review preset…");review->setEnabled(pending||!values.isEmpty());auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);auto* row=new QHBoxLayout;row->addStretch();row->addWidget(cancel);row->addWidget(review);layout->addLayout(row);
+        QObject::connect(review,&QPushButton::clicked,&choose,&QDialog::accept);QObject::connect(cancel,&QPushButton::clicked,&choose,&QDialog::reject);
+        if(choose.exec()!=QDialog::Accepted)return;const auto profile=choices->currentData().toString();
+        const auto planned=call({"plan",profile},false);QJsonParseError pe;const auto plan=QJsonDocument::fromJson(planned.output,&pe).object();const auto token=plan.value("token").toString();const auto before=plan.value("before").toObject(),target=plan.value("target").toObject();
+        if(!planned.ok()||pe.error!=QJsonParseError::NoError||plan.value("profile").toString()!=profile||!QRegularExpression("^[a-f0-9]{64}$").match(token).hasMatch()||target.isEmpty()||before.keys()!=target.keys()){fail(planned);return;}
+        QString details;for(auto i=target.begin();i!=target.end();++i){if((i.key()!="compositing"&&i.key()!="animations")||!i.value().isBool()||!before.value(i.key()).isBool()){fail(planned);return;}details+=readable(i.key())+": "+(before.value(i.key()).toBool()?"On":"Off")+" → "+(i.value().toBool()?"On":"Off")+"\n";}
+        QMessageBox confirm(QMessageBox::Question,"Review desktop preset","Apply these exact settings? Responsive mode can cause tearing or change the appearance. Original values are saved before changes; restore remains available after restart.",QMessageBox::Yes|QMessageBox::Cancel,w);confirm.setTextFormat(Qt::PlainText);confirm.setInformativeText(details);confirm.setDefaultButton(QMessageBox::Cancel);
+        if(confirm.exec()!=QMessageBox::Yes)return;
+        const auto result=call({"apply",profile,token},true);QJsonParseError re;const auto response=QJsonDocument::fromJson(result.output,&re).object();const auto resultStatus=response.value("status").toString();
+        if(!result.ok()||re.error!=QJsonParseError::NoError||(resultStatus!="applied"&&resultStatus!="restored"&&resultStatus!="already-active")||response.value("values").toObject()!=target){fail(result);return;}
+        QMessageBox::information(w,"Desktop preset",resultStatus=="restored"?"Original settings restored and verified.":resultStatus=="already-active"?"Requested settings already active. No changes made.":"Preset applied and readback verified. Use Performance presets to restore the original values.");
+    }
     void runQuickBoost() {
         if(tux::admin::busy()) {QMessageBox::information(w,"Boost","Another administrator operation is running. Try again after it finishes.");return;}
         const auto plan=std::make_shared<syspulse::boost::Plan>();
@@ -971,24 +1031,29 @@ struct Window::Impl {
         auto* row=new QHBoxLayout;auto* apply=new QPushButton("Apply Boost");apply->setObjectName("applyQuickBoost");apply->setProperty("primary",true);auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);row->addStretch();row->addWidget(cancel);row->addWidget(apply);rl->addLayout(row);
         QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(apply,&QPushButton::clicked,&review,&QDialog::accept);
         const auto selected=[=]{apply->setEnabled(thumbnails->isChecked()||archives->isChecked()||ownMemory->isChecked()||pause->isChecked());};
-        for(auto* option:{thumbnails,archives,ownMemory,pause})QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});selected();
+        for(auto* option:{thumbnails,archives,ownMemory,pause}){QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});}
+        selected();
         if(review.exec()!=QDialog::Accepted)return;
         const auto available=[](const QString& path)->std::optional<std::uint64_t>{QStorageInfo v(path);v.refresh();if(!v.isValid()||!v.isReady()||v.bytesAvailable()<0)return {};return static_cast<std::uint64_t>(v.bytesAvailable());};
         const auto show=[mib](const std::optional<std::uint64_t>& value){return value?mib(*value):QString("Unknown");};
-        const auto before=available("/var/cache/apt/archives");QStringList lines;
+        const auto before=available("/var/cache/apt/archives");const auto userCache=QString::fromStdString(plan->cache.string());const auto homeBefore=userCache.isEmpty()?std::optional<std::uint64_t>{}:available(userCache);QStringList lines;bool needsReview=false;
         if(thumbnails->isChecked()){
             auto result=std::make_shared<syspulse::boost::Outcome>();
             ReviewedProgress progress(w);progress.setWindowTitle("Cleaning reviewed thumbnails");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Rechecking each file before removal…"));
             auto* task=QThread::create([plan,result]{*result=syspulse::boost::apply(*plan);});QObject::connect(task,&QThread::finished,&progress,[&progress]{progress.done(0);});QObject::connect(task,&QThread::finished,task,&QObject::deleteLater);task->start();progress.exec();
+            needsReview=needsReview||result->skipped>0||result->removed!=plan->files.size();
             lines<<QString("Generated thumbnails: %1 removed, %2 skipped, %3 logical file size.").arg(result->removed).arg(result->skipped).arg(mib(result->bytes));
         }else lines<<"Generated thumbnails: not selected.";
         if(archives->isChecked()){
-            if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";}
+            const auto now=syspulse::preview::archives("/var/cache/apt/archives");
+            if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";needsReview=true;}
+            else if(!now.complete||now.files!=plan->apt.files||now.bytes!=plan->apt.bytes){lines<<"APT cleanup: measured archive size or count changed; review a new Boost plan.";needsReview=true;}
             else{
                 ReviewedProgress progress(w);progress.setWindowTitle("Cleaning downloaded packages");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator approval and APT completion…"));
                 AsyncCommandResult outcome;
                 tux::admin::runReviewed(&progress,{"boost","archives","clean"},auth,{apt,"clean"},4096,[&](const AsyncCommandResult& result){outcome=result;progress.done(0);});
                 progress.exec();refreshActionIndicators();const auto after=syspulse::preview::archives("/var/cache/apt/archives");
+                needsReview=needsReview||!outcome.ok()||!after.complete;
                 lines<<QString("APT cleanup: %1. Archive size before: %2; after: %3.").arg(outcome.ok()?"command completed":"not verified",mib(plan->apt.bytes),after.complete?mib(after.bytes):QString("Unknown"));
             }
         }else lines<<"APT cleanup: not selected.";
@@ -998,14 +1063,19 @@ struct Window::Impl {
         }
         if(pause->isChecked()){performance->setPaused(true);lines<<"SysPulse live monitoring: paused. Resume in Performance.";}
         lines<<QString("APT filesystem available space: %1 → %2. Other activity can affect this measurement.").arg(show(before),show(available("/var/cache/apt/archives")));
-        analysisStatus->setText("Boost finished. Review the results; no speed gain is assumed.");
-        QMessageBox report(w);report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(QMessageBox::Information);report.exec();
+        if(homeBefore)lines<<QString("User cache filesystem available space: %1 → %2. Other activity can affect this reading.").arg(show(homeBefore),show(available(userCache)));
+        const syspulse::boostlog::Receipt receipt{QDateTime::currentDateTimeUtc().toString(Qt::ISODate),lines,needsReview};
+        const auto encoded=syspulse::boostlog::encode(receipt);QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
+        if(!encoded.isEmpty()){settings.setValue("boost/lastReceipt",encoded);settings.sync();}if(encoded.isEmpty()||settings.status()!=QSettings::NoError)lines<<"Local receipt could not be saved.";
+        refreshBoostReceipt();analysisStatus->setText(needsReview?"Boost finished with actions needing review. See the results.":"Boost finished. See measured results; no speed gain is assumed.");
+        QMessageBox report(w);report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(needsReview?QMessageBox::Warning:QMessageBox::Information);report.exec();
     }
     QWidget* maintenanceCenterPage() {
         auto* content=new QWidget;content->setObjectName("maintenanceCenterPage");
         auto* layout=new QVBoxLayout(content);
         layout->addWidget(text("Maintenance & boost","sectionTitle"));
         auto* quick=button("Boost now…",[this]{runQuickBoost();},content,true);quick->setObjectName("maintenanceQuickBoost");layout->addWidget(quick);
+        layout->addWidget(button("Performance presets and restore…",[this]{openDesktopProfiles();},content));
         layout->addWidget(text("Use Boost for a reviewed default cleanup, or use individual advanced tools below. Nothing runs at startup.","muted"));
         auto* table=new QTableWidget(3,3);table->setObjectName("maintenanceComparison");
         table->setHorizontalHeaderLabels({"Measurement","Baseline","Latest"});
