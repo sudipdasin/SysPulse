@@ -273,6 +273,25 @@ struct Window::Impl {
         for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();if(a.value("name").toString()!="smart-disk-health")continue;hardware<<"SMART coverage: "+a.value("status").toString();hardware<<a.value("note").toString();const auto data=a.value("smart").toObject();int n=0;for(const auto& v:data.value("disks").toArray()){const auto d=v.toObject();hardware<<QString("Disk sample %1 · %2 · %3").arg(++n).arg(d.value("status").toString(),d.value("health").toString());for(auto i=d.begin();i!=d.end();++i)if(i.key()!="status"&&i.key()!="health")hardware<<"    "+i.key()+": "+i.value().toVariant().toString();}hardware<<QString("Excluded or unprobed disks: %1").arg(data.value("excluded").toInt());}
         const auto catalog=result.value("cleaner_catalog").toObject();cleaners<<"Optional BleachBit discovery: "+catalog.value("status").toString();for(const auto& v:catalog.value("options").toArray())cleaners<<v.toString();
         cleaners<<"Metadata only. No external cleaner definitions, scripts or deletion commands are executed. Existing native review and cache mount protections remain.";
+        QStringList packageReview;
+        for(const auto& v:result.value("sources").toArray()){
+            const auto row=v.toObject();
+            if(row.value("name").toString()=="apt-repair-preview"){
+                const auto p=row.value("package_preview").toObject();
+                packageReview<<QString("APT repair simulation · %1").arg(p.value("status").toString("unknown"));
+                for(const auto& key:{"upgrades","installs","configurations","removals","held_back"})if(p.contains(key))packageReview<<QString("  %1: %2").arg(key).arg(p.value(key).toInt());
+                packageReview<<"Read-only solver preview. It does not authorize applying the plan. Unresolved or unknown package health blocks archive cleanup.";
+            }else if(row.value("name").toString()=="core-package-integrity"){
+                packageReview<<"\nNative core package verification:";
+                for(const auto& value:row.value("package_integrity").toArray()){
+                    const auto p=value.toObject();packageReview<<QString("%1 · %2").arg(p.value("package").toString(),p.value("status").toString());
+                    for(const auto& key:{"core_file_changes","configuration_changes","documentation_changes","other_changes"})if(p.contains(key))packageReview<<QString("  %1: %2").arg(key).arg(p.value(key).toInt());
+                }
+                packageReview<<"Local modifications and intentionally omitted documentation may be legitimate. This check is not cryptographic security attestation.";
+            }
+        }
+        if(packageReview.isEmpty())packageReview<<"No package repair evidence available.";
+        make("Package repair preview",packageReview);
         make("Learned patterns",patterns);make("Repair knowledge",recipes);make("Disk health",hardware);make("Cleaner discovery",cleaners);const auto external=result.value("research").toObject();make("AI & web evidence",researchLines(external));layout->addWidget(tabs,1);
         layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
         auto* routes=new QComboBox;routes->setObjectName("researchDiagnosticRoutes");
