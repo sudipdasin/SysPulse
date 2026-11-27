@@ -295,8 +295,10 @@ struct Window::Impl {
         auto* schedulePage=new QWidget;auto* scheduleLayout=new QVBoxLayout(schedulePage);auto* scheduleActions=new QHBoxLayout;
         scheduleActions->addWidget(button("Enable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-enable");},w,true));
         scheduleActions->addWidget(button("Disable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-disable");},w));
-        scheduleLayout->addLayout(scheduleActions);scheduleLayout->addWidget(schedules,1);
-        pages.insert("schedules",workspace("Schedules","Inspect timers, or explicitly enable and disable scheduled SSD maintenance. No timer changes at startup.",schedulePage));
+        scheduleLayout->addLayout(scheduleActions);
+        auto* cleanupSchedule=new QHBoxLayout;cleanupSchedule->addWidget(button("Enable weekly APT archive cleanup",[this]{locateMaintenanceTool("weekly-clean-enable");},w,true));cleanupSchedule->addWidget(button("Disable weekly APT archive cleanup",[this]{locateMaintenanceTool("weekly-clean-disable");},w));scheduleLayout->addLayout(cleanupSchedule);
+        scheduleLayout->addWidget(schedules,1);
+        pages.insert("schedules",workspace("Schedules","Inspect timers and opt in to weekly SSD maintenance or obsolete package archive cleanup. No timer changes at startup.",schedulePage));
         pages.insert("recovery",recoveryPage());
         pages.insert("reports",reportsPage());
         auto* experiments=toolbox({},true);toolboxes.insert("experimental",experiments);
