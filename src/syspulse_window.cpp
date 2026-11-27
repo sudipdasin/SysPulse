@@ -227,7 +227,9 @@ struct Window::Impl {
         sl->addWidget(text("SYSTEM","navGroup"));
         addNav("control","Control Panel");addNav("management","Startup & services");addNav("network","Network");addNav("desktop","XFCE desktop");addNav("security","Security & privacy");
         sl->addWidget(text("TOOLS","navGroup"));
-        addNav("schedules","Schedules");addNav("recovery","Recovery");addNav("reports","Reports");addNav("experimental","Experimental");
+        addNav("schedules","Schedules");addNav("recovery","Recovery");addNav("reports","Reports");addNav("experimental","Maintenance actions");
+        auto* updateShortcut=button("Application updates",[this]{openSettingsSection("applicationUpdateStatus");},w);updateShortcut->setObjectName("sidebarApplicationUpdates");updateShortcut->setIcon(fluent::glyph("updates"));sl->addWidget(updateShortcut);
+        auto* cleanerShortcut=button("Clean disk space",[this]{navigate("storage");if(auto* tabs=pages.value("storage")->findChild<QTabWidget*>("storageWorkspaceTabs"))tabs->setCurrentIndex(2);},w,true);cleanerShortcut->setObjectName("sidebarCleaner");sl->addWidget(cleanerShortcut);
         sl->addStretch(1);addNav("settings","Settings & help");
         auto* navScroll=new QScrollArea;navScroll->setObjectName("navigationScroll");navScroll->setWidgetResizable(true);navScroll->setFrameShape(QFrame::NoFrame);navScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);navScroll->setFixedWidth(258);sidebar->setMinimumWidth(0);sidebar->setMaximumWidth(QWIDGETSIZE_MAX);navScroll->setWidget(sidebar);shell->addWidget(navScroll);
         auto* body=new QWidget;body->setObjectName("fluentBody");auto* bl=new QVBoxLayout(body);bl->setContentsMargins(0,0,0,0);bl->setSpacing(0);
@@ -238,15 +240,14 @@ struct Window::Impl {
         auto* forwardShortcut=new QShortcut(QKeySequence(Qt::ALT|Qt::Key_Right),w);QObject::connect(forwardShortcut,&QShortcut::activated,w,[this]{stepHistory(1);});
         breadcrumb=text("Workspace / Overview");breadcrumb->setObjectName("breadcrumb");ul->addWidget(breadcrumb,1);
         search=new QLineEdit;search->setObjectName("globalToolSearch");search->setAccessibleName("Find a SysPulse tool");search->setPlaceholderText("Find a tool · Ctrl+F");search->setClearButtonEnabled(true);search->addAction(fluent::glyph("search"),QLineEdit::LeadingPosition);search->setMaximumWidth(420);ul->addWidget(search,1);
+        auto* adminShortcut=button("Admin: locked",[this]{openSettingsSection("adminSessionStatus");},w);adminShortcut->setObjectName("globalAdminSession");ul->addWidget(adminShortcut);
+        auto* quickLock=button("Lock",[this]{if(auto* lock=w->findChild<QPushButton*>("lockAdminSession"))lock->click();},w);quickLock->setObjectName("globalAdminLock");quickLock->setEnabled(false);ul->addWidget(quickLock);
+        auto* sessionIndicator=new QTimer(w);sessionIndicator->setInterval(750);QObject::connect(sessionIndicator,&QTimer::timeout,w,[=]{const bool active=tux::admin::active(),busy=tux::admin::busy();const QString title=active?"Admin: unlocked":busy?"Admin: busy":"Admin: locked";if(adminShortcut->text()!=title)adminShortcut->setText(title);quickLock->setEnabled(active&&!busy);if(auto* install=w->findChild<QPushButton*>("installApplicationUpdate")){const QString label=install->isEnabled()?"Update available":"Application updates";if(updateShortcut->text()!=label)updateShortcut->setText(label);}});sessionIndicator->start();
         auto* helpButton=new QPushButton(fluent::glyph("help"),"Help");helpButton->setIconSize(QSize(18,18));helpButton->setObjectName("helpMenuButton");
         auto* helpMenu=new QMenu(helpButton);
         auto* updates=helpMenu->addAction(fluent::glyph("updates"),"Update application…");updates->setObjectName("helpUpdateApplication");
         QObject::connect(updates,&QAction::triggered,w,[this]{
-            navigate("settings");
-            auto* page=pages.value("settings");
-            auto* scroll=page->findChild<QScrollArea*>();
-            auto* status=page->findChild<QLabel*>("applicationUpdateStatus");
-            if(scroll&&status)scroll->ensureWidgetVisible(status);
+            openSettingsSection("applicationUpdateStatus");
         });
         auto* settings=helpMenu->addAction(fluent::glyph("settings"),"Settings & help");QObject::connect(settings,&QAction::triggered,w,[this]{navigate("settings");});
         helpButton->setMenu(helpMenu);ul->addWidget(helpButton);bl->addWidget(utility);
@@ -263,8 +264,8 @@ struct Window::Impl {
         auto* storage=toolbox({"Storage","Maintenance"});toolboxes.insert("storage",storage);
         auto* storageTabs=new QTabWidget;storageTabs->setObjectName("storageWorkspaceTabs");storageTabs->addTab(storage,"Diagnostics & cleanup");
         storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
-        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");
-        pages.insert("storage",workspace("Storage & cleanup","Inspect storage and review maintenance commands. Native changes remain in Experimental.",storageTabs));
+        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");storageTabs->setCurrentIndex(2);
+        pages.insert("storage",workspace("Storage & cleanup","Scan disks, review and delete eligible cache files, or run reviewed system maintenance actions.",storageTabs));
         pages.insert("management",management);
         pages.insert("control",controlPanelPage());
         pages.insert("network",networkPage());
@@ -278,7 +279,7 @@ struct Window::Impl {
         pages.insert("recovery",recoveryPage());
         pages.insert("reports",reportsPage());
         auto* experiments=toolbox({},true);toolboxes.insert("experimental",experiments);
-        pages.insert("experimental",workspace("Experimental","Settings-changing maintenance tools. Review scope and limitations before applying a change.",experiments));
+        pages.insert("experimental",workspace("Maintenance actions","Apply system and desktop changes through reviewed, explicitly authorized tools. Experimental or higher-risk operations retain their prerequisites.",experiments));
         pages.insert("settings",settingsPage());
         management->canMutate=[this]{for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
         management->onBusyChanged=[this](bool){updateFooter();};
@@ -837,6 +838,11 @@ struct Window::Impl {
         auto* scroll=new QScrollArea;scroll->setWidgetResizable(true);scroll->setWidget(content);
         return workspace("Settings & help","Local preferences, project information and developer feedback.",scroll);
     }
+    void openSettingsSection(const QString& objectName) {
+        if(!navigate("settings"))return;
+        auto* page=pages.value("settings");auto* scroll=page->findChild<QScrollArea*>();auto* control=page->findChild<QWidget*>(objectName);
+        if(scroll&&control)scroll->ensureWidgetVisible(control,20,30);
+    }
     void stepHistory(int direction) {
         const int next=historyIndex+direction;if(next<0||next>=history.size())return;
         historyIndex=next;historyReplay=true;navigate(history.at(next));historyReplay=false;
@@ -870,6 +876,9 @@ struct Window::Impl {
     }
     void findTool(const QString& query) {
         const auto trimmed=query.trimmed();if(trimmed.isEmpty())return;
+        if(trimmed.compare("Experimental",Qt::CaseInsensitive)==0){navigate("experimental");return;}
+        if(trimmed.compare("Application updates",Qt::CaseInsensitive)==0){openSettingsSection("applicationUpdateStatus");return;}
+        if(trimmed.compare("Administrator session",Qt::CaseInsensitive)==0){openSettingsSection("adminSessionStatus");return;}
         for(auto i=nav.cbegin();i!=nav.cend();++i)if(i.value()->property("displayTitle").toString().compare(trimmed,Qt::CaseInsensitive)==0){navigate(i.key());return;}
         // Qualified titles disambiguate repeated labels. Search never launches a tool.
         for(auto i=pages.cbegin();i!=pages.cend();++i) {
