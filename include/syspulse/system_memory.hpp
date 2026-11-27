@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "syspulse/bounded_line.hpp"
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -16,12 +17,14 @@ inline State parseEnabled(const std::string& s) {
 inline State readEnabled(){std::ifstream in("/sys/module/zswap/parameters/enabled");std::string value,extra;if(!(in>>value)||in>>extra||in.bad())return State::Unknown;return parseEnabled(value);}
 inline std::optional<bool> activeSwap(std::istream& in) {
     std::string line,a,b,c,d,e,extra;
-    if(!std::getline(in,line)||line.size()>4096)return {};
+    if(boundedLine<4096>(in,line)!=LineState::Line)return {};
     std::istringstream header(line);
     if(!(header>>a>>b>>c>>d>>e)||header>>extra||a!="Filename"||b!="Type"||c!="Size"||d!="Used"||e!="Priority")return {};
     bool active=false;unsigned rows=0;
-    while(std::getline(in,line)){
-        if(++rows>256||line.size()>4096)return {};
+    for(;;){
+        const auto state=boundedLine<4096>(in,line);
+        if(state==LineState::End)break;
+        if(state!=LineState::Line||++rows>256)return {};
         std::istringstream row(line);
         if(!(row>>a>>b>>c>>d>>e)||row>>extra||a.empty()||a[0]!='/'||(b!="file"&&b!="partition"))return {};
         unsigned long long size=0,used=0;int priority=0;
