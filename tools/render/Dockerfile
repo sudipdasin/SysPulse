@@ -119,9 +119,15 @@ RUN sha256sum -c "$HOME/preference.sha256" \
     && (rc=0; syspulse-memory-control enable >/tmp/helper-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/helper-guard.log) \
     && (rc=0; timeout 4s syspulse >/tmp/reinstalled-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
     && printf 'Ubuntu 24.04 amd64: prior alpha.25 rebuilt from pinned deployed source; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.26 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Disposable signing fixture for upgrade; owner public key packaged, but production feed and real Mint XFCE VM not tested.\n' > /home/tester/INSTALL-STATUS.txt
+FROM installcheck AS productioncheck
+USER root
+ENV HOME=/root
+COPY tools/render/test-live-owner-update.py /usr/local/bin/syspulse-live-owner-update.py
+RUN SYSPULSE_DISPOSABLE_TEST=owner-feed-alpha26 python3 /usr/local/bin/syspulse-live-owner-update.py --disposable-container
 FROM python:3.11-slim-bookworm AS evaluation
 COPY --from=installcheck /home/tester/INSTALL-STATUS.txt /srv/artifacts/INSTALL-STATUS.txt
 COPY --from=build /out/ /srv/artifacts/
+COPY --from=productioncheck /verified-production/ /srv/artifacts/
 USER 10001:10001
 EXPOSE 10000
 CMD ["python3", "-m", "http.server", "10000", "--bind", "0.0.0.0", "--directory", "/srv/artifacts"]

@@ -23,3 +23,5 @@ Alpha.25 commit 6496b06c0cf69692ccdf5f3cbaa226c64196a03f is live as an evaluatio
 Owner supplied the verified Alpha public anchor. The key bootstrap input is complete; package integration, owner-side release signing, canonical feed publication and real desktop session acceptance remain required.
 
 Alpha.26 integrates the remaining typed internal routes and enables the owner Alpha public anchor in the evaluation build. The build is a signing candidate only, not a qualifying release. The actual private-key signature and real desktop acceptance remain independent requirements.
+
+Owner completed publication: canonical v3.0.0-alpha.26 release at ff216acf7481f2d1e79e4dc9cdfd4dcb9ea9ff36, signed feed branch commit 521e2ab2c65c5dddd745a5d7c9ae51ed60a6097b. Public InRelease independently verified with original uploaded public key; signed Packages digest and canonical asset digest match. Metadata expires 2026-12-04 02:19:32 UTC. Added disposable real HTTPS upgrade test via installed broker; no target desktop or successive real release acceptance implied. No user installation recommendation.
