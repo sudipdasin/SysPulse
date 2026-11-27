@@ -1,0 +1,11 @@
+[Unit]
+Description=SysPulse daily obsolete package archive cleanup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+Unit=syspulse-weekly-clean.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+"""Select exactly one SysPulse APT archive-cleanup timer, with rollback."""
+import fcntl, json, os, re, stat, subprocess, sys, unittest
+
+PROFILES=('daily','weekly','monthly')
+SYSTEMCTL='/usr/bin/systemctl'
+def unit(profile):
+    if profile not in PROFILES: raise ValueError('Unknown schedule')
+    return 'syspulse-'+profile+'-clean.timer'
+
+def query(profile):
+    result=subprocess.run([SYSTEMCTL,'show','--property=LoadState,UnitFileState,ActiveState',unit(profile)],capture_output=True,text=True,timeout=10,check=True)
+    fields=dict(line.split('=',1) for line in result.stdout.splitlines() if '=' in line)
+    if fields.get('LoadState')!='loaded' or fields.get('UnitFileState') not in ('enabled','disabled') or fields.get('ActiveState') not in ('active','inactive'):
+        raise ValueError('Timer has unsupported state: '+unit(profile))
+    return (fields['UnitFileState']=='enabled',fields['ActiveState']=='active')
+
+def run(verb,profile):
+    if verb not in ('enable','disable','start','stop'): raise ValueError('Unknown operation')
+    subprocess.run([SYSTEMCTL,verb,unit(profile)],stdin=subprocess.DEVNULL,capture_output=True,timeout=30,check=True)
+
+def inventory(read): return {p:read(p) for p in PROFILES}
+def desired(profile):
+    if profile not in (*PROFILES,'off'): raise ValueError('Unknown schedule')
+    return {p:(p==profile,p==profile) for p in PROFILES}
+
+def transition(before,target,read,write):
+    if inventory(read)!=before: raise ValueError('Schedule changed during review')
+    for p in PROFILES:
+        enabled,active=read(p)
+        if active and not target[p][1]: write('stop',p)
+        if enabled and not target[p][0]: write('disable',p)
+    for p in PROFILES:
+        enabled,active=read(p)
+        if target[p][0] and not enabled: write('enable',p)
+        if target[p][1] and not active: write('start',p)
+    if inventory(read)!=target: raise RuntimeError('Schedule readback mismatch')
+
+def apply(profile,read,write,expected=None):
+    target=desired(profile); before=inventory(read)
+    if expected is not None and before!=expected: raise ValueError('Schedule changed; refresh before applying')
+    try: transition(before,target,read,write)
+    except Exception as exc:
+        try: transition(inventory(read),before,read,write)
+        except Exception as rollback: raise RuntimeError('Schedule failed and rollback was not verified') from rollback
+        raise RuntimeError('Schedule failed; original timer states verified') from exc
+    return inventory(read)
+
+def token(states):
+    return ''.join('1' if b else '0' for p in PROFILES for b in states[p])
+def decode(value):
+    if not re.fullmatch(r'[01]{6}',value): raise ValueError('Invalid review state')
+    return {p:(value[i*2]=='1',value[i*2+1]=='1') for i,p in enumerate(PROFILES)}
+
+class Tests(unittest.TestCase):
+    def setUp(self): self.states=desired('weekly');self.ops=[]
+    def read(self,p): return self.states[p]
+    def write(self,v,p):
+        self.ops.append((v,p)); e,a=self.states[p];self.states[p]=(v=='enable' if v in ('enable','disable') else e,v=='start' if v in ('start','stop') else a)
+    def test_profiles(self):
+        for p in (*PROFILES,'off'): self.assertEqual(apply(p,self.read,self.write),desired(p))
+    def test_no_overlap(self):
+        def checked(v,p):
+            self.write(v,p);self.assertLessEqual(sum(a for e,a in self.states.values()),1)
+        apply('daily',self.read,checked);self.assertEqual(self.ops,[('stop','weekly'),('disable','weekly'),('enable','daily'),('start','daily')])
+    def test_idempotent(self): apply('weekly',self.read,self.write);self.assertEqual(self.ops,[])
+    def test_invalid(self):
+        for p in ('','--all','a;id','hourly'):
+            with self.assertRaises(ValueError): apply(p,self.read,self.write)
+        self.assertEqual(self.ops,[])
+    def test_stale(self):
+        with self.assertRaises(ValueError): apply('daily',self.read,self.write,desired('off'))
+        self.assertEqual(self.ops,[])
+    def test_rollback(self):
+        def fail(v,p):
+            if v=='start' and p=='daily': raise RuntimeError('test failure')
+            self.write(v,p)
+        with self.assertRaisesRegex(RuntimeError,'original timer states verified'): apply('daily',self.read,fail)
+        self.assertEqual(self.states,desired('weekly'))
+    def test_rollback_unverified(self):
+        def fail(v,p):
+            if v=='start': raise RuntimeError('failure')
+            self.write(v,p)
+        with self.assertRaisesRegex(RuntimeError,'rollback was not verified'): apply('daily',self.read,fail)
+    def test_token(self):
+        for p in (*PROFILES,'off'): self.assertEqual(decode(token(desired(p))),desired(p))
+        for x in ('','11111','1111111','abcd01'):
+            with self.assertRaises(ValueError): decode(x)
+    def test_unit(self):
+        self.assertEqual(unit('monthly'),'syspulse-monthly-clean.timer')
+        with self.assertRaises(ValueError): unit('ssh.service')
+
+if __name__=='__main__':
+    if sys.argv[1:]==['--self-test']: unittest.main(argv=[sys.argv[0]])
+    try:
+        args=sys.argv[1:]
+        if args==['status']: print(token(inventory(query)))
+        elif len(args)==3 and args[0]=='apply':
+            if os.geteuid()!=0: raise ValueError('Administrator authorization required')
+            fd=os.open('/run/lock/syspulse-schedule.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+            with os.fdopen(fd,'r+') as lock:
+                s=os.fstat(lock.fileno())
+                if not stat.S_ISREG(s.st_mode) or s.st_uid!=0 or s.st_nlink!=1 or s.st_mode&0o077: raise ValueError('Unsafe schedule lock')
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                print(token(apply(args[1],query,run,decode(args[2]))))
+        else: raise ValueError('Use status or apply PROFILE REVIEW_STATE')
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc: print('ERROR: '+str(exc),file=sys.stderr);sys.exit(1)
