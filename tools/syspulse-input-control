@@ -1,0 +1,91 @@
+#!/usr/bin/python3
+"""Reviewed X11 physical input controls. No root or permanent rules."""
+import json, os, re, signal, stat, subprocess, sys, time
+from pathlib import Path
+
+XINPUT="/usr/bin/xinput"
+ROW=re.compile(r"^(.*?)\s+id=(\d+)\s+\[slave\s+(pointer|keyboard)\s+\(\d+\)\s*\]\s*$",re.I)
+TOUCH=re.compile(r"touch\s*pad|trackpad|synaptics|ETPS",re.I)
+KEYBOARD=re.compile(r"^AT Translated Set 2 keyboard$",re.I)
+
+def parse(text):
+    out=[]
+    for line in text.splitlines():
+        m=ROW.search(line)
+        if not m: continue
+        name=m.group(1).lstrip(" \t↳⎜⎡⎣⎢⎥⎤⎦").strip()
+        idx=int(m.group(2)); kind=m.group(3).lower()
+        if not (1<=idx<=65535 and 0<len(name)<=256): continue
+        if kind=="pointer" and TOUCH.search(name) or kind=="keyboard" and KEYBOARD.fullmatch(name):
+            out.append({"id":idx,"name":name,"kind":kind})
+    return out
+
+def command(*args):
+    result=subprocess.run([XINPUT,*args],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=8,check=True)
+    if len(result.stdout)>262144: raise RuntimeError("Oversized input response")
+    return result.stdout
+
+def devices():
+    return parse(command("list","--short"))
+
+def current(idx,name):
+    match=[d for d in devices() if d["id"]==idx and d["name"]==name]
+    if len(match)!=1: raise RuntimeError("Device identity changed or is not an eligible physical device")
+    props=command("list-props",str(idx))
+    value=re.search(r"^\s*Device Enabled \(\d+\):\s*([01])\s*$",props,re.M)
+    if not value: raise RuntimeError("Cannot confirm device state")
+    return int(value.group(1))
+
+def enable(idx,name):
+    if not current(idx,name):
+        command("enable",str(idx))
+    if current(idx,name)!=1: raise RuntimeError("Enable readback failed")
+
+def interrupted(*_):
+    raise InterruptedError("Operation interrupted")
+
+def main():
+    if sys.argv[1:]==["--self-test"]:
+        fixture="⎡ Virtual core pointer id=2 [master pointer (3)]\n⎜   ↳ ELAN Touchpad id=13 [slave pointer (2)]\n    ↳ AT Translated Set 2 keyboard id=14 [slave keyboard (3)]\n    ↳ Virtual core XTEST pointer id=4 [slave pointer (2)]\n    ↳ USB Mouse id=9 [slave pointer (2)]"
+        assert parse(fixture)==[{"id":13,"name":"ELAN Touchpad","kind":"pointer"},{"id":14,"name":"AT Translated Set 2 keyboard","kind":"keyboard"}]
+        assert not parse("Touchpad id=0 [slave pointer (2)]\nTouchpad id=20 [master pointer (2)]\nTouchpad id=30 [slave keyboard (3)]")
+        print("Input inventory fixture and master/virtual rejection passed")
+        return
+    if os.geteuid()==0 or not os.environ.get("DISPLAY") or os.environ.get("XDG_SESSION_TYPE","").lower()!="x11":
+        raise RuntimeError("An ordinary local X11 desktop session is required")
+    info=os.stat(XINPUT)
+    if info.st_uid!=0 or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022: raise RuntimeError("Untrusted xinput")
+    args=sys.argv[1:]
+    if args==["list"]:
+        print(json.dumps([{**d,"enabled":current(d["id"],d["name"])} for d in devices()],ensure_ascii=False))
+        return
+    if len(args)!=3 or args[0] not in ("enable","test-disable","watchdog") or not re.fullmatch(r"[1-9][0-9]{0,4}",args[1]): raise RuntimeError("Invalid action")
+    action,idx,name=args[0],int(args[1]),args[2]
+    if idx>65535 or not 0<len(name)<=256: raise RuntimeError("Invalid device")
+    if action=="watchdog":
+        time.sleep(22)
+        enable(idx,name)
+        return
+    if action=="enable":
+        enable(idx,name);print("VERIFIED ENABLED");return
+    if current(idx,name)!=1: raise RuntimeError("Device is already disabled; use Enable")
+    # Independent recovery survives UI/helper termination. Identity is checked again.
+    subprocess.Popen(["/usr/bin/python3",str(Path(__file__).resolve()),"watchdog",str(idx),name],
+                     stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True,close_fds=True)
+    signal.signal(signal.SIGTERM,interrupted);signal.signal(signal.SIGHUP,interrupted);signal.signal(signal.SIGINT,interrupted)
+    try:
+        if current(idx,name)!=1: raise RuntimeError("Device changed before disable")
+        command("disable",str(idx))
+        if current(idx,name)!=0: raise RuntimeError("Disable readback failed")
+        time.sleep(15)
+    finally:
+        enable(idx,name)
+    # Do not allow another GUI test until the recovery watchdog has had time to run.
+    time.sleep(8)
+    if current(idx,name)!=1: raise RuntimeError("Recovery readback failed")
+    print("VERIFIED TEMPORARY DISABLE AND RESTORE")
+
+if __name__=="__main__":
+    try: main()
+    except Exception as e:
+        print("ERROR: "+str(e),file=sys.stderr);sys.exit(1)
