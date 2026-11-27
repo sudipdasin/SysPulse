@@ -6,6 +6,7 @@ No remote telemetry, shell evaluation, automatic privilege elevation or learned 
 import argparse, concurrent.futures, datetime, gzip, json, os
 import pathlib, re, secrets, selectors, signal, sqlite3, stat, subprocess, time, unittest
 import syspulse_research as research
+import syspulse_hybrid as hybrid
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -96,7 +97,7 @@ def classify(line,priority=None):
         if rx.search(line):return key
     if priority is not None and priority<=3:return "other_error"
     return None
-def event_counts(text,journal=False):
+def event_counts(text,journal=False,miner=None):
     counts={};total=0;bad=0;seen=set()
     for line in text.splitlines()[:MAX_LINES]:
         if not line.strip():continue
@@ -112,14 +113,17 @@ def event_counts(text,journal=False):
                     seen.add(cursor)
                 key=classify(msg[:8192],pr)
             except (ValueError,TypeError,AttributeError):bad+=1;continue
-        else:key=classify(line[:8192])
-        if key:counts[key]=counts.get(key,0)+1
+        else:msg=line;key=classify(line[:8192])
+        if key:
+            counts[key]=counts.get(key,0)+1
+            if miner is not None:miner.add(key,msg)
     return counts,total,bad,len(text.splitlines())>MAX_LINES
 def source(name,status,counts=None,lines=0,bounded=False,notes=""):
     require(status in ("ok","empty","bounded","unavailable","permission","failed","timeout","partial"),"Invalid coverage status")
     return {"name":name,"status":status,"lines":int(lines),"bounded":bool(bounded),"events":counts or {},"note":notes}
 def collect_job(spec):
     name,kind,args=spec
+    miner=hybrid.Miner()
     try:
         if kind=="file":
             raw,limited=bounded_file(args[0],tail=True)
@@ -132,7 +136,7 @@ def collect_job(spec):
             limited=len(data)>MAX_READ;raw=data[:MAX_READ].decode("utf-8","replace");status="bounded" if limited else "ok"
         else:status,raw,limited=command(args,timeout=8)
         if kind=="journal":
-            counts,lines,bad,more=event_counts(raw,True)
+            counts,lines,bad,more=event_counts(raw,True,miner)
             if "not seeing messages from other users" in raw.lower() or "no journal files were opened due to insufficient permissions" in raw.lower():
                 status="partial" if lines else "permission"
             if bad and status=="ok":status="partial"
@@ -158,12 +162,14 @@ def collect_job(spec):
         elif kind=="inventory":
             lines=sum(1 for x in raw.splitlines() if x.strip());counts={}
         else:
-            counts,lines,bad,more=event_counts(raw)
+            counts,lines,bad,more=event_counts(raw,False,miner)
             if more:limited=True;status="bounded"
         if status=="ok" and not lines:status="empty"
         # Command failure itself is a coverage failure, not a fabricated system fault.
         if status in ("permission","failed","timeout","unavailable"):counts={}
-        return source(name,status,counts,lines,limited,"Raw messages discarded; counts may overlap across sources.")
+        row=source(name,status,counts,lines,limited,"Raw messages discarded; counts may overlap across sources.")
+        if counts:row["patterns"]=miner.result();row["pattern_overflow"]=miner.overflow
+        return row
     except FileNotFoundError:return source(name,"unavailable")
     except PermissionError:return source(name,"permission")
     except (OSError,ValueError,subprocess.SubprocessError):return source(name,"failed")
@@ -199,6 +205,14 @@ def specs():
     ]:jobs.append((name,"file",[path]))
     for name,path in [("syslog-rotated","/var/log/syslog.2.gz"),("kernel-log-rotated","/var/log/kern.log.2.gz"),("auth-log-rotated","/var/log/auth.log.2.gz"),("dpkg-log-rotated","/var/log/dpkg.log.2.gz"),("apt-history-rotated","/var/log/apt/history.log.1.gz"),("apt-terminal-rotated","/var/log/apt/term.log.1.gz")]:jobs.append((name,"gzip",[path]))
     return jobs
+def smart_source():
+    if not any((P(d)/"smartctl").is_file() for d in ("/usr/bin","/usr/sbin","/bin","/sbin")):
+        return source("smart-disk-health","unavailable",notes="Optional smartmontools not installed; health not verified.")
+    data=hybrid.smart_scan(command)
+    alerts=sum(d["health"] in ("critical","warning") for d in data["disks"])
+    row=source("smart-disk-health",data["status"],{"disk_health":alerts} if alerts else {},len(data["disks"]),False,"Non-root read-only SMART health; skipped or inaccessible disks remain unknown.")
+    row["smart"]=data
+    return row
 def numeric_snapshot():
     def kv(path):
         try:
@@ -443,6 +457,13 @@ def refine(c,ident,boot,tick,now,probe=followup_probe,clock_fn=clock,now_fn=lamb
         old_findings={f["code"]:f for f in previous["findings"]}
         assessment["trend_window"]=previous.get("trend_window",1)
         for f in assessment["findings"]:f["observed_in_recent_analyses"]=old_findings.get(f["code"],{}).get("observed_in_recent_analyses",1)
+        assessment["patterns"]=hybrid.patterns(sources,[])
+        known={(p["category"],p["template"]):p for p in previous.get("patterns",[])}
+        for p in assessment["patterns"]:
+            old=known.get((p["category"],p["template"]))
+            if old:p.update(previous_analyses=old["previous_analyses"],new_to_recent_history=old["new_to_recent_history"])
+        assessment["recipes"]=hybrid.recipes(assessment["findings"])
+        assessment["cleaner_catalog"]=previous.get("cleaner_catalog",{"status":"not_checked","options":[]})
         record["followup_state"]="complete";record["followup"]=[{"route":x,"source":row} for x,row in zip(candidates,rows)]
         c.execute("UPDATE analysis SET sources=?,assessment=?,context=? WHERE id=?",(json.dumps(sources),json.dumps(assessment),assessment["context"],ident))
         c.execute("UPDATE research SET data=? WHERE id=?",(json.dumps(record),ident))
@@ -466,6 +487,9 @@ def record_analysis(c,metrics,sources,boot,tick,now):
             for f in json.loads(raw).get("findings",[]):recurrence[f["code"]]=recurrence.get(f["code"],0)+1
         for finding in assessment["findings"]:finding["observed_in_recent_analyses"]=1+recurrence.get(finding["code"],0)
         assessment["trend_window"]=len(previous)+1
+        assessment["patterns"]=hybrid.patterns(sources,[json.loads(raw) for (raw,) in previous])
+        assessment["recipes"]=hybrid.recipes(assessment["findings"])
+        assessment["cleaner_catalog"]=hybrid.cleaner_catalog()
         require(not pending(c,boot),"Previous Boost is still pending; review history before retry")
         c.execute("UPDATE analysis SET state='invalid' WHERE state IN ('ready','reserved')")
         c.execute("INSERT INTO analysis VALUES(?,?,?,?,?,?,?,?,?)",(ident,now,boot,tick,"ready",assessment["context"],json.dumps(metrics),json.dumps(sources),json.dumps(assessment)))
@@ -493,6 +517,9 @@ def reserve(c,ident,selected,boot,tick,now,metrics,owner=None,fresh_sources=None
             if fresh_sources is not None:
                 fresh=assess(metrics,fresh_sources,{})
                 require(all(fresh["recommendations"][a]["allowed"] for a in selected),"Fresh kernel/package checks block the selected actions")
+                before=next((s.get("smart",{}) for s in row["sources"] if s["name"]=="smart-disk-health"),{})
+                current=next((s.get("smart",{}) for s in fresh_sources if s["name"]=="smart-disk-health"),{})
+                require(before.get("status")!="ok" or current.get("status")=="ok","Previously readable SMART health is no longer verified")
         c.execute("UPDATE analysis SET state='reserved' WHERE id=?",(ident,))
         c.execute("INSERT INTO boost(id,utc,selected,before_metrics,owner_pid,owner_start) VALUES(?,?,?,?,?,?)",(ident,now,json.dumps(selected),json.dumps(metrics),*owner))
     return {"schema":1,"id":ident,"state":"reserved"}
@@ -534,6 +561,7 @@ def main():
             if a.mode=="analyze":
                 b=boot_id();start=clock()
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:rows=list(pool.map(collect_job,specs()))
+                rows.append(smart_source())
                 m=numeric_snapshot();require(boot_id()==b and clock()-start<=120,"Analysis interrupted or exceeded time budget")
                 result=record_analysis(c,m,rows,b,clock(),int(time.time()))
             elif a.mode=="history":result=show_history(c)
@@ -550,6 +578,7 @@ def main():
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails") for x in selected):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
+                if fresh is not None:fresh.append(smart_source())
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
             else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
         print(json.dumps(result,ensure_ascii=True,separators=(",",":"),allow_nan=False));return 0
