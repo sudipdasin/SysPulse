@@ -8,7 +8,7 @@
 #include <QRegularExpression>
 namespace tux::admin {
 inline bool supported(const QString& id){
-    static const QSet<QString> ids={"trim","apt-clean","journal-prune","trim-enable","trim-disable","zswap-enable","zswap-disable","firewall-status"};
+    static const QSet<QString> ids={"trim","apt-clean","apt-refresh","apt-autoclean","journal-cap","journal-prune","trim-enable","trim-disable","zswap-enable","zswap-disable","firewall-status"};
     return ids.contains(id);
 }
 inline constexpr int MaxScanOutput=4*1024*1024;
