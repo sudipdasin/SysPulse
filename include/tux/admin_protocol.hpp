@@ -9,7 +9,7 @@
 #include <QRegularExpression>
 namespace tux::admin {
 inline bool supported(const QString& id){
-    static const QSet<QString> ids={"trim","apt-clean","apt-refresh","apt-autoclean","journal-cap","journal-prune","trim-enable","trim-disable","weekly-clean-enable","weekly-clean-disable","zswap-enable","zswap-disable","firewall-status"};
+    static const QSet<QString> ids={"trim","apt-clean","apt-refresh","apt-autoclean","journal-cap","journal-prune","trim-enable","trim-disable","zswap-enable","zswap-disable","firewall-status"};
     return ids.contains(id);
 }
 inline constexpr int MaxScanOutput=4*1024*1024;
@@ -38,6 +38,12 @@ inline QStringList typedCommand(const QStringList& fields){
     if(kind=="network"){
         if(a!="wifi"||(b!="on"&&b!="off"))return {};
         return {"nmcli","radio","wifi",b};
+    }
+    if(kind=="schedule"){
+        static const QSet<QString> profiles={"off","daily","weekly","monthly"};
+        static const QRegularExpression token(R"(\A[01]{6}\z)");
+        if(!profiles.contains(a)||!token.match(b).hasMatch())return {};
+        return {"syspulse-schedule-profile","apply",a,b};
     }
     if(kind=="power"){
         if(a!="profile"||(b!="balanced"&&b!="power-saver"&&b!="performance"))return {};
