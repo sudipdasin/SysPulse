@@ -91,7 +91,7 @@ def run(home,*args,cwd=None,timeout=180,pass_fds=(),extra=None):
     require(p.returncode==0,P(args[0]).name+" failed with exit "+str(p.returncode))
     return p.stdout
 def git(home,*args,cwd=None,extra=None):
-    return run(home,"git","-c","core.hooksPath=/dev/null","-c","credential.helper=","-c","http.sslVerify=true","-c","protocol.file.allow=never",*args,cwd=cwd,extra=extra)
+    return run(home,"git","-c","core.hooksPath=/dev/null","-c","credential.helper=","-c","http.sslVerify=true","-c","http.followRedirects=false","-c","protocol.file.allow=never",*args,cwd=cwd,extra=extra)
 def clone(home,branch,path):
     git(home,"clone","--quiet","--depth","1","--single-branch","--branch",branch,REPO,path)
     require(git(home,"remote","get-url","origin",cwd=path).decode().strip()==REPO,"Unexpected clone remote")
@@ -228,6 +228,10 @@ def transaction(a):
             catroot=home/"catalog";catalog_commit=clone(home,CATALOG,catroot)
             catalog=json_strict(plain(catroot/"release-candidates.json",262144))
             gate=json_strict(read_protected(a.approval,a.validator_uid))
+            if isinstance(gate,dict) and isinstance(gate.get("candidate"),dict):
+                proposed=validate(gate["candidate"])
+                if version(proposed["alpha"])==current["Version"] and proposed["sha256"]==current["SHA256"]:
+                    print("Trusted candidate already published; no action");return
             row=approved(catalog,gate,current,now)
             print("Eligible approved candidate",version(row["alpha"]),"catalogue",catalog_commit,flush=True)
             pkg=fetch_candidate(home,row)
@@ -254,7 +258,7 @@ def transaction(a):
             require(git(home,"show",commit+":"+file,cwd=root)==(root/file).read_bytes(),"Committed file mismatch")
         remote=git(home,"ls-remote","origin","refs/heads/"+BRANCH,cwd=root).decode().split()
         require(remote==[parent,"refs/heads/"+BRANCH],"Feed changed; retry validation")
-        ask=home/"askpass";ask.write_text("#!/usr/bin/python3\nimport os,sys\nif 'Username' in sys.argv[1]: print('x-access-token')\nelif 'Password' in sys.argv[1]: print(open(os.environ['SYSPULSE_TOKEN_FILE']).read().strip())\nelse: sys.exit(1)\n");ask.chmod(0o700)
+        ask=home/"askpass";ask.write_text("#!/usr/bin/python3\nimport os,sys\nif 'https://github.com' in sys.argv[1] and 'Username' in sys.argv[1]: print('x-access-token')\nelif 'https://x-access-token@github.com' in sys.argv[1] and 'Password' in sys.argv[1]: print(open(os.environ['SYSPULSE_TOKEN_FILE']).read().strip())\nelse: sys.exit(1)\n");ask.chmod(0o700)
         journal(state,{"parent":parent,"commit":commit,"version":entry["Version"],"digest":entry["SHA256"]})
         git(home,"push","origin","HEAD:refs/heads/"+BRANCH,cwd=root,extra={"GIT_ASKPASS":str(ask),"SYSPULSE_TOKEN_FILE":str(a.git_token)})
         check=home/"remote";actual=clone(home,BRANCH,check);verified,_=verify_feed(home,check,key,dt.datetime.now(UTC))
