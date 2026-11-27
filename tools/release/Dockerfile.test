@@ -186,8 +186,22 @@ RUN sha256sum -c "$HOME/preference.sha256" \
     && (rc=0; timeout 4s syspulse >/tmp/reinstalled-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
     && printf 'Ubuntu 24.04 amd64: exact canonical signed prior alpha.32 package verified by SHA-256; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.34 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Actual installed Analyze-to-Boost GUI workflow with own-process memory only and receipt passed. Disposable signing fixture for Alpha.33 upgrade; owner public key packaged and real Alpha.27 online discovery checked with no downgrade. Prior Alpha.27 owner publication verified; Alpha.33 owner publication, physical Mint XFCE authorization and successive online upgrade remain pending.\n' > /home/tester/INSTALL-STATUS.txt
 
+FROM ubuntu:24.04 AS hybrid36
+RUN apt-get update && apt-get install -y --no-install-recommends python3 procps util-linux systemd iproute2 smartmontools ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 hybrid && mkdir -p /out /usr/share/syspulse-fixtures/cleaners && chown hybrid:hybrid /out
+RUN printf '%s' '<cleaner id="fixture"><option id="cache"><action command="delete" search="file" path="/never-execute"/></option><option id="passwords"/></cleaner>' > /usr/share/syspulse-fixtures/cleaners/fixture.xml && printf '%s' '<!DOCTYPE cleaner [<!ENTITY test SYSTEM "file:///etc/passwd">]><cleaner id="unsafe"><option id="cache"/></cleaner>' > /usr/share/syspulse-fixtures/cleaners/unsafe.xml && ln -s /etc/passwd /usr/share/syspulse-fixtures/cleaners/link.xml
+COPY hybrid36/tools/ /src/tools/
+COPY hybrid36/tests/ /src/tests/
+USER hybrid
+RUN python3 /src/tests/test_hybrid_engine.py > /out/HYBRID36-TESTS.txt 2>&1 || { cat /out/HYBRID36-TESTS.txt; exit 1; }
+RUN python3 /src/tools/syspulse-diagnostics self-test > /out/HYBRID36-DB-TESTS.txt 2>&1 || { cat /out/HYBRID36-DB-TESTS.txt; exit 1; }
+RUN python3 /src/tests/test_research_adapters.py > /out/HYBRID36-RESEARCH-TESTS.txt 2>&1 || { cat /out/HYBRID36-RESEARCH-TESTS.txt; exit 1; }
+RUN cat /out/HYBRID36-TESTS.txt /out/HYBRID36-DB-TESTS.txt /out/HYBRID36-RESEARCH-TESTS.txt
+RUN smartctl --version > /out/HYBRID36-SMART-VERSION.txt && python3 /src/tools/syspulse-diagnostics analyze > /out/HYBRID36-SMOKE-PRIVATE.json && python3 -c 'import json,pathlib; p=pathlib.Path("/out/HYBRID36-SMOKE-PRIVATE.json"); a=json.loads(p.read_text()); assert a["state"]=="ready"; s=next(x for x in a["sources"] if x["name"]=="smart-disk-health"); print("Real non-root analysis completed; SMART coverage: "+s["status"]+"; "+str(len(a["sources"]))+" source checks; masked patterns and local recipes present; no disk mutations"); assert "patterns" in a and "recipes" in a and "cleaner_catalog" in a; p.unlink()' > /out/HYBRID36-SMOKE.txt && cat /out/HYBRID36-SMOKE.txt
+
 FROM python:3.11-slim-bookworm
 COPY --from=test /out/ /srv/results/
+COPY --from=hybrid36 /out/ /srv/results/
 COPY --from=diagnosticcheck /out/ /srv/results/
 COPY --from=installcheck /home/tester/EXACT-UPGRADE.txt /srv/results/
 COPY --from=build34 /out/ /srv/results/alpha34/
