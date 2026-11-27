@@ -335,6 +335,7 @@ struct Window::Impl {
         lines<<"\nOutcome-based learning (local only):";for(const auto& v:data.value("learning").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
         lines<<"\nMeasured outcomes from research-associated sessions (association, not proof of AI benefit):";
         for(const auto& v:data.value("assisted_outcomes").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
+        lines<<"\nPost-maintenance verification (recent):";for(const auto& v:data.value("verification").toArray()){const auto a=v.toObject();QStringList risks;for(const auto& k:a.value("risks").toArray())risks<<k.toString();lines<<QString("%1 · %2").arg(a.value("status").toString(),risks.join(", "));}
         lines<<"\nRecent saved web and AI evidence:";for(const auto& v:data.value("research").toArray()){lines<<researchLines(v.toObject());lines<<"";}
         view->setPlainText(lines.join("\n"));layout->addWidget(view,1);
         layout->addWidget(text("Retains up to 180 analyses and their associated outcomes. Learning changes recommendations only, never security gates or executable commands.","muted"));
@@ -1258,7 +1259,18 @@ struct Window::Impl {
         lines<<QString("APT filesystem available space: %1 → %2. Other activity can affect this measurement.").arg(show(before),show(available("/var/cache/apt/archives")));
         if(homeBefore)lines<<QString("User cache filesystem available space: %1 → %2. Other activity can affect this reading.").arg(show(homeBefore),show(available(userCache)));
         const auto learned=diagnosticCall({"finish",usedAnalysis,QString::fromUtf8(QJsonDocument(learnedOutcome).toJson(QJsonDocument::Compact))},"Recording measured Boost outcomes and updating local learning history…");
-        if(learned.value("state").toString()!="finished"||learned.value("id").toString()!=usedAnalysis){needsReview=true;lines<<"Learning receipt was not verified; no automatic retry.";}else lines<<"Local learning history updated using verified action-specific outcomes.";
+        if(learned.value("state").toString()!="finished"||learned.value("id").toString()!=usedAnalysis){needsReview=true;lines<<"Learning receipt was not verified; no automatic retry.";}
+        else {
+            lines<<"Local learning history updated using verified action-specific outcomes.";
+            const auto check=diagnosticCall({"verify-boost",usedAnalysis},"Checking post-maintenance health and comparable measurements…",45000);
+            const auto state=check.value("status").toString();
+            if(check.value("id").toString()!=usedAnalysis||(state!="observed"&&state!="limited"&&state!="review")){needsReview=true;lines<<"Post-maintenance verification incomplete; receipt retained.";}
+            else{
+                needsReview=needsReview||state!="observed";
+                QStringList risks;for(const auto& v:check.value("risks").toArray())risks<<v.toString();
+                lines<<QString("Post-maintenance checks: %1%2. Observations do not establish a causal speed gain.").arg(state,risks.isEmpty()?QString():QString(" · ")+risks.join(", "));
+            }
+        }
         const syspulse::boostlog::Receipt receipt{QDateTime::currentDateTimeUtc().toString(Qt::ISODate),lines,needsReview};
         const auto encoded=syspulse::boostlog::encode(receipt);QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
         if(!encoded.isEmpty()){settings.setValue("boost/lastReceipt",encoded);settings.sync();}if(encoded.isEmpty()||settings.status()!=QSettings::NoError)lines<<"Local receipt could not be saved.";
