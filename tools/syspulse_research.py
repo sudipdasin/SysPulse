@@ -4,7 +4,7 @@ import concurrent.futures, gzip, hashlib, html, http.client, io, json, re, time,
 from html.parser import HTMLParser
 
 PROVIDERS=("web","groq","gemini")
-ACTIONS=("thumbnails","archives","own_memory","pause_monitoring")
+ACTIONS=("thumbnails","failed_thumbnails","archives","own_memory","pause_monitoring")
 QUERIES={
  "storage_io":("Linux disk I/O errors",("kernel","devices")),
  "filesystem":("Linux ext4 filesystem errors read only",("filesystem-config","devices")),
