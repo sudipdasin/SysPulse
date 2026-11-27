@@ -371,7 +371,8 @@
   ],
   "release_allowlist": [
     "3.0.0-alpha.19",
-    "3.0.0-alpha.20"
+    "3.0.0-alpha.20",
+    "3.0.0-alpha.21"
   ],
   "audit_reference": "3.0.0-alpha.19",
   "audit_targets": [
@@ -395,6 +396,7 @@
     "3.0.0-alpha.18",
     "3.0.0-alpha.19",
     "3.0.0-alpha.20",
-    "unknown"
+    "unknown",
+    "3.0.0-alpha.21"
   ]
 }

@@ -36,4 +36,30 @@ class RelayTest(unittest.TestCase):
     self.assertIsNotNone(r.admit(self.base,100))
     self.assertIsNone(r.admit(self.base,101))
     self.assertIsNotNone(r.admit(self.base,3701))
+ def test_http_contract(self):
+    import threading, urllib.request, urllib.error, os
+    from unittest.mock import patch
+    server=r.ThreadingHTTPServer(("127.0.0.1",0),r.Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    url="http://127.0.0.1:"+str(server.server_port)
+    def request(path,body=None):
+      req=urllib.request.Request(url+path,data=body,headers={"Content-Type":"application/json"})
+      try:
+        with urllib.request.urlopen(req,timeout=3) as result: return result.status,json.load(result)
+      except urllib.error.HTTPError as err: return err.code,json.load(err)
+    try:
+      with patch.dict(os.environ,{"SYSPULSE_REPORT_TOKEN":""}):
+        self.assertEqual(request("/healthz")[0],200)
+        self.assertEqual(request("/diagnostics/v1/status")[0],503)
+        self.assertEqual(request("/diagnostics/v1/report",encode(self.base))[0],503)
+      r.recent.clear();r.attempts.clear()
+      with patch.dict(os.environ,{"SYSPULSE_REPORT_TOKEN":"synthetic-only"}),patch.object(r,"publish",return_value=42) as mock:
+        self.assertEqual(request("/diagnostics/v1/status")[0],200)
+        self.assertEqual(request("/diagnostics/v1/report",encode(dict(self.base,email="private")))[0],400)
+        mock.assert_not_called()
+        self.assertEqual(request("/diagnostics/v1/report",encode(self.base)),(201,{"accepted":True,"issue":42}))
+        self.assertEqual(request("/diagnostics/v1/report",encode(self.base))[0],429)
+        mock.assert_called_once()
+    finally:
+      server.shutdown();server.server_close();thread.join(3)
 if __name__=="__main__": unittest.main()

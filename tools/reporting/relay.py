@@ -89,7 +89,11 @@ def publish(data, token):
         headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
                  "Accept": "application/vnd.github+json", "User-Agent": "SysPulse-report-relay/1"})
     with urllib.request.build_opener(NoRedirect()).open(request, timeout=10) as response:
-        return response.status == 201
+        if response.status != 201:
+            return None
+        receipt = json.loads(response.read(65536))
+        number = receipt.get("number")
+        return number if type(number) is int and 0 < number < 2147483647 and receipt.get("html_url") == "https://github.com/" + REPO + "/issues/" + str(number) else None
 
 # Global rate cap and content deduplication; no requester IP or device ID retained.
 lock = threading.Lock()
@@ -115,11 +119,21 @@ class Handler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(8)
-    def reply(self, code, accepted=False):
-        body = json.dumps({"accepted": accepted}).encode()
+    def reply(self, code, accepted=False, issue=None):
+        payload = {"accepted": accepted}
+        if issue is not None:
+            payload["issue"] = issue
+        body = json.dumps(payload).encode()
         self.send_response(code); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body))); self.send_header("Cache-Control", "no-store")
         self.end_headers(); self.wfile.write(body)
+    def do_GET(self):
+        if self.path == "/healthz":
+            return self.reply(200)
+        if self.path == "/diagnostics/v1/status":
+            # Readiness indicates configuration only, not proof of GitHub authorization.
+            return self.reply(200 if os.environ.get("SYSPULSE_REPORT_TOKEN") else 503)
+        return self.reply(404)
     def do_POST(self):
         if self.path != "/diagnostics/v1/report":
             return self.reply(404)
@@ -149,12 +163,29 @@ class Handler(BaseHTTPRequestHandler):
                 # Failure remains rate-limited; allow a later explicit retry.
                 with lock:
                     recent.pop(key, None)
-            return self.reply(201 if ok else 502, ok)
+            return self.reply(201, True, ok) if ok else self.reply(502)
         finally:
             slots.release()
 
 if __name__ == "__main__":
     # HTTPS must terminate at a reviewed reverse proxy. Do not expose plaintext.
-    if not os.environ.get("SYSPULSE_REPORT_TOKEN"):
-        raise SystemExit("Reporting disabled: server credential not provisioned")
-    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler).serve_forever()
+    # Bounded connections; hosting ingress must additionally limit abusive traffic.
+    class BoundedServer(ThreadingHTTPServer):
+        daemon_threads = True
+        request_queue_size = 16
+        connections = threading.BoundedSemaphore(8)
+        def process_request(self, request, address):
+            if not self.connections.acquire(blocking=False):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, address)
+            except BaseException:
+                self.connections.release()
+                raise
+        def process_request_thread(self, request, address):
+            try:
+                super().process_request_thread(request, address)
+            finally:
+                self.connections.release()
+    BoundedServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler).serve_forever()
