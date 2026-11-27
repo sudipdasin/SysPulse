@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+# Do not change the owner's opt-in state on upgrade.
+case "$1" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+      systemctl disable --now syspulse-weekly-clean.timer
+      if systemctl is-active --quiet syspulse-weekly-clean.service; then
+        echo 'SysPulse weekly package cleanup is active; allow it to finish before removing SysPulse.' >&2
+        exit 1
+      fi
+    fi
+    ;;
+esac
+exit 0
