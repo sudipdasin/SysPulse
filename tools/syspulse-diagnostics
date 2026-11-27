@@ -97,7 +97,7 @@ def command(args,timeout=7,limit=MAX_READ):
 def classify(line,priority=None):
     if recovery.observation(line,priority):return None
     for key,rx in RULES:
-        if rx.search(line):return key
+        if rx.search(line[:8192]):return key
     if priority is not None and priority<=3:return "other_error"
     return None
 def event_counts(text,journal=False,miner=None,recovered=None):
@@ -114,9 +114,9 @@ def event_counts(text,journal=False,miner=None,recovered=None):
                 if isinstance(cursor,str):
                     if cursor in seen:continue
                     seen.add(cursor)
-                key=classify(msg[:8192],pr)
+                key=classify(msg,pr)
             except (ValueError,TypeError,AttributeError):bad+=1;continue
-        else:msg=line;pr=None;key=classify(line[:8192])
+        else:msg=line;pr=None;key=classify(line)
         if key:
             counts[key]=counts.get(key,0)+1
             if miner is not None:miner.add(key,msg)
@@ -715,7 +715,7 @@ def run_tests():
             self.assertEqual(obs,{"memory_recovery":1,"storage_health_report":1})
             self.assertEqual(counts,{"memory_pressure":1})
             r=source("fixture","ok",counts,3);r["recovery_observations"]=obs
-            a=self.make() if not self.s else record_analysis(self.c,self.m,self.s+[r],self.b,self.t,self.n)
+            a=record_analysis(self.c,self.m,self.s+[r],self.b,self.t,self.n)
             self.assertEqual(a["recovery_observations"],obs)
         def test_recovery_controls_preserve_critical_errors(self):
             for msg in ("SMART health passed; 0 pending sectors","No errors detected in the RAM test.","Previous error resolved; service started successfully","GPU reset completed successfully."):
