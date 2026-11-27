@@ -5,7 +5,7 @@ umask 022
 [[ $# == 3 && $EUID != 0 ]] || { echo 'Usage (non-root): build-candidate.sh SOURCE WORK OUTPUT' >&2; exit 1; }
 readonly source_dir=$1 work=$2 output=$3
 readonly app_version=3.0.0-alpha.28 deb_version=3.0.0~alpha28~render1
-readonly baseline=e2989b5b5bbbb50fe44142136b7c37fb5a2921e4
+readonly baseline=047deabb5ad3c7dffeaa05de3f492a87bb1744bd
 [[ -d $source_dir && -d $work && -d $output && -z $(ls -A -- "$work") && -z $(ls -A -- "$output") ]] || { echo 'Fresh work and output directories required' >&2; exit 1; }
 [[ $(dpkg --print-architecture) == amd64 ]] || { echo 'amd64 required' >&2; exit 1; }
 . /etc/os-release
