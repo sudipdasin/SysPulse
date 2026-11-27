@@ -64,32 +64,7 @@ def recipes(findings):
             severity,summary,tools,url=RECIPES[code]
             out.append({"code":code,"severity":severity,"guidance":summary,"tools":tools,"reference":url,"automatic_repair":False})
     return out[:15]
-def integer(v):return v if type(v) is int and 0<=v<2**64 else None
-def smart_result(raw,status,bounded):
-    if bounded or status in ("unavailable","permission","timeout"):return {"status":status if not bounded else "bounded","health":"unknown"}
-    try:
-        row=json.loads(raw)
-        if not isinstance(row,dict):raise ValueError()
-        tool=row.get("smartctl",{});rc=integer(tool.get("exit_status"))
-        if rc is None or rc>255:raise ValueError()
-        health=row.get("smart_status",{}).get("passed")
-        nv=row.get("nvme_smart_health_information_log",{})
-        if not isinstance(nv,dict):raise ValueError()
-        warning=integer(nv.get("critical_warning"))
-        media=integer(nv.get("media_errors"))
-        attrs={}
-        for x in row.get("ata_smart_attributes",{}).get("table",[])[:256]:
-            if isinstance(x,dict) and x.get("id") in (5,197,198):
-                attrs[x["id"]]=integer(x.get("raw",{}).get("value"))
-        # Incomplete access or sleep is unknown, never healthy. An explicit
-        # critical warning still counts even if another SMART query failed.
-        risk=health is False or bool(rc&0x38) or bool(warning) or bool(attrs.get(197)) or bool(attrs.get(198))
-        caution=bool(media) or bool(attrs.get(5)) or bool(rc&0xc0)
-        result={"status":"partial" if rc&7 else "ok","health":"critical" if risk else "warning" if caution else "passed" if health is True and not rc&7 else "unknown"}
-        for key,val in (("pending_sectors",attrs.get(197)),("uncorrectable_sectors",attrs.get(198)),("reallocated_sectors",attrs.get(5)),("media_errors",media),("nvme_critical_warning",warning)):
-            if val is not None:result[key]=val
-        return result
-    except (ValueError,TypeError,AttributeError,IndexError,RecursionError):return {"status":"partial","health":"unknown"}
+from syspulse_smart_evidence import smart_result
 def smart_scan(command,device_ok=None):
     # Only fixed internal SATA/NVMe whole disks; skip bridges, virtual devices,
     # removable media and unknown transports. At most four devices.
