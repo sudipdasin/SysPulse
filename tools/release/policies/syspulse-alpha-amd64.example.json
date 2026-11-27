@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "project": "syspulse",
+  "channel": "alpha",
+  "repository": "https://github.com/sudipdasin/SysPulse.git",
+  "feed_branch": "updates-alpha",
+  "catalogue_branch": "release-candidates",
+  "package": "syspulse",
+  "architecture": "amd64",
+  "origin": "SysPulse Community",
+  "label": "SysPulse",
+  "fingerprint": "DA269C59E903F28BD46DA217F88380E446488691",
+  "anchor_path": "/etc/deb-release/syspulse.gpg",
+  "anchor_sha256": "1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6",
+  "embedded_anchor": "usr/share/syspulse/update-keys/alpha.gpg",
+  "minimum_version": "3.0.0~alpha32~render1",
+  "minimum_sha256": "4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc",
+  "artifact_hosts": [
+    "syspulse-alpha33-profile-eval.onrender.com"
+  ],
+  "minimum_suites": 54,
+  "require_physical": false
+}
