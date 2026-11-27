@@ -19,6 +19,10 @@ inline constexpr int MaxRequest=16384;
 inline QStringList typedCommand(const QStringList& fields){
     if(fields.size()!=3)return {};
     const auto& kind=fields[0];const auto& a=fields[1];const auto& b=fields[2];
+    if(kind=="boost"){
+        if(a!="archives"||b!="clean")return {};
+        return {"apt-get","clean"};
+    }
     if(kind=="update"){
         static const QRegularExpression version(R"(\A[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(?:~(?:alpha|beta)[0-9]{1,6})?(?:~render[0-9]{1,6})?\z)");
         if((a!="alpha"&&a!="beta"&&a!="stable")||!version.match(b).hasMatch())return {};
