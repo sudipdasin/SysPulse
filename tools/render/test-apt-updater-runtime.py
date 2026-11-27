@@ -8,16 +8,16 @@ key=Path("/upgrade/test-only.gpg")
 url="file:/upgrade/repo"
 assert u["secure_key"](key), "Fixture key or ancestor not root-owned/readable/nonwritable"
 result=u["check"]("alpha",key,url)
-assert result=="AVAILABLE 3.0.0~alpha22~render1", result
+assert result=="AVAILABLE 3.0.0~alpha23~render1", result
 try:
-    u["install"]("stable","3.0.0~alpha22~render1",key,url)
+    u["install"]("stable","3.0.0~alpha23~render1",key,url)
     raise AssertionError("channel crossing accepted")
 except ValueError:
     pass
-assert u["install"]("alpha","3.0.0~alpha22~render1",key,url)=="INSTALLED 3.0.0~alpha22~render1"
-assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha22~render1"
+assert u["install"]("alpha","3.0.0~alpha23~render1",key,url)=="INSTALLED 3.0.0~alpha23~render1"
+assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha23~render1"
 try:
-    u["install"]("alpha","3.0.0~alpha21~render1",key,url)
+    u["install"]("alpha","3.0.0~alpha22~render1",key,url)
     raise AssertionError("downgrade accepted")
 except ValueError:
     pass
