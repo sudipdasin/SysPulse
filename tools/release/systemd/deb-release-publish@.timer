@@ -1,0 +1,8 @@
+[Unit]
+Description=DEB Release Fleet %i publish schedule
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=2m
+[Install]
+WantedBy=timers.target
