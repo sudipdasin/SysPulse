@@ -18,11 +18,14 @@ KEYS = Path("/etc/syspulse/update-keys")
 BUNDLED_KEYS = Path("/usr/share/syspulse/update-keys")
 BASE = "https://raw.githubusercontent.com/sudipdasin/SysPulse/updates-"
 VERSION = re.compile(r"(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})(?:~(alpha|beta)(0|[1-9][0-9]{0,5}))?(?:~render[1-9][0-9]{0,5})?", re.ASCII)
+LOCAL_VERSION = re.compile(r"(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})~(alpha|beta)(0|[1-9][0-9]{0,5})~local[1-9][0-9]{0,5}", re.ASCII)
 ENV = {"PATH": "/usr/bin:/usr/sbin:/bin:/sbin", "HOME": "/root" if os.geteuid()==0 else "/nonexistent",
        "LANG": "C", "LC_ALL": "C", "DEBIAN_FRONTEND": "noninteractive"}
 
-def version(value):
+def version(value, *, allow_local=False):
     match = VERSION.fullmatch(value) if isinstance(value,str) else None
+    if not match and allow_local and isinstance(value,str):
+        match = LOCAL_VERSION.fullmatch(value)
     if not match:
         raise ValueError("Unsupported Debian release version.")
     return match.group(4) or "stable"
@@ -78,7 +81,7 @@ def installed():
     fields=raw.split()
     if len(fields)!=3 or fields[0]!="installed" or fields[2]!="amd64":
         raise RuntimeError("SysPulse must be fully installed as an amd64 Debian package.")
-    version(fields[1])
+    version(fields[1], allow_local=True)
     return fields[1]
 
 def newer(candidate, current):
@@ -141,6 +144,32 @@ def check(channel, key, url):
         available=candidate(opts,channel,current)
         return "AVAILABLE "+available if available else "CURRENT "+current
 
+def review_plan(plan, current, expected):
+    """Accept exactly one reviewed amd64 upgrade, never commands from solver text."""
+    if not isinstance(plan, str) or len(plan)>262144 or "\x00" in plan:
+        raise RuntimeError("Update simulation output is incomplete or malformed.")
+    lines=plan.splitlines()
+    summary=[]; mutations=[]
+    for raw in lines:
+        line=raw.strip()
+        if line.startswith(("E:","W:","N:")):
+            raise RuntimeError("Update simulation reported a warning; review using the system package manager.")
+        match=re.fullmatch(r"([0-9]{1,6}) upgraded, ([0-9]{1,6}) newly installed, ([0-9]{1,6}) to remove and ([0-9]{1,6}) not upgraded\.",line)
+        if match:
+            summary.append(tuple(map(int,match.groups())))
+        elif line.split(maxsplit=1) and line.split(maxsplit=1)[0] in ("Inst","Conf","Remv","Purg"):
+            mutations.append(line)
+    if len(summary)!=1 or summary[0][:3]!=(1,0,0) or len(mutations)!=2:
+        raise RuntimeError("Update requires other package changes or has incomplete simulation evidence.")
+    package=r"syspulse(?::amd64)?"
+    old=re.escape(current); new=re.escape(expected)
+    # APT renders origin metadata between the version and final architecture.
+    # Require the exact installed and target versions; never accept an origin as a version.
+    inst=rf"Inst {package} \[{old}\] \({new} [^\r\n]*\[amd64\]\)"
+    conf=rf"Conf {package} \({new} [^\r\n]*\[amd64\]\)"
+    if not re.fullmatch(inst,mutations[0]) or not re.fullmatch(conf,mutations[1]):
+        raise RuntimeError("Update simulation differs from the reviewed package and versions.")
+
 def install(channel, expected, key, url):
     if os.geteuid()!=0:
         raise ValueError("Administrator authorization required.")
@@ -155,10 +184,7 @@ def install(channel, expected, key, url):
         args=["/usr/bin/apt-get",*opts,"--no-remove","--only-upgrade","--no-install-recommends","--no-install-suggests"]
         target="syspulse="+expected
         plan=run([*args,"--simulate","install",target],30)
-        # This updater must never upgrade unrelated packages or remove anything.
-        mutations=re.findall(r"^(Inst|Remv|Conf) (\S+)",plan,re.MULTILINE)
-        if not any(op=="Inst" and name=="syspulse" for op,name in mutations) or any(op=="Remv" or name!="syspulse" for op,name in mutations):
-            raise RuntimeError("Update requires other package changes. Use the system package manager for review.")
+        review_plan(plan,current,expected)
         if installed()!=current:
             raise RuntimeError("Installed version changed. Check again.")
         # No timeout during dpkg mutation. Do not terminate it to simulate rollback.
