@@ -1,0 +1,18 @@
+# Alpha.39 native package evidence gate checkpoint — 2026-11-27
+
+## Continuity
+Recovered a35825d7c2b7a195f87db4623927b87cc9bc6bcd on dev/alpha39-native-core-bounds; no Alpha.40 or Alpha.41 branch found. Isolated descendant dev/alpha39-package-evidence-gate. No main merge, hosted CI, paid infrastructure, signing changes or production publication.
+
+## Implemented
+- Existing diagnostic assessment used all() over potentially empty APT and dpkg evidence sets, permitting archive cleanup without those records. New fail-closed pure policy requires exactly one successful, unbounded, event-free audit, APT solver result and core integrity result; requires zero audit lines, zero solver changes, no solver execution authority, complete fixed dpkg/apt/systemd scope and zero core file differences. Non-core differences do not imply compromise. Unknown, malformed, duplicate or incomplete evidence rejects archive cleanup. Existing other action eligibility unchanged.
+- Integrated into diagnostics assess and reserve, explicitly requiring fresh evidence for archive reservation. Existing boot/age checks retained. Updated diagnostic self-test fixtures and added two integrated self-tests; these have NOT been executed, because exact full helper and all dependencies were not materialized into the local runtime. Direct Git access and raw file download failed. Module tests and native command smoke below are not the full diagnostic suite. Diagnostic source blob 9b3cb86ce5005b0737da5984dc0fb33711a221bb.
+- CMake installation and test registration, Docker installed ownership checks, and DEB payload contract include new module. New payload now requires 31 files; no native package build.
+ 
+## Executed evidence
+- 12/12 policy tests as nobody; exact local and repository blobs match: module 19816aebbf24c565f7abdaa230be9b53765a75fd, tests 9755247f6fab851a154cd8b58bccc6f89128c91f.
+- Real non-root Debian 13 read-only dpkg --audit, native APT solver and dpkg verification with exact existing adapter blobs 28883936136e4ebc531aa36642fc90befaf5f99d and 8c50c2eb767e3e3234ec7f19ee194376e219b777. Smoke harness constructed source records using adapter results (not full diagnostic helper). Zero audit lines, no proposed package changes, zero core changes for all three packages; documentation/other differences retained; policy allowed; package database and existing APT extended-state hashes unchanged. No cleanup or repair executed, no physical Mint claim.
+- 14/14 actual disposable DEB fixture tests passed as nobody under umask 077; includes new missing-module rejection. Exact payload verifier ba9b2fc15d49c043474c22893c6b12d77ff6ebbe, test fce8a905803a37952f6ca6765e5f148f2b51c7b3. Fixtures never installed or executed. 26 focused test methods this cycle, including 13 inherited package tests and 13 new methods total. Prior 55 native C++ and other historical suites not rerun. New integrated self-tests not counted.
+- Source checkpoint before documentation 0370f2aab5e50b65f69be40da708704d9d5b15df. Local builder unchanged; downloadable builder SHA256 b3ce64c0d7ecb21732714bd895ccdc9553a9d261685469b433a03945d66b7ed1.
+
+## Mandatory gates
+Qt dev and Docker unavailable, direct GitHub DNS unavailable, raw fetch failed, prior Render free quota exhausted (no retry). Run exact full diagnostics self-test and external hybrid/research suites, then native Qt/CTest build, actual DEB, signed isolated upgrade/tamper/recovery, real GUI and physical Mint SMART/XFCE. Verify any older recorded analysis is not accepted for archive reservation without fresh checks. Preserve Alpha.37 package and existing owner trust. Do not advance version or claim production readiness solely on focused evidence. Next prioritize actual local compilation over additional features.
