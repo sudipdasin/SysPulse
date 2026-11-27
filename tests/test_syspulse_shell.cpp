@@ -70,13 +70,13 @@ int main(int argc,char** argv) {
                 const bool initial=level->currentIndex()==0&&!consent->isChecked()&&output->toPlainText().isEmpty()&&!send->isEnabled();
                 level->setCurrentIndex(1);preview->click();
                 const bool generated=!output->toPlainText().isEmpty()&&!save->isEnabled()&&!send->isEnabled();
-                consent->setChecked(true);const bool reviewed=save->isEnabled()&&!send->isEnabled();
+                consent->setChecked(true);const bool reviewed=save->isEnabled()&&send->isEnabled()==send->property("relayConfigured").toBool();
                 level->setCurrentIndex(3);const bool reset=!consent->isChecked()&&output->toPlainText().isEmpty()&&!save->isEnabled()&&!send->isEnabled();
                 consentChecks=initial&&generated&&reviewed&&reset;
             }
             dialog->reject();
         });
-        sharing->click();require(consentChecks,"diagnostic sharing defaults off, needs review and invalidates changed payload; no relay configured");
+        sharing->click();require(consentChecks,"diagnostic sharing defaults off, needs review and invalidates changed payload; send requires configured relay");
         auto* back=window.findChild<QPushButton*>("navigationBack");auto* forward=window.findChild<QPushButton*>("navigationForward");
         require(back&&forward&&!back->isEnabled()&&!forward->isEnabled(),"initial history empty except overview");
         window.navigate("performance");window.navigate("storage");back->click();

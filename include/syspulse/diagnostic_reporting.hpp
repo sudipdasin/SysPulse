@@ -400,12 +400,13 @@ inline QMap<QString,QString> importAudit(const QByteArray& data,bool& valid,QStr
         result.insert(key,state);
     }
     valid=!result.isEmpty();
-    if(valid&&target){for(int n=1;n<=20;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(facts.value("syspulse_version").toString()==known){*target=known;break;}}}
+    if(valid&&target){for(int n=1;n<=21;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(facts.value("syspulse_version").toString()==known){*target=known;break;}}}
     return result;
 }
 inline QString sessionState(const tux::Result& r,const tux::Action& a){
     if(r.cancelled)return "CANCELLED";
     if(r.code==124)return "TIMEOUT";
+    if(a.id=="systemd-state"&&r.code==1&&r.output.trimmed()=="degraded")return "REVIEW";
     if(r.code!=0)return "FAILED";
     if(r.truncated)return "INCOMPLETE";
     return a.changes?"REVIEW":"PASS";
@@ -415,12 +416,12 @@ inline QMap<QString,QString> snapshot(const QVector<tux::Result>& results,const 
     for(auto i=audit.cbegin();i!=audit.cend();++i)if(i.key().startsWith("audit/")&&allowed(i.key(),i.value()))checks.insert(i.key(),i.value());
     for(const auto& a:tux::actions()){
         const auto problem=tux::unavailable(a);
-        const auto state=problem.isEmpty()?"PREFLIGHT_ONLY":problem.startsWith("Missing dependency")?"MISSING":"BLOCKED_BY_DESIGN";
+        const auto state=problem.isEmpty()?"PREFLIGHT_ONLY":problem.startsWith("Missing dependency")?"MISSING":problem.startsWith("Untrusted executable")?"DISCREPANCY":"BLOCKED_BY_DESIGN";
         const auto key="preflight/"+a.id;if(allowed(key,state))checks.insert(key,state);
         for(const auto& r:results)if(r.action==a.title){const auto rk="run/"+a.id;const auto rs=sessionState(r,a);if(allowed(rk,rs))checks.insert(rk,rs);}
     }
     for(const auto& key:allowedKeys())if(key.startsWith("native/launcher/")){
-        const auto command=key.section('/',-1);const auto trusted=tux::trustedSystemExecutable(command);
+        const auto command=key.section('/',-1);const auto trusted=tux::trustedLauncherExecutable(command);
         checks.insert(key,!trusted.isEmpty()?"PREFLIGHT_ONLY":QStandardPaths::findExecutable(command).isEmpty()?"MISSING":"DISCREPANCY");
     }
     const auto home=QDir::homePath(),cache=QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
@@ -445,7 +446,7 @@ inline QJsonObject payload(const QMap<QString,QString>& checks,int level,const Q
     QJsonObject obj{{"schema",1},{"release",QString(tux::Version)},{"level",level==1?"min":level==2?"med":"max"},{"counts",counts}};
     if(level>=2)obj.insert("checks",details);
     bool hasAudit=false;for(auto i=checks.cbegin();i!=checks.cend();++i)if(i.key().startsWith("audit/")&&allowed(i.key(),i.value())){hasAudit=true;break;}
-    if(hasAudit){QString safe="unknown";for(int n=1;n<=20;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(auditTarget==known)safe=known;}obj.insert("audit_reference","3.0.0-alpha.19");obj.insert("audit_target",safe);}
+    if(hasAudit){QString safe="unknown";for(int n=1;n<=21;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(auditTarget==known)safe=known;}obj.insert("audit_reference","3.0.0-alpha.19");obj.insert("audit_target",safe);}
     return obj;
 }
 inline QString advice(const QMap<QString,QString>& checks){

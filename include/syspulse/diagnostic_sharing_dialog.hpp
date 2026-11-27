@@ -34,6 +34,10 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
     auto* save=new QPushButton("Save reviewed report locally…",&dialog);auto* send=new QPushButton("Send reviewed report to repository",&dialog);auto* close=new QPushButton("Close without sharing",&dialog);
     save->setObjectName("diagnosticSave");send->setObjectName("diagnosticSend");save->setEnabled(false);send->setEnabled(false);layout->addWidget(save);layout->addWidget(send);layout->addWidget(close);
     auto* manager=new QNetworkAccessManager(&dialog);const auto target=endpoint();QMap<QString,QString> imported;QString auditTarget;QByteArray body;bool inFlight=false;QNetworkReply* activeReply=nullptr;
+    send->setProperty("relayConfigured",!target.isEmpty());
+    const auto relayNotice=target.isEmpty()?QString("Repository relay is not configured; local export only."):QString("Repository relay: configured. Server authorization is checked only when you explicitly submit.");
+    auto* relayLabel=new QLabel(relayNotice,&dialog);relayLabel->setWordWrap(true);relayLabel->setTextFormat(Qt::PlainText);layout->insertWidget(layout->indexOf(send),relayLabel);
+    send->setToolTip(relayNotice);
     const auto refresh=[&]{const bool ready=!inFlight&&level->currentIndex()>0&&!body.isEmpty()&&consent->isChecked();save->setEnabled(ready);send->setEnabled(ready&&!target.isEmpty());};
     const auto clear=[&]{body.clear();text->clear();consent->setChecked(false);refresh();};
     QObject::connect(level,QOverload<int>::of(&QComboBox::currentIndexChanged),&dialog,[&](int){clear();status->setText("Selection changed; generate a new preview.");});
@@ -46,7 +50,7 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
     QObject::connect(preview,&QPushButton::clicked,&dialog,[&]{
         clear();if(level->currentIndex()==0){status->setText("Sharing is off.");return;}
         const auto checks=snapshot(results,imported);
-        body=QJsonDocument(payload(checks,level->currentIndex(),auditTarget)).toJson(QJsonDocument::Compact);
+        body=QJsonDocument(payload(checks,level->currentIndex(),auditTarget)).toJson(QJsonDocument::Indented);
         text->setPlainText(QString::fromUtf8(body));status->setText(advice(checks)+(target.isEmpty()?"\nRepository relay is not configured. Local save only.":"\nDestination: "+target.toString()));refresh();
     });
     QObject::connect(consent,&QCheckBox::toggled,&dialog,[&](bool){refresh();});
@@ -60,13 +64,18 @@ inline void reviewSharing(QWidget* parent,const QVector<tux::Result>& results){
         if(QMessageBox::question(&dialog,"Confirm repository submission","Send the exact reviewed report through the configured HTTPS relay? The report may be publicly visible and cannot be guaranteed anonymous at the network layer.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
         inFlight=true;refresh();level->setEnabled(false);import->setEnabled(false);preview->setEnabled(false);consent->setEnabled(false);
         QNetworkRequest request(target);request.setHeader(QNetworkRequest::ContentTypeHeader,"application/json");request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,QNetworkRequest::ManualRedirectPolicy);request.setAttribute(QNetworkRequest::CookieLoadControlAttribute,QNetworkRequest::Manual);request.setAttribute(QNetworkRequest::CookieSaveControlAttribute,QNetworkRequest::Manual);request.setHeader(QNetworkRequest::UserAgentHeader,"SysPulse-report/1");
-        auto* reply=manager->post(request,body);activeReply=reply;reply->setReadBufferSize(4096);QTimer::singleShot(15000,reply,[reply]{if(!reply->isFinished())reply->abort();});
+        auto* reply=manager->post(request,body);activeReply=reply;reply->setReadBufferSize(4096);QTimer::singleShot(75000,reply,[reply]{if(!reply->isFinished())reply->abort();});
         QObject::connect(reply,&QNetworkReply::finished,&dialog,[&,reply]{
             const auto code=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             const auto response=QJsonDocument::fromJson(reply->read(4096)).object();
-            const bool accepted=reply->error()==QNetworkReply::NoError&&code==201&&response.value("accepted").toBool();
+            const int issue=response.value("issue").toInt();
+            const bool accepted=reply->error()==QNetworkReply::NoError&&code==201&&response.value("accepted").toBool()&&issue>0;
             activeReply=nullptr;reply->deleteLater();inFlight=false;level->setEnabled(true);import->setEnabled(true);preview->setEnabled(true);consent->setEnabled(true);consent->setChecked(false);refresh();
-            status->setText(accepted?"Repository relay confirmed receipt. No automatic system change will be applied.":"Submission not confirmed. Do not assume receipt; no automatic retry.");
+            if(accepted)status->setText(QString("Repository confirmed issue #%1: https://github.com/sudipdasin/SysPulse/issues/%1. No automatic system change.").arg(issue));
+            else if(code==503)status->setText("Relay temporarily unavailable or not authorized. Local export remains available. The maintainer must provision the server credential.");
+            else if(code==429)status->setText("Rate limit or duplicate report. Check the repository before attempting another submission.");
+            else if(code==400||code==413)status->setText("Report rejected by server validation. Save locally and contact maintainer.");
+            else status->setText("Submission not confirmed. Check the repository before retrying; no automatic retry.");
         });
     });
     QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::reject);dialog.exec();

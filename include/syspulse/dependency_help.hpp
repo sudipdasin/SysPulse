@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QMessageBox>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QPushButton>
 namespace syspulse {
 inline QString dependencyPackage(const QString& command) {
@@ -51,6 +52,8 @@ inline QString dependencyPackage(const QString& command) {
         {"xfce4-appearance-settings","xfce4-settings"},
         {"xfce4-accessibility-settings","xfce4-settings"},
         {"xfce4-settings-manager","xfce4-settings"},
+        {"exo-preferred-applications","xfce4-settings"},
+        {"xfce4-mime-settings","xfce4-settings"},
         {"xfce4-power-manager-settings","xfce4-power-manager"},
         {"xfce4-panel","xfce4-panel"},
         {"xfce4-session-settings","xfce4-session"},
@@ -85,12 +88,14 @@ inline QString dependencyPackage(const QString& command) {
 }
 inline QString dependencyHint(const QString& command) {
     const auto package=dependencyPackage(command);
+    if(!tux::trustedLauncherExecutable(command).isEmpty())return "Trusted distribution utility available.";
+    if(!QStandardPaths::findExecutable(command).isEmpty())return "A PATH entry exists but does not meet the system executable trust policy. Check the distribution package and installation; do not change ownership or permissions to bypass this check.";
     return package.isEmpty()?QString("No reviewed package mapping. Check your distribution's software manager."):
         QString("Distribution package: %1 (availability depends on release and enabled repositories).").arg(package);
 }
 inline void reviewDependency(QWidget* parent,const QString& command) {
     const auto package=dependencyPackage(command);
-    if(package.isEmpty()||!tux::trustedSystemExecutable(command).isEmpty())return;
+    if(package.isEmpty()||!tux::trustedLauncherExecutable(command).isEmpty())return;
     const auto installer=tux::trustedSystemExecutable("apturl");
     QMessageBox box(QMessageBox::Question,"Review missing dependency",
         QString("The selected tool requires package %1. Use only your distribution's configured repositories. Review dependencies, disk space and authorization in the package manager.").arg(package),

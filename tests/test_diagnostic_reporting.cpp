@@ -18,6 +18,8 @@ int main(int argc,char** argv){
  importAudit(QByteArray(512*1024+1,'x'),valid);if(valid)return 6;
  tux::Result r;r.code=0;if(sessionState(r,tux::action("apt-clean"))!="REVIEW")return 7;
  r.cancelled=true;if(sessionState(r,tux::action("storage"))!="CANCELLED")return 8;
+ r.cancelled=false;r.code=1;r.output="degraded\n";if(sessionState(r,tux::action("systemd-state"))!="REVIEW")return 10;
+ const auto modern=tux::trustedSystemExecutable("xfce4-mime-settings");if(!modern.isEmpty()&&tux::trustedLauncherExecutable("exo-preferred-applications")!=modern)return 11;
  std::cout<<"Privacy allowlist, three levels, import filtering and outcomes passed\n";
  return 0;
 }

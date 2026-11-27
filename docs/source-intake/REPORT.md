@@ -38,3 +38,6 @@ Alpha.18 Render deployment confirmed live, full native tests and install/runtime
 
 ### Alpha.20 diagnostic consent source checkpoint
 Owner requested opt-in diagnostic feedback. Implements fixed schema, consent dialog, local audit import and analysis, safe export, disabled-by-default HTTPS transport. No personal reports committed. Relay and native validation pending. No intake completion claimed.
+
+### Alpha.21 reliability checkpoint
+Synthetic regression for configured relay, actual issue receipt contract, modern XFCE default-applications launcher, fixed-path APT and Lutris probe, degraded systemd classification. No user reports or machine facts committed. No safety bypass. Direct publication blocked until the operator provisions an issues-write credential. Native and target runtime gates pending.

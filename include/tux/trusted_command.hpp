@@ -28,4 +28,12 @@ inline QString trustedSystemExecutable(const QString& name) {
     }
     return {};
 }
+// Stable launcher ID; newer Xfce moved default-application settings.
+inline QString trustedLauncherExecutable(const QString& name){
+    if(name=="exo-preferred-applications"){
+        const auto modern=trustedSystemExecutable("xfce4-mime-settings");
+        if(!modern.isEmpty())return modern;
+    }
+    return trustedSystemExecutable(name);
+}
 }

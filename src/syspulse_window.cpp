@@ -375,12 +375,12 @@ struct Window::Impl {
         layout->addWidget(text(description,"muted"));
         auto* grid=new QGridLayout;grid->setSpacing(12);int index=0;
         for(const auto& entry:entries) {
-            const auto program=tux::trustedSystemExecutable(entry.second);
+            const auto program=tux::trustedLauncherExecutable(entry.second);
             auto* b=button(entry.first,[this,entry]{
-                const auto executable=tux::trustedSystemExecutable(entry.second);
+                const auto executable=tux::trustedLauncherExecutable(entry.second);
                 if(executable.isEmpty()){QMessageBox::warning(w,entry.first,"The trusted system tool is no longer available.");return;}
                 if(QMessageBox::question(w,entry.first,"Open the installed system utility? It may change your computer. Review its own authorization and operation prompts. Back up data before disk or recovery changes.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
-                if(tux::trustedSystemExecutable(entry.second)!=executable){QMessageBox::warning(w,entry.first,"The installed utility changed during review. Reopen it and review again.");return;}
+                if(tux::trustedLauncherExecutable(entry.second)!=executable){QMessageBox::warning(w,entry.first,"The installed utility changed during review. Reopen it and review again.");return;}
                 if(!QProcess::startDetached(executable,QStringList{}))QMessageBox::warning(w,entry.first,"The system utility could not be opened. Check the installed application and desktop session.");
             },w);
             b->setProperty("systemToolCommand",entry.second);
@@ -396,9 +396,9 @@ struct Window::Impl {
         auto* grid=new QGridLayout;grid->setSpacing(12);int index=0;
         const QVector<QPair<QString,QString>> apps={{"Display","xfce4-display-settings"},{"Keyboard","xfce4-keyboard-settings"},{"Mouse & touchpad","xfce4-mouse-settings"},{"Power manager","xfce4-power-manager-settings"},{"Panel","xfce4-panel"},{"Session","xfce4-session-settings"},{"Appearance","xfce4-appearance-settings"},{"Window manager","xfwm4-settings"}};
         for(const auto& item:apps) {
-            const auto program=tux::trustedSystemExecutable(item.second);
+            const auto program=tux::trustedLauncherExecutable(item.second);
             auto* b=button(item.first,[this,item]{
-                const auto program=tux::trustedSystemExecutable(item.second);
+                const auto program=tux::trustedLauncherExecutable(item.second);
                 if(program.isEmpty()){QMessageBox::warning(w,item.first,"The trusted XFCE settings utility is unavailable.");return;}
                 QStringList args;if(item.second=="xfce4-panel")args<<"--preferences";
                 if(!QProcess::startDetached(program,args))QMessageBox::warning(w,item.first,"The desktop settings tool could not be opened.");
@@ -654,7 +654,7 @@ struct Window::Impl {
             table->clearSelection();table->setCurrentItem(nullptr);
             for(int r=0;r<table->rowCount();++r){
                 const auto name=controls[r]->property("systemToolCommand").toString();
-                const bool installed=!tux::trustedSystemExecutable(name).isEmpty();
+                const bool installed=!tux::trustedLauncherExecutable(name).isEmpty();
                 table->item(r,2)->setText(installed?"Installed":"Unavailable");table->item(r,2)->setToolTip(installed?"Trusted executable available":dependencyHint(name));
                 const QString hay=table->item(r,0)->text()+" "+table->item(r,1)->text()+" "+table->item(r,2)->text()+" "+dependencyPackage(name);
                 bool match=true;for(const auto& token:tokens)if(!hay.contains(token,Qt::CaseInsensitive)){match=false;break;}
@@ -799,7 +799,7 @@ struct Window::Impl {
         for(auto* control:pages[id]->findChildren<QPushButton*>()){
             auto command=control->property("systemToolCommand");if(!command.isValid())command=control->property("desktopToolCommand");
             if(!command.isValid())continue;
-            const bool available=!tux::trustedSystemExecutable(command.toString()).isEmpty();control->setEnabled(available);
+            const bool available=!tux::trustedLauncherExecutable(command.toString()).isEmpty();control->setEnabled(available);
             auto* tile=control->parentWidget();if(!tile||tile->objectName()!="systemToolTile")continue;
             const auto summary=control->accessibleDescription();
             const auto tip=summary+(available?"\nInstalled · opens native utility.":"\nUnavailable · "+dependencyHint(command.toString()));

@@ -77,7 +77,10 @@ const Action& action(const QString& id) {
 QString unavailable(const Action& tool) {
     if (tool.x11 && qEnvironmentVariable("XDG_SESSION_TYPE")=="wayland")
         return "Requires X11; XWayland cannot control native Wayland devices.";
-    if (((tool.admin||tool.changes)?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
+    const bool fixedPath=tool.admin||tool.changes||tool.id=="available-updates"||tool.id=="lutris";
+    if(!tool.admin&&!tool.changes&&fixedPath&&trustedSystemExecutable(tool.command.first()).isEmpty()&&!QStandardPaths::findExecutable(tool.command.first()).isEmpty())
+        return "Untrusted executable: "+tool.command.first()+"; use a verified distribution installation.";
+    if ((fixedPath?trustedSystemExecutable(tool.command.first()):QStandardPaths::findExecutable(tool.command.first())).isEmpty())
         return "Missing dependency: "+tool.command.first();
     if (tool.admin && trustedSystemExecutable("pkexec").isEmpty())
         return "Missing dependency: pkexec (PolicyKit authentication agent required)";
@@ -107,7 +110,7 @@ Result execute(const QString& id, bool confirmed, int timeoutMs, Output output, 
     const auto problem=unavailable(tool);
     if (!problem.isEmpty()) throw std::runtime_error(problem.toStdString());
     auto command=tool.command;
-    if (tool.admin||tool.changes) {
+    if (tool.admin||tool.changes||tool.id=="available-updates"||tool.id=="lutris") {
         const auto executable=trustedSystemExecutable(command.first());
         if(executable.isEmpty())throw std::runtime_error("A trusted system executable is no longer available.");
         command[0]=executable;
