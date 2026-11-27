@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.24 package-managed update trust evaluation candidate.** Automatic public-key discovery and verification, startup check with explicit opt-in, alpha channel default, no manual key enrollment for provisioned packages. Production signing key and feed remain unprovisioned.
+**Alpha.25 session authorization evaluation candidate.** Optional session-only PolicyKit broker for seven built-in administrator maintenance actions, no stored password, explicit review and lock, fail-closed transport. Other privilege routes remain independent. Production update signing remains unprovisioned.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)

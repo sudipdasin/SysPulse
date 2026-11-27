@@ -36,7 +36,7 @@ struct Work{std::atomic_bool& flag;explicit Work(std::atomic_bool& f):flag(f){fl
 bool receive(int fd,QByteArray& line,int timeout,int limit){
     QElapsedTimer clock;clock.start();line.clear();
     while(clock.elapsed()<timeout){
-        pollfd p{fd,POLLIN,0};int rc=::poll(&p,1,static_cast<int>(std::min<qint64>(1000,timeout-clock.elapsed())));
+        pollfd p{fd,POLLIN,0};int rc=::poll(&p,1,static_cast<int>(std::max<qint64>(0,std::min<qint64>(1000,timeout-clock.elapsed()))));
         if(rc<0){if(errno==EINTR)continue;return false;}if(!rc)continue;
         char buf[4096];const auto n=::recv(fd,buf,sizeof(buf),MSG_DONTWAIT);
         if(n<0&&(errno==EINTR||errno==EAGAIN))continue;

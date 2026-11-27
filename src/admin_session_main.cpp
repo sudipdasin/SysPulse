@@ -12,7 +12,8 @@ int main(int argc,char** argv){
     // Do not inherit caller-controlled application config, shell or loader settings.
     ::clearenv();::setenv("PATH","/usr/bin:/usr/sbin:/bin:/sbin",1);::setenv("HOME","/root",1);
     ::setenv("LANG","C",1);::setenv("LC_ALL","C",1);::setenv("DEBIAN_FRONTEND","noninteractive",1);
-    if(::chdir("/")!=0)return 1;::umask(0077);
+    if(::chdir("/")!=0)return 1;
+    ::umask(0077);
     QCoreApplication app(argc,argv);
     ::signal(SIGPIPE,SIG_IGN);
     std::cout<<"SYSPULSE_ADMIN_V1\n"<<std::flush;
@@ -31,7 +32,8 @@ int main(int argc,char** argv){
             if(!problem.isEmpty())result.output=problem.toUtf8();
             else{
                 auto cmd=a.command;const auto executable=tux::trustedSystemExecutable(cmd.first());
-                if(executable.isEmpty())return 1;cmd[0]=executable;
+                if(executable.isEmpty())return 1;
+                cmd[0]=executable;
                 result=tux::runCommand(cmd,120000);
             }
         }catch(const std::exception&){result.code=1;result.output="Administrative action failed. Review system state.";}
