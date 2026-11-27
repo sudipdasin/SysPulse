@@ -231,7 +231,7 @@ struct Window::Impl {
         auto* tabs=new QTabWidget;
         const auto make=[tabs](const QString& title,const QStringList& lines){auto* view=new QPlainTextEdit;view->setReadOnly(true);view->setPlainText(lines.join("\n"));tabs->addTab(view,title);};
         QStringList findings,coverageLines,measurements,recommendations;
-        for(const auto& v:result.value("findings").toArray()){const auto a=v.toObject();findings<<QString("%1 · %2 · %3 observations").arg(a.value("level").toString().toUpper(),a.value("code").toString()).arg(a.value("observations").toInt());}
+        for(const auto& v:result.value("findings").toArray()){const auto a=v.toObject();findings<<QString("%1 · %2 · %3 observations · seen in %4/%5 recent analyses").arg(a.value("level").toString().toUpper(),a.value("code").toString()).arg(a.value("observations").toInt()).arg(a.value("observed_in_recent_analyses").toInt(1)).arg(result.value("trend_window").toInt(1));}
         if(findings.isEmpty())findings<<"No classified faults in readable, bounded sources. This does not prove the system is fault-free.";
         for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();coverageLines<<QString("%1 · %2 · %3 lines").arg(a.value("name").toString(),a.value("status").toString()).arg(a.value("lines").toInt());const auto e=a.value("events").toObject();for(auto i=e.begin();i!=e.end();++i)coverageLines<<QString("    %1: %2").arg(i.key()).arg(i.value().toInt());}
         const auto metrics=result.value("metrics").toObject();for(auto i=metrics.begin();i!=metrics.end();++i)measurements<<i.key()+": "+i.value().toVariant().toString();
