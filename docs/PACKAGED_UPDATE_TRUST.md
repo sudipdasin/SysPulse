@@ -7,3 +7,6 @@ On each update check/install, the helper automatically selects the packaged chan
 Production prerequisites: authenticated initial DEB, owner-controlled offline signing key, signed published snapshot and canonical immutable release. No test signing key is included in evaluation packages. No production key is provisioned by this source change. The local digest does not authenticate an untrusted initial DEB; it detects local mismatch against the package-managed pin. Key rotation requires a trusted signed package carrying the next key before the old key is retired. Never accept a key merely because it came from the update server.
 
 Evaluation gate: generate disposable public/secret exports, require public-only build validation and incorrect digest/secret rejection; install test-only public anchor in isolated runtime, discover a signed package without manual enrollment, reject modified key, remove fixture anchor before package installation. No test key ships.
+
+
+Owner Alpha public anchor received and pinned; see docs/OWNER_ALPHA_TRUST.md. Enable explicitly for owner-trusted builds. No signing or feed activation implied.

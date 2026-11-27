@@ -18,3 +18,6 @@ Both gates must pass together on Linux Mint 22.3 XFCE or a demonstrably equivale
 
 ## Evidence at hold
 Alpha.25 commit 6496b06c0cf69692ccdf5f3cbaa226c64196a03f is live as an evaluation deployment. 45/45 native suites passed; disposable runtime verified two real catalog operations over one broker, EOF revocation and invalid request rejection. No canonical releases or update channel branches were found. Production online update and complete authorization reuse remain unverified. Do not recommend alpha.25 installation as satisfying the hold.
+
+
+Owner supplied the verified Alpha public anchor. The key bootstrap input is complete; package integration, owner-side release signing, canonical feed publication and real desktop session acceptance remain required.
