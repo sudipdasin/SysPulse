@@ -9,6 +9,7 @@ import syspulse_research as research
 import syspulse_hybrid as hybrid
 import syspulse_outcomes as outcomes
 import syspulse_recovery as recovery
+import syspulse_package_triage as package_triage
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -129,6 +130,8 @@ def source(name,status,counts=None,lines=0,bounded=False,notes=""):
     return {"name":name,"status":status,"lines":int(lines),"bounded":bool(bounded),"events":counts or {},"note":notes}
 def collect_job(spec):
     name,kind,args=spec
+    if kind=='apt-solver':return package_solver_source()
+    if kind=='core-integrity':return package_integrity_source()
     miner=hybrid.Miner();recovered={}
     try:
         if kind=="file":
@@ -192,6 +195,8 @@ def specs():
       ("failed-system-services","services",["systemctl","--failed","--plain","--no-legend","--no-pager"]),
       ("failed-user-services","services",["systemctl","--user","--failed","--plain","--no-legend","--no-pager"]),
       ("dpkg-audit","audit",["dpkg","--audit"]),
+      ("apt-repair-preview","apt-solver",[]),
+      ("core-package-integrity","core-integrity",[]),
       ("coredump-7days","crashes",["coredumpctl","--since","7 days ago","--no-pager","--no-legend","list"]),
       ("block-devices","inventory",["lsblk","-b","-o","TYPE,SIZE,ROTA,RO,FSTYPE,MOUNTPOINTS"]),
       ("mounts","inventory",["findmnt","-rn","-o","TARGET,FSTYPE,OPTIONS"]),
@@ -212,6 +217,23 @@ def specs():
     ]:jobs.append((name,"file",[path]))
     for name,path in [("syslog-rotated","/var/log/syslog.2.gz"),("kernel-log-rotated","/var/log/kern.log.2.gz"),("auth-log-rotated","/var/log/auth.log.2.gz"),("dpkg-log-rotated","/var/log/dpkg.log.2.gz"),("apt-history-rotated","/var/log/apt/history.log.1.gz"),("apt-terminal-rotated","/var/log/apt/term.log.1.gz")]:jobs.append((name,"gzip",[path]))
     return jobs
+def package_solver_source():
+    try:
+        p=package_triage.solver(command)
+        state=p["status"]
+        issue=state in ("changes_proposed","blocked_removal","unresolved")
+        row=source("apt-repair-preview","partial" if state=="unknown" else "ok",{"package_failure":1} if issue else {},1,False,"APT simulation only; no packages downloaded, installed, removed or configured.")
+        row["package_preview"]=p
+        return row
+    except (OSError,ValueError,subprocess.SubprocessError):return source("apt-repair-preview","failed")
+def package_integrity_source():
+    try:
+        rows=package_triage.integrity(command)
+        count=sum(x.get("core_file_changes",0) for x in rows)
+        row=source("core-package-integrity","partial" if any(x["status"]=="unknown" for x in rows) else "ok",{"package_failure":count} if count else {},len(rows),False,"Native dpkg verification of apt, dpkg and systemd; configuration and documentation differences may be intentional. Not a security audit.")
+        row["package_integrity"]=rows
+        return row
+    except (OSError,ValueError,subprocess.SubprocessError):return source("core-package-integrity","failed")
 def smart_source():
     if not any((P(d)/"smartctl").is_file() for d in ("/usr/bin","/usr/sbin","/bin","/sbin")):
         return source("smart-disk-health","unavailable",notes="Optional smartmontools not installed; health not verified.")
@@ -287,6 +309,8 @@ def assess(metrics,sources,history):
     # Unknown coverage never becomes a clean bill of health.
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
     package_ok=not events["package_failure"] and any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
+    previews=[s for s in sources if s["name"]=="apt-repair-preview"]
+    if previews:package_ok=package_ok and all(s.get("package_preview",{}).get("status")=="no_changes_proposed" for s in previews)
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
@@ -622,7 +646,9 @@ def main():
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
-                if fresh is not None:fresh.append(smart_source())
+                if fresh is not None:
+                    if "archives" in selected:fresh.append(package_solver_source())
+                    fresh.append(smart_source())
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
             else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
         print(json.dumps(result,ensure_ascii=True,separators=(",",":"),allow_nan=False));return 0
@@ -709,6 +735,14 @@ def run_tests():
             self.s.append(source("syslog","ok",{"oom":1},1));self.make();r=self.make()
             self.assertEqual(next(f for f in r["findings"] if f["code"]=="oom")["observed_in_recent_analyses"],2)
             self.assertEqual(r["trend_window"],2)
+        def test_apt_preview_blocks_archive_cleanup(self):
+            for state in ("unknown","blocked_removal","unresolved","changes_proposed"):
+                row=source("apt-repair-preview","partial" if state=="unknown" else "ok")
+                row["package_preview"]={"status":state}
+                a=assess(self.m,self.s+[row],{})
+                self.assertFalse(a["recommendations"]["archives"]["allowed"])
+            row=source("apt-repair-preview","ok");row["package_preview"]={"status":"no_changes_proposed"}
+            self.assertTrue(assess(self.m,self.s+[row],{})["recommendations"]["archives"]["allowed"])
         def test_recovery_observations_retained(self):
             obs={};raw="\n".join([json.dumps({"MESSAGE":"Memory pressure returned to normal","PRIORITY":"6","__CURSOR":"a"}),json.dumps({"MESSAGE":"Memory pressure returned to normal","PRIORITY":"6","__CURSOR":"a"}),json.dumps({"MESSAGE":"Memory pressure returned to normal","PRIORITY":"3","__CURSOR":"b"}),json.dumps({"MESSAGE":"SMART: 0 pending sectors, 0 offline uncorrectable sectors","PRIORITY":"6","__CURSOR":"c"})])
             counts,*_=event_counts(raw,True,recovered=obs)
