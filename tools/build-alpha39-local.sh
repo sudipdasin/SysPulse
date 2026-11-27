@@ -48,6 +48,7 @@ git -C "$work/source" checkout --quiet --detach FETCH_HEAD
 [[ $(git -C "$work/source" rev-parse HEAD) == "$revision" ]]
 grep -Fx 'set(SYSPULSE_ALPHA_NUMBER 39)' "$work/source/CMakeLists.txt" >/dev/null
 printf '%s\n' "$revision" > "$work/results/SOURCE-CHECKOUT.txt"
+bash "$work/source/tests/test_alpha39_build_provenance.sh" | tee "$work/results/PROVENANCE-TESTS.txt"
 cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET="$target" -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
 cmake --build "$work/build" --parallel 2
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error | tee "$work/results/CTEST.txt"
