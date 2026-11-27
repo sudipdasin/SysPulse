@@ -1,0 +1,8 @@
+[Unit]
+Description=Check trusted SysPulse source publication approvals
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=2m
+[Install]
+WantedBy=timers.target
