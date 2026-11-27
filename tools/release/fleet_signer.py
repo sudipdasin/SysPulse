@@ -42,7 +42,8 @@ def anchor(home,p):
     require(digest(data)==p["anchor_sha256"],"Public trust pin mismatch")
     path=home/"owner.gpg";path.write_bytes(data)
     # Reject a multi-primary keyring, even if a misconfigured policy pins it.
-    raw=run(home,"gpg","--no-options","--batch","--with-colons","--show-keys",path)
+    inspection=home/"public-inspection";inspection.mkdir(mode=0o700)
+    raw=run(home,"gpg","--no-options","--homedir",inspection,"--batch","--with-colons","--show-keys",path)
     prim=[];pending=False
     for line in raw.decode().splitlines():
         cols=line.split(":")
