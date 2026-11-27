@@ -226,7 +226,7 @@ struct Window::Impl {
         return true;
     }
     void showDiagnosticDetails(const QJsonObject& result) {
-        QDialog dialog(w);dialog.setWindowTitle("System analysis · findings and coverage");dialog.resize(840,580);auto* layout=new QVBoxLayout(&dialog);
+        QDialog dialog(w);dialog.setObjectName("deepAnalysisResults");dialog.setWindowTitle("System analysis · findings and coverage");dialog.resize(840,580);auto* layout=new QVBoxLayout(&dialog);
         const auto coverage=result.value("coverage").toObject();layout->addWidget(text(QString("%1 of %2 sources readable · %3 limited or unavailable. Observations may overlap; unavailable checks are not a clean bill of health.").arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()).arg(coverage.value("limited").toInt()),"sectionTitle"));
         auto* tabs=new QTabWidget;
         const auto make=[tabs](const QString& title,const QStringList& lines){auto* view=new QPlainTextEdit;view->setReadOnly(true);view->setPlainText(lines.join("\n"));tabs->addTab(view,title);};
@@ -1108,7 +1108,7 @@ struct Window::Impl {
         QObject::connect(worker,&QThread::finished,&planning,[&planning]{planning.done(0);});QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();planning.exec();
         const auto mib=[](std::uint64_t bytes){return QString::number(bytes/1048576.0,'f',2)+" MiB";};
         const auto apt=tux::trustedSystemExecutable("apt-get"),auth=tux::trustedSystemExecutable("pkexec");
-        QDialog review(w);review.setWindowTitle("Safe Boost · review once");review.resize(580,350);
+        QDialog review(w);review.setObjectName("adaptiveBoostReview");review.setWindowTitle("Safe Boost · review once");review.resize(580,350);
         auto* rl=new QVBoxLayout(&review);rl->addWidget(text("One maintenance pass","sectionTitle"));
         rl->addWidget(text("Based on your saved diagnostic findings, local history and freshly measured eligibility. Only checked actions run. No applications, documents, browser profiles, services or kernel settings will be changed."));
         auto* thumbnails=new QCheckBox(QString("Clean %1 generated thumbnails older than 30 days (%2)").arg(plan->files.size()).arg(mib(plan->bytes)));
@@ -1116,7 +1116,7 @@ struct Window::Impl {
         auto* archives=new QCheckBox(plan->apt.complete?QString("Clean downloaded APT package archives (%1 measured, %2 files)").arg(mib(plan->apt.bytes)).arg(plan->apt.files):QString("APT archive size unavailable · use advanced Cleaner"));
         const bool aptEligible=allowed("archives")&&plan->apt.complete&&plan->apt.files>0&&!apt.isEmpty()&&!auth.isEmpty();
         archives->setEnabled(aptEligible);archives->setChecked(aptEligible&&recommended("archives"));archives->setToolTip(recommendations.value("archives").toObject().value("reason").toString());rl->addWidget(archives);rl->addWidget(text("APT cleanup may require one administrator approval and future package re-downloads. The measured size is not a guaranteed disk-space gain.","muted"));
-        auto* ownMemory=new QCheckBox("Release unused SysPulse memory");ownMemory->setEnabled(allowed("own_memory"));ownMemory->setChecked(ownMemory->isEnabled()&&recommended("own_memory"));rl->addWidget(ownMemory);
+        auto* ownMemory=new QCheckBox("Release unused SysPulse memory");ownMemory->setObjectName("boostOwnMemory");ownMemory->setEnabled(allowed("own_memory"));ownMemory->setChecked(ownMemory->isEnabled()&&recommended("own_memory"));rl->addWidget(ownMemory);
         auto* pause=new QCheckBox("Pause SysPulse live monitoring to reduce its background activity");pause->setEnabled(allowed("pause_monitoring")&&!performance->isPaused());pause->setChecked(pause->isEnabled()&&recommended("pause_monitoring"));rl->addWidget(pause);
         if(!allowed("thumbnails")||!allowed("archives"))rl->addWidget(text("Some cleanup actions are blocked because log coverage, disk health or package audit is insufficient. Use diagnostic findings to investigate.","muted"));
         rl->addWidget(text("When no action is recommended, you may select eligible optional actions or leave the system unchanged.","muted"));
@@ -1179,7 +1179,7 @@ struct Window::Impl {
         const auto encoded=syspulse::boostlog::encode(receipt);QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
         if(!encoded.isEmpty()){settings.setValue("boost/lastReceipt",encoded);settings.sync();}if(encoded.isEmpty()||settings.status()!=QSettings::NoError)lines<<"Local receipt could not be saved.";
         refreshBoostReceipt();analysisStatus->setText(needsReview?"Boost finished with actions needing review. Analyze again before another Boost.":"Boost finished; measured results saved. Analyze again before another Boost.");
-        QMessageBox report(w);report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(needsReview?QMessageBox::Warning:QMessageBox::Information);report.exec();
+        QMessageBox report(w);report.setObjectName("adaptiveBoostResults");report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(needsReview?QMessageBox::Warning:QMessageBox::Information);report.exec();
     }
     QWidget* maintenanceCenterPage() {
         auto* content=new QWidget;content->setObjectName("maintenanceCenterPage");
