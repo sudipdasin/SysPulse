@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "version": "3.0.0~alpha37~render1",
+  "classification": "evaluation-only",
+  "source_baseline": "4d4d35ad2406ef7aaccba7a8fc9210557a4dabe8",
+  "source_checkout": "af15aea543d096e0e97a1c96e4deca8ea3557995",
+  "build_commit": "11deee338a7279243c346a1f280aee06fdb725f6",
+  "deployment": "dep-dc4n5rajnfac73eo2lcg",
+  "live_utc": "2026-11-27T12:13:58Z",
+  "artifact_url": "https://syspulse-source-signer-test.onrender.com/alpha37/syspulse-3.0.0-alpha.37-x86_64-ubuntu-22.04-render-eval.deb",
+  "sha256": "f68860c151d8e4e9be89bf6ae0aabac424b27452dbd9a01bf75c9b479cc72e16",
+  "sha256_evidence": "build log and package checksum verification; external SHA256SUMS fetch was unavailable",
+  "prior": {
+    "version": "3.0.0~alpha32~render1",
+    "sha256": "4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc"
+  },
+  "ctest": {
+    "passed": 57,
+    "total": 57,
+    "extra_core": true
+  },
+  "detection": {
+    "tuned": {
+      "samples": 32000,
+      "precision": 1,
+      "recall": 1,
+      "accuracy": 1
+    },
+    "holdout": {
+      "samples": 50000,
+      "precision": 0.8717948717948718,
+      "recall": 1,
+      "accuracy": 0.9,
+      "false_positives": 5000,
+      "false_negatives": 0,
+      "critical_samples": 17000,
+      "critical_category_mismatches": 0
+    },
+    "limitation": "synthetic repeated templates, not a real-world labeled corpus"
+  },
+  "install": {
+    "ubuntu": "24.04 amd64",
+    "signed_local_fixture_upgrade": true,
+    "tamper_rejection": true,
+    "recovery": true,
+    "settings_preserved": true,
+    "gui_analysis_boost_self_memory": true,
+    "nonroot_generated_marker_fixture": true,
+    "web_lookup": true,
+    "live_ai_credentials": false
+  },
+  "physical_mint_verified": false,
+  "production_signed": false,
+  "catalogue_admitted": false,
+  "catalogue_blocker": "Existing manager 4.0 origin policy requires version-specific hostname root; reused service version subdirectory needs separately reviewed allowlist migration."
+}
