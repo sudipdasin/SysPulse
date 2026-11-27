@@ -220,7 +220,7 @@ struct Window::Impl {
     bool validAnalysis(const QJsonObject& obj) {
         if(obj.value("schema").toInt()!=1||obj.value("state").toString()!="ready"||!QRegularExpression("^[a-f0-9]{32}$").match(obj.value("id").toString()).hasMatch()||!obj.value("sources").isArray()||!obj.value("findings").isArray()||!obj.value("coverage").isObject()||!obj.value("metrics").isObject())return false;
         const auto rec=obj.value("recommendations").toObject();
-        for(const auto& action:{"thumbnails","archives","own_memory","pause_monitoring"}){
+        for(const auto& action:{"thumbnails","failed_thumbnails","archives","own_memory","pause_monitoring"}){
             const auto a=rec.value(action).toObject();if(!a.value("allowed").isBool()||!a.value("recommended").isBool()||!a.value("history").isObject()||!a.value("reason").isString()||(a.value("recommended").toBool()&&!a.value("allowed").toBool()))return false;
         }
         return true;
@@ -1187,6 +1187,7 @@ struct Window::Impl {
         if(analysis.contains("research"))rl->addWidget(text("Online evidence is advisory. Independent model agreement may reduce default selections; it never grants permissions or bypasses native checks.","muted"));
         auto* thumbnails=new QCheckBox(QString("Clean %1 generated thumbnails older than 30 days (%2)").arg(plan->files.size()).arg(mib(plan->bytes)));
         thumbnails->setEnabled(allowed("thumbnails")&&!plan->files.empty());thumbnails->setChecked(thumbnails->isEnabled()&&recommended("thumbnails"));thumbnails->setToolTip(recommendations.value("thumbnails").toObject().value("reason").toString());rl->addWidget(thumbnails);auto* thumbnailNote=text(QString::fromStdString(plan->status),"muted");thumbnailNote->setTextFormat(Qt::PlainText);rl->addWidget(thumbnailNote);
+        auto* failedMarkers=new QCheckBox(QString("Remove %1 old failed-thumbnail markers (%2; may trigger retries)").arg(plan->failedFiles.size()).arg(mib(plan->failedBytes)));failedMarkers->setObjectName("boostFailedThumbnails");failedMarkers->setEnabled(allowed("failed_thumbnails")&&!plan->failedFiles.empty());failedMarkers->setChecked(false);rl->addWidget(failedMarkers);
         auto* archives=new QCheckBox(plan->apt.complete?QString("Clean downloaded APT package archives (%1 measured, %2 files)").arg(mib(plan->apt.bytes)).arg(plan->apt.files):QString("APT archive size unavailable · use advanced Cleaner"));
         const bool aptEligible=allowed("archives")&&plan->apt.complete&&plan->apt.files>0&&!apt.isEmpty()&&!auth.isEmpty();
         archives->setEnabled(aptEligible);archives->setChecked(aptEligible&&recommended("archives"));archives->setToolTip(recommendations.value("archives").toObject().value("reason").toString());rl->addWidget(archives);rl->addWidget(text("APT cleanup may require one administrator approval and future package re-downloads. The measured size is not a guaranteed disk-space gain.","muted"));
@@ -1197,12 +1198,13 @@ struct Window::Impl {
         rl->addWidget(text("Thumbnail and package-cache removal is permanent; both may be regenerated or downloaded again. No speed increase is guaranteed.","muted"));
         auto* row=new QHBoxLayout;auto* apply=new QPushButton("Apply Boost");apply->setObjectName("applyQuickBoost");apply->setProperty("primary",true);auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);row->addStretch();row->addWidget(cancel);row->addWidget(apply);rl->addLayout(row);
         QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(apply,&QPushButton::clicked,&review,&QDialog::accept);
-        const auto selected=[=]{apply->setEnabled(thumbnails->isChecked()||archives->isChecked()||ownMemory->isChecked()||pause->isChecked());};
-        for(auto* option:{thumbnails,archives,ownMemory,pause}){QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});}
+        const auto selected=[=]{apply->setEnabled(thumbnails->isChecked()||failedMarkers->isChecked()||archives->isChecked()||ownMemory->isChecked()||pause->isChecked());};
+        for(auto* option:{thumbnails,failedMarkers,archives,ownMemory,pause}){QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});}
         selected();
         if(review.exec()!=QDialog::Accepted)return;
         QJsonArray selectedActions;
         if(thumbnails->isChecked()&&thumbnails->isEnabled())selectedActions.append("thumbnails");
+        if(failedMarkers->isChecked()&&failedMarkers->isEnabled())selectedActions.append("failed_thumbnails");
         if(archives->isChecked()&&archives->isEnabled())selectedActions.append("archives");
         if(ownMemory->isChecked()&&ownMemory->isEnabled())selectedActions.append("own_memory");
         if(pause->isChecked()&&pause->isEnabled())selectedActions.append("pause_monitoring");
@@ -1223,6 +1225,14 @@ struct Window::Impl {
             outcome("thumbnails",!verified?"failure":result->removed?"success":"no_effect",result->bytes);
             lines<<QString("Generated thumbnails: %1 removed, %2 skipped, %3 logical file size.").arg(result->removed).arg(result->skipped).arg(mib(result->bytes));
         }else lines<<"Generated thumbnails: not selected.";
+        if(failedMarkers->isChecked()){
+            auto result=std::make_shared<syspulse::boost::Outcome>();
+            ReviewedProgress progress(w);progress.setWindowTitle("Cleaning reviewed failed-thumbnail markers");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Rechecking each old failed-thumbnail marker before removal…"));
+            auto* task=QThread::create([plan,result]{*result=syspulse::boost::applyFailed(*plan);});QObject::connect(task,&QThread::finished,&progress,[&progress]{progress.done(0);});QObject::connect(task,&QThread::finished,task,&QObject::deleteLater);task->start();progress.exec();
+            const bool verified=result->skipped==0&&result->removed==plan->failedFiles.size();needsReview=needsReview||!verified;
+            outcome("failed_thumbnails",!verified?"failure":result->removed?"success":"no_effect",result->bytes);
+            lines<<QString("Failed-thumbnail markers: %1 removed, %2 skipped, %3 logical file size.").arg(result->removed).arg(result->skipped).arg(mib(result->bytes));
+        }
         if(archives->isChecked()){
             const auto now=syspulse::preview::archives("/var/cache/apt/archives");
             if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";needsReview=true;outcome("archives","skipped");}
