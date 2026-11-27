@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/management.hpp"
 #include "tux/async_command.hpp"
+#include "tux/admin_session_async.hpp"
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QDateTime>
@@ -668,15 +669,16 @@ public:
         setMutationBusy(true);
         serviceSummary->setText(QStringLiteral("Waiting for service manager: %1 %2…").arg(verb, entry.unit));
         log(QStringLiteral("Service action requested"), verb + QLatin1Char(' ') + entry.unit + (entry.user ? QStringLiteral(" · User") : QStringLiteral(" · System")));
-        AsyncCommand::runAction(owner, program, args, 64 * 1024,
-            [this, entry, verb](AsyncCommandResult result) {
+        auto completion=[this, entry, verb](AsyncCommandResult result) {
                 setMutationBusy(false);
                 const QString outcome = result.ok() ? QStringLiteral("Command completed; refreshing actual state")
                     : QStringLiteral("Action not verified: ") + resultProblem(result);
                 log(verb + QLatin1Char(' ') + entry.unit, outcome);
                 refreshServices(); inspectStartup();
                 if (!result.ok()) QMessageBox::warning(owner, QStringLiteral("Service action not verified"), outcome + QStringLiteral("\nThe service list is being refreshed. No success has been assumed."));
-            });
+            };
+        if(entry.user)AsyncCommand::runAction(owner,program,args,64*1024,completion);
+        else tux::admin::runReviewed(owner,{"service",verb,entry.unit},program,args,64*1024,completion);
     }
     void showJournal()
     {

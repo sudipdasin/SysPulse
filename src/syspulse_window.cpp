@@ -1,5 +1,6 @@
 #include "syspulse/result_state.hpp"
 #include "tux/admin_session.hpp"
+#include "tux/admin_session_async.hpp"
 #include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
@@ -776,7 +777,7 @@ struct Window::Impl {
             class UpdateProgress final:public QDialog {public:using QDialog::QDialog;void reject() override {}protected:void closeEvent(QCloseEvent* e) override {e->ignore();}};
             UpdateProgress progress(frame);progress.setWindowTitle("Installing signed SysPulse update");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
             auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator authorization and APT completion. Do not close SysPulse or shut down during installation."));
-            AsyncCommand::runAction(&progress,auth,{helper,"install",selectedChannel,expected},4096,[&](const AsyncCommandResult& result){
+            tux::admin::runReviewed(&progress,{"update",selectedChannel,expected},auth,{helper,"install",selectedChannel,expected},4096,[&](const AsyncCommandResult& result){
                 const auto line=QString::fromUtf8(result.output).trimmed();
                 status->setText(result.ok()&&line=="INSTALLED "+expected?"Installed and verified "+expected+". Close and relaunch SysPulse.":line.startsWith("ERROR ")?line.mid(6):"Update not confirmed. Review package manager state before retrying.");
                 progress.done(0);
@@ -797,7 +798,7 @@ struct Window::Impl {
         authLayout->addWidget(text("Administrator session","sectionTitle"));
         auto* remember=new QCheckBox("Remember administrator authorization for this SysPulse session");remember->setObjectName("rememberAdminSession");authLayout->addWidget(remember);
         auto* authStatus=text("Locked · authenticate through the desktop when needed.","muted");authStatus->setObjectName("adminSessionStatus");authStatus->setTextFormat(Qt::PlainText);authLayout->addWidget(authStatus);
-        authLayout->addWidget(text("Only built-in maintenance catalog actions reuse this session: cache, journals, TRIM, memory compression and firewall status. Separate system tools, updates, service management and protected volume inspection still use their own authorization. Every action still requires review. No password is stored.","muted"));
+        authLayout->addWidget(text("Built-in maintenance, signed updates, system service management and protected volume inspection reuse the session. External system tools retain their own authorization. Every action still requires review. No password is stored.","muted"));
         auto* unlock=new QPushButton("Unlock administrator session…");unlock->setObjectName("unlockAdminSession");unlock->setEnabled(false);authLayout->addWidget(unlock);
         auto* relock=new QPushButton("Lock now");relock->setObjectName("lockAdminSession");relock->setEnabled(false);authLayout->addWidget(relock);
         QObject::connect(remember,&QCheckBox::toggled,authorization,[=](bool checked){
@@ -811,9 +812,11 @@ struct Window::Impl {
             auto message=std::make_shared<QString>();auto success=std::make_shared<bool>(false);
             auto* worker=QThread::create([message,success]{*success=tux::admin::unlock(*message);});
             worker->setObjectName("adminSessionUnlockWorker");worker->setParent(authorization);
-            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);authStatus->setText(*success?"Unlocked · built-in maintenance actions can reuse authorization until locked or closed.":*message);});
+            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);authStatus->setText(*success?"Unlocked · supported internal administrator operations can reuse authorization until locked or closed.":*message);});
             QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();
         });
+        auto* sessionTimer=new QTimer(authorization);sessionTimer->setInterval(1000);
+        QObject::connect(sessionTimer,&QTimer::timeout,authorization,[=]{if(remember->isEnabled()&&relock->isEnabled()&&!tux::admin::active()&&!tux::admin::busy()){relock->setEnabled(false);unlock->setEnabled(remember->isChecked());authStatus->setText("Session ended. Unlock again before retrying a reviewed action.");}});sessionTimer->start();
         layout->addWidget(authorization);
         layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));

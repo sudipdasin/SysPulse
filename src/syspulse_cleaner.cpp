@@ -4,6 +4,7 @@
 #include "syspulse/volume_inspection.hpp"
 #include "syspulse/duplicates.hpp"
 #include "tux/async_command.hpp"
+#include "tux/admin_session_async.hpp"
 #include "tux/trusted_command.hpp"
 #include <QCheckBox>
 #include <QComboBox>
@@ -284,7 +285,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             remove->setEnabled(current->error.empty()&&!current->readOnly&&!current->cancelled&&!duplicateResult->cancelled&&!current->candidates.empty());
         };
         if(admin){
-            AsyncCommand::runAction(page,auth,{helper,root->text(),budget->currentIndex()==1?"extended":"standard"},4*1024*1024,[=](const AsyncCommandResult& response){
+            tux::admin::runReviewed(page,{"volume",root->text(),budget->currentIndex()==1?"extended":"standard"},auth,{helper,root->text(),budget->currentIndex()==1?"extended":"standard"},4*1024*1024,[=](const AsyncCommandResult& response){
                 if(!response.ok()||!c::decodeInspection(response.output,path,*result))result->error="Administrative scan failed, was denied, exceeded its deadline, or returned invalid data. No cleanup performed.";
                 finish();
             });

@@ -18,7 +18,7 @@ extern char** environ;
 namespace tux::admin {
 namespace {
 struct State{
-    std::mutex mutex;std::atomic_bool live{false},working{false};
+    std::mutex mutex;std::atomic_bool live{false},working{false};std::atomic_int pending{0};
     int fd=-1;pid_t pid=-1;
     void close(){
         live=false;
@@ -35,8 +35,8 @@ State& state(){static State s;return s;}
 struct Work{std::atomic_bool& flag;explicit Work(std::atomic_bool& f):flag(f){flag=true;}~Work(){flag=false;}};
 bool receive(int fd,QByteArray& line,int timeout,int limit){
     QElapsedTimer clock;clock.start();line.clear();
-    while(clock.elapsed()<timeout){
-        pollfd p{fd,POLLIN,0};int rc=::poll(&p,1,static_cast<int>(std::max<qint64>(0,std::min<qint64>(1000,timeout-clock.elapsed()))));
+    while(timeout<0||clock.elapsed()<timeout){
+        pollfd p{fd,POLLIN,0};int rc=::poll(&p,1,timeout<0?1000:static_cast<int>(std::max<qint64>(0,std::min<qint64>(1000,timeout-clock.elapsed()))));
         if(rc<0){if(errno==EINTR)continue;return false;}if(!rc)continue;
         char buf[4096];const auto n=::recv(fd,buf,sizeof(buf),MSG_DONTWAIT);
         if(n<0&&(errno==EINTR||errno==EAGAIN))continue;
@@ -50,8 +50,10 @@ bool sendLine(int fd,const QByteArray& data){
 }
 }
 bool active(){return state().live.load();}
-bool busy(){return state().working.load();}
-bool lock(){auto& s=state();std::unique_lock<std::mutex> guard(s.mutex,std::try_to_lock);if(!guard.owns_lock())return false;s.close();return true;}
+bool busy(){return state().working.load()||state().pending.load()>0;}
+void beginDispatch(){++state().pending;}
+void endDispatch(){--state().pending;}
+bool lock(){auto& s=state();std::unique_lock<std::mutex> guard(s.mutex,std::try_to_lock);if(!guard.owns_lock()||s.pending.load()>0)return false;s.close();return true;}
 bool unlock(QString& error){
     auto& s=state();std::lock_guard<std::mutex> guard(s.mutex);Work work(s.working);
     if(s.live)return true;
@@ -86,6 +88,19 @@ std::optional<Result> execute(const QString& id){
     QByteArray line;
     if(!sendLine(s.fd,id.toUtf8()+"\n")||!receive(s.fd,line,125000,400001)||!decode(line,r)){
         s.close();r.code=125;r.output="Administrator session interrupted. Outcome uncertain; inspect system state before retrying. No automatic replay.\n";return r;
+    }
+    return r;
+}
+std::optional<Result> executeTyped(const QStringList& request,int limit){
+    auto& s=state();std::lock_guard<std::mutex> guard(s.mutex);
+    if(!s.live)return std::nullopt;
+    Work work(s.working);Result r;r.code=125;
+    const auto bytes=encodeRequest(request);
+    if(bytes.isEmpty()||limit<=0||limit>MaxScanOutput){r.output="Invalid administrative request.";return r;}
+    QByteArray line;
+    // Wait for the actual result of a package mutation; never time out and replay it.
+    if(!sendLine(s.fd,bytes+"\n")||!receive(s.fd,line,-1,MaxReply+1)||!decode(line,r,limit)){
+        s.close();r.code=125;r.output="Administrator session interrupted. Outcome uncertain; inspect system state before retrying. No automatic replay.\n";
     }
     return r;
 }

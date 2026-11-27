@@ -10,4 +10,7 @@ bool active();
 bool busy();
 // Nullopt only when no session was active before dispatch; never replay uncertain actions.
 std::optional<Result> execute(const QString& id);
+std::optional<Result> executeTyped(const QStringList& request,int limit);
+void beginDispatch();
+void endDispatch();
 }

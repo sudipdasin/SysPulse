@@ -57,3 +57,6 @@ Automatic selection and validation of packaged channel-specific public key; offl
 
 ### Administrator session source checkpoint
 Optional in-memory authorization for seven fixed built-in administrator catalog actions through a private inherited socket and PolicyKit-launched root broker. No password handling, persistent credential or arbitrary command execution. Each action retains existing confirmation. Closing or locking closes transport; uncertain result never auto-replayed. Separate volume, updates, external tools and service-management paths not integrated in this checkpoint. Tests pending.
+
+### Unified session checkpoint
+Integrated the three remaining privileged internal routes (signed updater, protected-volume scan and system service management) through a typed protocol; actual release acceptance remains pending.
