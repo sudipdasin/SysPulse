@@ -3,7 +3,7 @@
 # Local evaluation only. No sudo, dependency installation or publication.
 set -euo pipefail
 umask 077
-readonly revision=a0e422766f5a1c474f62407996d63c6dfb27877f
+readonly revision=f913e2a0506aaaf9bff3101af517f24d318bb2a2
 readonly version=3.0.0-alpha.39
 readonly deb_version=3.0.0~alpha39~local1
 readonly repository=https://github.com/sudipdasin/SysPulse.git
