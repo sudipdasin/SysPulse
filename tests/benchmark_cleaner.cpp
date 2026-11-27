@@ -18,7 +18,7 @@ int main(){
     using Clock=std::chrono::steady_clock;
     std::cout<<std::fixed<<std::setprecision(6);
     unsigned previous=0;
-    for(unsigned count:{10000u,50000u}){
+    for(unsigned count:{10000u,50000u,250000u}){
         for(unsigned i=previous;i<count;++i){
             const auto dir=cache/std::to_string(i/100);
             if(i%100==0)fs::create_directory(dir);
@@ -39,5 +39,12 @@ int main(){
                      <<",\"logical_bytes\":"<<result.logical<<",\"complete\":true}\n"<<std::flush;
         }
     }
+    limits.entries=25000;
+    auto bounded=scan(root,cache,limits,cancel);
+    if(bounded.complete||!bounded.limited||bounded.visited>limits.entries)return 4;
+    std::cout<<"{\"guard\":\"entry_limit\",\"visited\":"<<bounded.visited<<",\"passed\":true}\n";
+    cancel=true;auto stopped=scan(root,cache,limits,cancel);
+    if(stopped.complete||!stopped.cancelled)return 5;
+    std::cout<<"{\"guard\":\"pre_cancel\",\"passed\":true}\n";
     return 0;
 }
