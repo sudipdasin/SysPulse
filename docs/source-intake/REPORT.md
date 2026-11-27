@@ -41,3 +41,6 @@ Owner requested opt-in diagnostic feedback. Implements fixed schema, consent dia
 
 ### Alpha.21 reliability checkpoint
 Synthetic regression for configured relay, actual issue receipt contract, modern XFCE default-applications launcher, fixed-path APT and Lutris probe, degraded systemd classification. No user reports or machine facts committed. No safety bypass. Direct publication blocked until the operator provisions an issues-write credential. Native and target runtime gates pending.
+
+### Alpha.22 signed-update source checkpoint
+Native scoped APT updater, explicit channel preference and per-update PolicyKit authorization. No signing key generated or enrolled without owner trust. Production feed publication and physical target validation pending. No intake IDs promoted.

@@ -28,3 +28,6 @@ Maintenance exports now require a preview before saving. Summary mode uses an al
 
 ## Explicit diagnostic sharing (alpha.20 candidate)
 No automatic telemetry. Optional user-initiated sharing uses a new, separate allowlist schema with three disclosure levels. Minimum sends only aggregate check counts, medium adds fixed catalog outcome IDs, maximum adds recognized audit check outcomes. No raw logs, paths, account names, hardware models, serials, network addresses or free text are included. Import discards all unapproved fields. Preview and fresh consent are required for each submission; no identity, persistent client ID or retry queue. Local export is available without network. Network providers may still observe IP/connection metadata; public repository data can persist. Relay remains disabled until an approved server-side credential, privacy/abuse review and deployment exist. Never store repository write credentials in the desktop client. No report can authorize a system change.
+
+## Application update checks
+Optional signed update checks contact the selected official repository; no diagnostic report or tracking identifier is sent. Network providers may observe connection metadata. Legacy cached-check opt-in does not silently authorize network checks. Installing a newer package requires explicit review and administrator authorization.

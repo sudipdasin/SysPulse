@@ -1,0 +1,157 @@
+#!/usr/bin/python3 -I
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Full-package updater. CLI accepts only fixed channels and a reviewed version.
+Trust is enrolled by an administrator independently, never downloaded on first use.
+"""
+import contextlib
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+CHANNELS = ("stable", "beta", "alpha")
+KEYS = Path("/etc/syspulse/update-keys")
+BASE = "https://raw.githubusercontent.com/sudipdasin/SysPulse/updates-"
+VERSION = re.compile(r"(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})(?:~(alpha|beta)(0|[1-9][0-9]{0,5}))?(?:~render[1-9][0-9]{0,5})?", re.ASCII)
+ENV = {"PATH": "/usr/bin:/usr/sbin:/bin:/sbin", "HOME": "/root" if os.geteuid()==0 else "/nonexistent",
+       "LANG": "C", "LC_ALL": "C", "DEBIAN_FRONTEND": "noninteractive"}
+
+def version(value):
+    match = VERSION.fullmatch(value) if isinstance(value,str) else None
+    if not match:
+        raise ValueError("Unsupported Debian release version.")
+    return match.group(4) or "stable"
+
+def secure_key(path):
+    # Require ordinary, root-controlled files and directories, not links.
+    for item in (path, *path.parents):
+        try:
+            info = item.lstat()
+        except FileNotFoundError:
+            return False
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            return False
+        if item == path:
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 65536 or not info.st_mode & 0o004:
+                return False
+        elif not stat.S_ISDIR(info.st_mode):
+            return False
+    return True
+
+def run(args, timeout=90):
+    # Do not import caller APT_CONFIG, proxy settings, loader settings or PATH.
+    result = subprocess.run(args, env=ENV, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError("Package manager operation failed. Check signed feed, network, locks and package state.")
+    return result.stdout.decode("utf-8", "replace")
+
+def installed():
+    raw=run(["/usr/bin/dpkg-query","-W","-f=${db:Status-Status} ${Version} ${Architecture}","syspulse"],10)
+    fields=raw.split()
+    if len(fields)!=3 or fields[0]!="installed" or fields[2]!="amd64":
+        raise RuntimeError("SysPulse must be fully installed as an amd64 Debian package.")
+    version(fields[1])
+    return fields[1]
+
+def newer(candidate, current):
+    result=subprocess.run(["/usr/bin/dpkg","--compare-versions",candidate,"gt",current],env=ENV,timeout=5)
+    if result.returncode not in (0,1):
+        raise RuntimeError("Version comparison failed.")
+    return result.returncode==0
+
+@contextlib.contextmanager
+def snapshot(key, url):
+    if not secure_key(key):
+        raise ValueError("Signing key missing or unsafe. Enroll an independently verified key first.")
+    with tempfile.TemporaryDirectory(prefix="syspulse-update-") as name:
+        work=Path(name)
+        # _apt needs traversal; contents contain no private user data.
+        work.chmod(0o755)
+        for path in ("lists","archives","empty"):
+            (work/path).mkdir(mode=0o755)
+        source=work/"sources.list"
+        source.write_text(f"deb [arch=amd64 signed-by={key}] {url} ./\n",encoding="ascii")
+        opts=[]
+        for setting in (
+            "Dir::Etc::sourcelist="+str(source), "Dir::Etc::sourceparts=-",
+            "Dir::Etc::main=/dev/null", "Dir::Etc::parts=-",
+            "Dir::Etc::trusted=/dev/null","Dir::Etc::trustedparts=-",
+            "Dir::State::lists="+str(work/"lists"), "Dir::State::status=/var/lib/dpkg/status",
+            "Dir::Cache::archives="+str(work/"archives"),"Dir::Cache::pkgcache=","Dir::Cache::srcpkgcache=",
+            "APT::Architecture=amd64","Acquire::Languages=none",
+            "Acquire::Check-Valid-Until=true","Acquire::Check-Date=true","Acquire::Max-ValidTime=604800",
+            "Acquire::AllowInsecureRepositories=false","Acquire::AllowDowngradeToInsecureRepositories=false",
+            "APT::Get::AllowUnauthenticated=false","Acquire::https::Verify-Peer=true",
+            "Acquire::https::Verify-Host=true","Acquire::https::AllowRedirect=false",
+            "Acquire::https::Timeout=20","Acquire::Retries=0","APT::Update::Error-Mode=any",
+            "APT::Get::List-Cleanup=false","DPkg::Lock::Timeout=15"):
+            opts += ["-o",setting]
+        run(["/usr/bin/apt-get",*opts,"update"],90)
+        yield opts
+
+def candidate(opts, channel, current):
+    raw=run(["/usr/bin/apt-cache",*opts,"policy","syspulse"],15)
+    match=re.search(r"^  Candidate: (\S+)$",raw,re.MULTILINE)
+    if not match:
+        raise RuntimeError("No valid candidate found in signed repository.")
+    value=match.group(1)
+    if value=="(none)" or value==current:
+        return None
+    if version(value)!=channel:
+        raise RuntimeError("Candidate is outside the selected release channel.")
+    return value if newer(value,current) else None
+
+def check(channel, key, url):
+    current=installed()
+    if not secure_key(key):
+        return "UNCONFIGURED "+current
+    with snapshot(key,url) as opts:
+        available=candidate(opts,channel,current)
+        return "AVAILABLE "+available if available else "CURRENT "+current
+
+def install(channel, expected, key, url):
+    if os.geteuid()!=0:
+        raise ValueError("Administrator authorization required.")
+    if version(expected)!=channel:
+        raise ValueError("Reviewed version does not belong to selected channel.")
+    current=installed()
+    if not newer(expected,current):
+        raise ValueError("The reviewed version is not newer than the installed package.")
+    with snapshot(key,url) as opts:
+        if candidate(opts,channel,current)!=expected:
+            raise RuntimeError("Candidate changed since review. Check again.")
+        args=["/usr/bin/apt-get",*opts,"--no-remove","--only-upgrade","--no-install-recommends","--no-install-suggests"]
+        target="syspulse="+expected
+        plan=run([*args,"--simulate","install",target],30)
+        # This updater must never upgrade unrelated packages or remove anything.
+        mutations=re.findall(r"^(Inst|Remv|Conf) (\S+)",plan,re.MULTILINE)
+        if not any(op=="Inst" and name=="syspulse" for op,name in mutations) or any(op=="Remv" or name!="syspulse" for op,name in mutations):
+            raise RuntimeError("Update requires other package changes. Use the system package manager for review.")
+        if installed()!=current:
+            raise RuntimeError("Installed version changed. Check again.")
+        # No timeout during dpkg mutation. Do not terminate it to simulate rollback.
+        run([*args,"-y","install",target],None)
+        if installed()!=expected:
+            raise RuntimeError("Installed version was not verified. Review package manager state.")
+        return "INSTALLED "+expected
+
+def main():
+    args=sys.argv[1:]
+    if len(args) not in (2,3) or args[0] not in ("check","install") or args[1] not in CHANNELS or (args[0]=="check")!=(len(args)==2):
+        raise ValueError("Usage: syspulse-apt-update check CHANNEL | install CHANNEL VERSION")
+    mode,channel=args[:2]
+    key=KEYS/(channel+".gpg")
+    url=BASE+channel+"/"
+    print(check(channel,key,url) if mode=="check" else install(channel,args[2],key,url))
+
+if __name__=="__main__":
+    try:
+        main()
+    except (ValueError,RuntimeError,OSError,subprocess.TimeoutExpired) as error:
+        # No command output or user environment is transmitted.
+        print("ERROR "+str(error))
+        sys.exit(1)

@@ -31,6 +31,8 @@
 #include "tux/process_manager.hpp"
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QRegularExpression>
 #include <QCloseEvent>
 #include <QCompleter>
 #include <QDesktopServices>
@@ -55,6 +57,7 @@
 #include <QMap>
 #include <QStyle>
 #include <functional>
+#include <memory>
 
 namespace syspulse {
 namespace {
@@ -704,12 +707,16 @@ struct Window::Impl {
         layout->setContentsMargins(22,20,22,20);
         layout->addWidget(text("Application updates","sectionTitle"));
         layout->addWidget(text(QString("Running version: %1 · Official repository: SysPulse").arg(tux::Version),"muted"));
-        auto* status=text("No update check performed. A signed SysPulse update feed has not been provisioned by this build.","muted");
+        auto* status=text("Check the selected signed update channel. First-time trust enrollment is required; no key is downloaded automatically.","muted");
         status->setObjectName("applicationUpdateStatus");status->setTextFormat(Qt::PlainText);layout->addWidget(status);
+        auto* channel=new QComboBox;channel->setObjectName("applicationUpdateChannel");
+        channel->addItem("Stable","stable");channel->addItem("Beta (preview)","beta");channel->addItem("Alpha (preview)","alpha");
+        layout->addWidget(channel);
         auto* row=new QHBoxLayout;
         auto* check=new QPushButton("Check for SysPulse updates");
-        check->setObjectName("checkApplicationUpdate");check->setAccessibleName("Check cached APT version of SysPulse");
+        check->setObjectName("checkApplicationUpdate");check->setAccessibleName("Check authenticated SysPulse repository");
         row->addWidget(check);
+        auto* install=new QPushButton("Install verified update…");install->setObjectName("installApplicationUpdate");install->setEnabled(false);row->addWidget(install);
         auto* managerButton=button("Open Update Manager…",[this]{
             const auto executable=tux::trustedSystemExecutable("mintupdate");
             if(executable.isEmpty()){QMessageBox::information(w,"Update Manager","Linux Mint Update Manager is unavailable.");return;}
@@ -718,45 +725,63 @@ struct Window::Impl {
         managerButton->setObjectName("openSystemUpdateManager");managerButton->setEnabled(!tux::trustedSystemExecutable("mintupdate").isEmpty());row->addWidget(managerButton);
         auto* releaseButton=button("Official releases…",[]{QDesktopServices::openUrl(QUrl("https://github.com/sudipdasin/SysPulse/releases"));},w);
         releaseButton->setObjectName("openOfficialReleases");row->addWidget(releaseButton);layout->addLayout(row);
-        auto* automatic=new QCheckBox("Automatically check cached APT versions every 30 minutes while SysPulse is open");
+        auto* automatic=new QCheckBox("Automatically check signed updates every 30 minutes while SysPulse is open (network access)");
         automatic->setObjectName("automaticCachedUpdateCheck");layout->addWidget(automatic);
         auto* timer=new QTimer(frame);timer->setObjectName("cachedUpdateTimer");timer->setInterval(30*60*1000);
         QObject::connect(timer,&QTimer::timeout,check,[check]{if(check->isEnabled())check->click();});
         auto* preferenceStatus=text("","muted");preferenceStatus->setObjectName("updatePreferenceStatus");preferenceStatus->setTextFormat(Qt::PlainText);layout->addWidget(preferenceStatus);
         QSettings saved(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
-        const bool initial=saved.status()==QSettings::NoError&&saved.value("updates/automaticCachedCheck",false).toBool();
+        const auto selected=saved.value("updates/channel","stable").toString();channel->setCurrentIndex(qMax(0,channel->findData(selected)));
+        const bool initial=saved.status()==QSettings::NoError&&saved.value("updates/automaticSignedCheck",false).toBool();
         automatic->setChecked(initial);if(initial)timer->start();
         if(saved.status()!=QSettings::NoError)preferenceStatus->setText("Update preference could not be read; automatic checks remain off.");
         QObject::connect(automatic,&QCheckBox::toggled,frame,[timer,preferenceStatus](bool enabled){
             if(enabled)timer->start();else timer->stop();
             QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
-            settings.setValue("updates/automaticCachedCheck",enabled);settings.sync();
+            settings.setValue("updates/automaticSignedCheck",enabled);settings.setValue("updates/automaticCachedCheck",enabled);settings.sync();
             preferenceStatus->setText(settings.status()==QSettings::NoError?"Update preference saved for the next launch.":"Preference could not be saved; this change applies only to the current session.");
         });
-        QObject::connect(check,&QPushButton::clicked,frame,[frame,check,status]{
-            const auto apt=tux::trustedSystemExecutable("apt-cache");
-            const auto dpkg=tux::trustedSystemExecutable("dpkg");
-            const auto env=tux::trustedSystemExecutable("env");
-            if(apt.isEmpty()||dpkg.isEmpty()||env.isEmpty()){status->setText("APT version query is unavailable.");return;}
-            check->setEnabled(false);status->setText("Reading existing APT metadata locally…");
-            AsyncCommand::run(frame,env,{"-u","APT_CONFIG","LC_ALL=C",apt,"policy","syspulse"},5000,16384,[frame,check,status,dpkg,env](const AsyncCommandResult& result){
-                if(!result.ok()){check->setEnabled(true);status->setText("APT query failed or returned incomplete output. Update status unknown.");return;}
-                const auto versions=syspulse::aptstatus::parse(result.output.toStdString());
-                if(!versions){check->setEnabled(true);status->setText("No valid SysPulse version pair found in local APT metadata.");return;}
-                const auto installed=QString::fromStdString(versions->installed),candidate=QString::fromStdString(versions->candidate);
-                const auto summary=QString("APT installed: %1 · Cached candidate: %2\n").arg(installed,candidate);
-                const auto caveat=QString("\nCached metadata only; refresh and verify repository trust in Update Manager.");
-                if(installed=="(none)"||candidate=="(none)"){check->setEnabled(true);status->setText(summary+"No installed/candidate pair to compare."+caveat);return;}
-                AsyncCommand::run(frame,env,{"LC_ALL=C",dpkg,"--compare-versions",candidate,"gt",installed},3000,1024,[check,status,summary,caveat](const AsyncCommandResult& comparison){
-                    check->setEnabled(true);
-                    if(comparison.timedOut||comparison.cancelled||comparison.truncated||!comparison.error.isEmpty()||!comparison.output.trimmed().isEmpty()||(comparison.exitCode!=0&&comparison.exitCode!=1)){
-                        status->setText(summary+"Version comparison unavailable."+caveat);return;
-                    }
-                    status->setText(summary+(comparison.exitCode==0?"A newer cached package candidate is available.":"No newer cached package candidate.")+caveat);
-                });
+        auto reviewed=std::make_shared<QString>();
+        QObject::connect(channel,QOverload<int>::of(&QComboBox::currentIndexChanged),frame,[=](int){
+            reviewed->clear();install->setEnabled(false);status->setText("Channel changed. Check again before installing.");
+            QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");settings.setValue("updates/channel",channel->currentData());settings.sync();
+        });
+        QObject::connect(check,&QPushButton::clicked,frame,[=]{
+            const auto helper=tux::trustedSystemExecutable("syspulse-apt-update");
+            reviewed->clear();install->setEnabled(false);
+            if(helper.isEmpty()){status->setText("Installed update helper unavailable. Reinstall the complete SysPulse DEB.");return;}
+            check->setEnabled(false);channel->setEnabled(false);status->setText("Refreshing the selected signed repository…");
+            AsyncCommand::run(frame,helper,{"check",channel->currentData().toString()},120000,4096,[=](const AsyncCommandResult& result){
+                check->setEnabled(true);channel->setEnabled(true);
+                const auto line=QString::fromUtf8(result.output).trimmed();
+                if(!result.ok()){status->setText(line.startsWith("ERROR ")?line.mid(6):"Signed repository check failed. No update authorized.");return;}
+                if(line.startsWith("UNCONFIGURED ")){status->setText("Signing key not enrolled for this channel. Follow the official independent key enrollment instructions. Installed: "+line.mid(13));return;}
+                if(line.startsWith("CURRENT ")){status->setText("No newer signed package in selected channel. Installed: "+line.mid(8));return;}
+                static const QRegularExpression valid("^AVAILABLE ([0-9]+\\.[0-9]+\\.[0-9]+(?:~(?:alpha|beta)[0-9]+)?(?:~render[0-9]+)?)$");
+                const auto match=valid.match(line);
+                if(!match.hasMatch()){status->setText("Unexpected update metadata. Nothing authorized.");return;}
+                *reviewed=match.captured(1);status->setText("Signed update available: "+*reviewed+" · Review official release notes before installation.");
+                install->setEnabled(!tux::trustedSystemExecutable("pkexec").isEmpty());
             });
         });
-        layout->addWidget(text("Checking here is read-only and does not refresh repositories. Installation, trust enrollment and automatic repository checks require a configured signed release feed.","muted"));
+        QObject::connect(install,&QPushButton::clicked,frame,[=]{
+            if(reviewed->isEmpty())return;
+            const auto helper=tux::trustedSystemExecutable("syspulse-apt-update"),auth=tux::trustedSystemExecutable("pkexec");
+            if(helper.isEmpty()||auth.isEmpty()){status->setText("PolicyKit or the update helper is unavailable.");return;}
+            const auto expected=*reviewed;const auto selectedChannel=channel->currentData().toString();
+            if(QMessageBox::question(frame,"Review application upgrade","Install complete signed SysPulse package "+expected+" from "+selectedChannel+"? System package manager authorization is required. Existing settings are preserved. Close other SysPulse tools first. Do not interrupt installation. Recovery is manual if needed.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            reviewed->clear();install->setEnabled(false);check->setEnabled(false);channel->setEnabled(false);
+            class UpdateProgress final:public QDialog {public:using QDialog::QDialog;void reject() override {}protected:void closeEvent(QCloseEvent* e) override {e->ignore();}};
+            UpdateProgress progress(frame);progress.setWindowTitle("Installing signed SysPulse update");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+            auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator authorization and APT completion. Do not close SysPulse or shut down during installation."));
+            AsyncCommand::runAction(&progress,auth,{helper,"install",selectedChannel,expected},4096,[&](const AsyncCommandResult& result){
+                const auto line=QString::fromUtf8(result.output).trimmed();
+                status->setText(result.ok()&&line=="INSTALLED "+expected?"Installed and verified "+expected+". Close and relaunch SysPulse.":line.startsWith("ERROR ")?line.mid(6):"Update not confirmed. Review package manager state before retrying.");
+                progress.done(0);
+            });
+            progress.exec();check->setEnabled(true);channel->setEnabled(true);
+        });
+        layout->addWidget(text("Only the selected repository and independently enrolled signing key are used. Fresh signed metadata and package hashes are verified by APT. No automatic installation or downgrade. If recovery is required, use a separately retained trusted package.","muted"));
         return frame;
     }
     QWidget* settingsPage() {

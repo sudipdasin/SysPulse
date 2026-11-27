@@ -39,7 +39,7 @@ def build(package, expected_sha256, expected_version, output, fingerprint):
     package, output = Path(package), Path(output).absolute()
     require(package.is_file() and not package.is_symlink(), 'invalid package file')
     require(0 < package.stat().st_size <= 512 * 1024 * 1024, 'package size rejected')
-    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:~(?:alpha|beta)[0-9]+)?', expected_version), 'invalid release version')
+    require(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:~(?:alpha|beta)[0-9]+)?(?:~render[1-9][0-9]{0,5})?', expected_version), 'invalid release version')
     require(output.parent.is_dir() and not output.exists() and not output.is_symlink(), 'output must be a new directory')
     # The operator must use a trusted private working parent and keyring.
     with tempfile.TemporaryDirectory(prefix='.syspulse-apt-', dir=output.parent) as temp:
