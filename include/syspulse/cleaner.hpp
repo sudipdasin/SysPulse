@@ -166,6 +166,18 @@ inline Result scanRequested(const fs::path& requested,const fs::path& cache,cons
     out=scan(resolved,classification,limits,cancel);out.redirected=redirected;out.readOnly=!limits.allowRemoval;
     return out;
 }
+// Manual desktop Trash is distinct from permanent cache cleanup. Only a currently
+// unchanged, owned, single-link regular file with a no-follow parent path qualifies.
+// The desktop trash operation itself uses a pathname; concurrent same-user changes
+// remain a residual race. Never call this helper for privileged scan results.
+inline bool reviewedTrashEligible(const Entry& entry){
+    if(::geteuid()==0||entry.path.empty()||!entry.path.is_absolute()||entry.path.filename().empty()||entry.uid!=::getuid())return false;
+    Fd parent(openDir(entry.path.parent_path()));struct stat dir{},st{};
+    if(parent.n<0||::fstat(parent.n,&dir)||dir.st_uid!=::getuid()||
+       ::fstatat(parent.n,entry.path.filename().c_str(),&st,AT_SYMLINK_NOFOLLOW))return false;
+    return S_ISREG(st.st_mode)&&st.st_uid==entry.uid&&st.st_nlink==1&&st.st_dev==entry.dev&&st.st_ino==entry.ino&&st.st_size>=0&&
+           static_cast<std::uint64_t>(st.st_size)==entry.bytes&&sameTime(st.st_mtim,entry.mtime)&&sameTime(st.st_ctim,entry.ctime);
+}
 // Only selected old user-cache regular files; no directory deletion, privilege escalation,
 // links, personal-file removal or cross-device traversal. Revalidate metadata immediately
 // before unlink; concurrent same-user modifications remain a residual race.
