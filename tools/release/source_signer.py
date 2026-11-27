@@ -11,6 +11,8 @@ BRANCH="updates-alpha"
 CATALOG="release-candidates"
 ANCHOR=P(__file__).resolve().parents[2]/"assets/update-trust/alpha-public.gpg.b64"
 MAX_DEB=16*1024*1024
+MIN_ALPHA=32
+MIN_DIGEST="4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc"
 UTC=dt.timezone.utc
 HEX40=r"[0-9a-f]{40}"
 HEX64=r"[0-9a-f]{64}"
@@ -184,6 +186,22 @@ def reconcile(state,actual,current):
     require(isinstance(obj,dict) and set(obj)=={"parent","commit","version","digest"} and sha_valid(obj["commit"],40) and sha_valid(obj["parent"],40) and sha_valid(obj["digest"]),"Invalid pending journal")
     require(actual==obj["commit"] and current["Version"]==obj["version"] and current["SHA256"]==obj["digest"],"Unresolved previous push: operator must reconcile; no retry")
     p.unlink();syncdir(state)
+def checkpoint(state,current):
+    # Never refresh metadata for a rolled-back but historically valid signature.
+    p=state/"high-water.json";n=number(current["Version"]);d=current["SHA256"]
+    require(sha_valid(d),"Invalid current digest")
+    if p.exists():
+        old=json_strict(plain(p,4096))
+        require(isinstance(old,dict) and set(old)=={"alpha","sha256"} and type(old["alpha"]) is int and sha_valid(old["sha256"]),"Invalid high-water checkpoint")
+    else:old={"alpha":MIN_ALPHA,"sha256":MIN_DIGEST}
+    require(n>old["alpha"] or (n==old["alpha"] and d==old["sha256"]),"Signed feed rollback or same-version replacement detected")
+    if n==old["alpha"] and p.exists():return
+    fd,tmp=tempfile.mkstemp(dir=state,prefix=".checkpoint-")
+    try:
+        with os.fdopen(fd,"w") as f:json.dump({"alpha":n,"sha256":d},f);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,p);syncdir(state)
+    finally:
+        if os.path.exists(tmp):os.unlink(tmp)
 @contextmanager
 def locked(state):
     fd=os.open(state/"sign.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
@@ -199,7 +217,7 @@ def transaction(a):
         key=home/"owner.gpg";anchor=base64.b64decode(ANCHOR.read_text().strip(),validate=True)
         require(digest(anchor)==PIN,"Pinned owner key mismatch");key.write_bytes(anchor)
         root=home/"feed";parent=clone(home,BRANCH,root)
-        current,end=verify_feed(home,root,key,now,allow_expired=True);reconcile(state,parent,current)
+        current,end=verify_feed(home,root,key,now,allow_expired=True);checkpoint(state,current);reconcile(state,parent,current)
         print("Verified signed feed",current["Version"],parent,flush=True)
         if a.mode=="verify":return
         if a.mode=="renew":
@@ -241,7 +259,7 @@ def transaction(a):
         git(home,"push","origin","HEAD:refs/heads/"+BRANCH,cwd=root,extra={"GIT_ASKPASS":str(ask),"SYSPULSE_TOKEN_FILE":str(a.git_token)})
         check=home/"remote";actual=clone(home,BRANCH,check);verified,_=verify_feed(home,check,key,dt.datetime.now(UTC))
         require(actual==commit and verified==entry,"Remote signed readback mismatch")
-        reconcile(state,actual,verified);print("Published and verified",entry["Version"],commit)
+        checkpoint(state,verified);reconcile(state,actual,verified);print("Published and verified",entry["Version"],commit)
 class Tests(unittest.TestCase):
     def setUp(self):
         self.now=dt.datetime.now(UTC);self.row={"alpha":34,"source":"a"*40,"deployment":"b"*40,"origin":"https://syspulse-alpha34-eval.onrender.com/","sha256":"c"*64,"tested_from":32,"tested_from_sha256":"d"*64,"suites":54}
@@ -287,6 +305,13 @@ class Tests(unittest.TestCase):
     def test_secret_permissions(self):
         with tempfile.TemporaryDirectory() as t:
             p=P(t)/"secret";p.write_text("dummy");p.chmod(0o644);self.assertRaises(ValueError,secret_fd,p);p.chmod(0o600);os.close(secret_fd(p))
+    def test_high_water(self):
+        with tempfile.TemporaryDirectory() as t:
+            p=P(t);checkpoint(p,{"Version":version(32),"SHA256":MIN_DIGEST})
+            self.assertRaises(ValueError,checkpoint,p,{"Version":version(31),"SHA256":"a"*64})
+            self.assertRaises(ValueError,checkpoint,p,{"Version":version(32),"SHA256":"a"*64})
+            checkpoint(p,{"Version":version(33),"SHA256":"a"*64})
+            self.assertRaises(ValueError,checkpoint,p,{"Version":version(32),"SHA256":MIN_DIGEST})
     def test_no_secret_env(self):
         e=env("/tmp");self.assertNotIn("GITHUB_TOKEN",e);self.assertNotIn("GNUPGHOME",e)
 def main():
