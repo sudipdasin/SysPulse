@@ -247,6 +247,11 @@ int main(int argc,char** argv) {
         auto* monitor=static_cast<syspulse::PerformancePage*>(window.findChild<QWidget*>("syspulsePerformancePage"));
         require(pause&&resume&&monitor,"explicit low overhead controls");pause->click();require(monitor->isPaused(),"pause stops sampling");resume->click();require(!monitor->isPaused(),"resume restores sampling preference");
         require(reportTable->rowCount()==0,"memory relief does not fabricate diagnostic records");
+        auto* quickClean=window.findChild<QPushButton*>("sidebarCleaner");auto* quickUpdate=window.findChild<QPushButton*>("sidebarApplicationUpdates");auto* globalAdmin=window.findChild<QPushButton*>("globalAdminSession");auto* quickLock=window.findChild<QPushButton*>("globalAdminLock");
+        require(quickClean&&quickUpdate&&globalAdmin&&quickLock&&!quickLock->isEnabled(),"visible action shortcuts and locked session status");
+        quickClean->click();require(window.currentPageId()=="storage"&&storageTabs->currentIndex()==2,"direct cleaner navigation");
+        quickUpdate->click();require(window.currentPageId()=="settings","direct signed update navigation");
+        window.navigate("overview");globalAdmin->click();require(window.currentPageId()=="settings","administrator indicator opens session settings");
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
