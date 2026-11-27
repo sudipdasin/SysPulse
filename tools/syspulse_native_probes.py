@@ -7,30 +7,36 @@ SUMMARY=re.compile(r"^(\d+) upgraded, (\d+) newly installed, (\d+) to remove and
 def apt_result(status,raw,bounded):
     result={"status":"unknown","install_or_upgrade":0,"configure":0,"remove":0,"held_back":0,"execution_authorized":False}
     if status not in ("ok","failed") or bounded:return result
+    if len(raw)>262144 or "\x00" in raw:return result
     lines=raw.splitlines()
     if len(lines)>6000:return result
     actions={k:0 for k in ("Inst","Conf","Remv","Purg")}
-    summaries=[]
-    for line in lines:
+    summaries=[]; malformed=False; warning=False; removal_disabled=False
+    for raw_line in lines:
+        line=raw_line.strip()
         m=SUMMARY.fullmatch(line.strip())
         if m:
-            if any(len(x)>7 for x in m.groups()):return result
+            if any(len(x)>6 for x in m.groups()):return result
             summaries.append(tuple(map(int,m.groups())))
         token=line.split(maxsplit=1)
-        if token and token[0] in actions:actions[token[0]]+=1
+        if token and token[0] in actions:
+            actions[token[0]]+=1
+            if len(token)!=2:malformed=True
+        if line.startswith(("E:","W:","N:")):warning=True
+        if "remove is disabled" in line.lower():removal_disabled=True
     result.update(install_or_upgrade=actions["Inst"],configure=actions["Conf"],remove=actions["Remv"]+actions["Purg"])
-    if result["remove"] or any(x[2] for x in summaries):result["status"]="removal_blocked";return result
+    if removal_disabled or result["remove"] or any(x[2] for x in summaries):result["status"]="removal_blocked";return result
     if status!="ok":result["status"]="solver_failed";return result
-    if len(summaries)!=1 or any(x.startswith(("E:","W:")) for x in lines):return result
+    if len(summaries)!=1 or warning or malformed:return result
     upgraded,new,_,held=summaries[0]
-    if upgraded+new!=actions["Inst"]:return result
+    if max(upgraded,new,held)>100000 or upgraded+new!=actions["Inst"]:return result
     result["held_back"]=held
     result["status"]="review" if upgraded+new or actions["Conf"] else "no_changes"
     return result
 
 def vm_result(status,raw,bounded):
     result={"status":"unknown","samples":0}
-    if status!="ok" or bounded:return result
+    if status!="ok" or bounded or len(raw)>16384 or "\x00" in raw:return result
     fields=("r","b","si","so","us","sy","id","wa","st")
     header=None;rows=[]
     for line in raw.splitlines():
