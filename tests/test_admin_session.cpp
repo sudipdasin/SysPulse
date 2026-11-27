@@ -5,7 +5,7 @@
 int main(int argc,char** argv){
  QCoreApplication app(argc,argv);
  int count=0;for(const auto& a:tux::actions())if(tux::admin::supported(a.id)){if(!a.admin)return 1;++count;}
- if(count!=11||!tux::admin::supported("apt-refresh")||!tux::admin::supported("apt-autoclean")||!tux::admin::supported("journal-cap")||!tux::admin::supported("trim-disable")||tux::admin::supported("sh")||tux::admin::supported("apt-clean\ntrim")||tux::admin::supported("storage"))return 2;
+ if(count!=13||!tux::admin::supported("weekly-clean-enable")||!tux::admin::supported("weekly-clean-disable")||!tux::admin::supported("apt-refresh")||!tux::admin::supported("apt-autoclean")||!tux::admin::supported("journal-cap")||!tux::admin::supported("trim-disable")||tux::admin::supported("sh")||tux::admin::supported("apt-clean\ntrim")||tux::admin::supported("storage"))return 2;
  tux::Result r;r.code=0;r.output="test\nbinary";r.seconds=0.1;tux::Result decoded;
  if(!tux::admin::decode(tux::admin::encode(r),decoded)||decoded.output!=r.output||decoded.code!=0)return 3;
  if(tux::admin::decode("{\"code\":0}",decoded)||tux::admin::decode(QByteArray(400001,'x'),decoded))return 4;
