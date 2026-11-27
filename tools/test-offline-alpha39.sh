@@ -19,7 +19,7 @@ for name in pressure swap_activity system_memory bounded_line; do files+=("inclu
 pytests=(native_probes native_probe_hardening integrity package_evidence smart_evidence smart_scan_integration outcome_verification recovery_observations alpha39_payload)
 for suite in "${pytests[@]}"; do files+=("tests/test_$suite.py"); done
 if [[ $mode == --full ]]; then
-    files+=(tools/syspulse-diagnostics tools/syspulse_research.py tests/test_hybrid_engine.py tests/test_research_adapters.py tools/build-alpha39-local.sh tests/test_local_builder_recovery.py tests/test_build_observability.py tools/syspulse-apt-update tools/validate-update-key.py tests/test_apt_updater.py tests/test_update_plan.py tests/test_update_plan_signed_fixture.py)
+    files+=(tools/syspulse-diagnostics tools/syspulse_research.py tests/test_hybrid_engine.py tests/test_research_adapters.py tools/build-alpha39-local.sh tests/test_local_builder_recovery.py tests/test_build_observability.py tools/recover-integration-workspace.py tests/test_workspace_recovery.py tools/transfer-integration-bundle.py tests/test_bundle_transfer.py tools/syspulse-apt-update tools/validate-update-key.py tests/test_apt_updater.py tests/test_update_plan.py tests/test_update_plan_signed_fixture.py)
     for exe in apt-get apt-cache dpkg dpkg-scanpackages gpg gpgconf; do
         command -v "$exe" >/dev/null || { echo "Missing updater test prerequisite: $exe" >&2; exit 2; }
     done
@@ -46,6 +46,8 @@ if [[ $mode == --full ]]; then
     run research-adapters python3 "$root/tests/test_research_adapters.py"
     run local-builder-recovery python3 "$root/tests/test_local_builder_recovery.py"
     run build-observability python3 "$root/tests/test_build_observability.py"
+    run workspace-recovery python3 "$root/tests/test_workspace_recovery.py"
+    run bundle-transfer python3 "$root/tests/test_bundle_transfer.py"
     run apt-updater python3 "$root/tests/test_apt_updater.py"
     run update-plan python3 "$root/tests/test_update_plan.py"
     run signed-plan-fixture python3 "$root/tests/test_update_plan_signed_fixture.py"
