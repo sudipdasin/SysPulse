@@ -127,6 +127,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && touch /syspulse-disposable-marker
 RUN runuser -u tester -- sh -c 'printf "[General]\\nupgradeFixture=preserve-user-settings\\n" > /home/tester/.config/SysPulse/SysPulse.ini; sha256sum /home/tester/.config/SysPulse/SysPulse.ini > /home/tester/preference.sha256'
 COPY validation/test-live-owner-update-focused.py /usr/local/bin/syspulse-live-owner-update.py
+COPY tools/syspulse-apt-update /usr/local/share/syspulse-test/fixed-updater
 RUN SYSPULSE_DISPOSABLE_TEST=owner-feed-alpha26 python3 /usr/local/bin/syspulse-live-owner-update.py --disposable-container
 FROM python:3.11-slim-bookworm AS evaluation
 COPY --from=productioncheck /verified-production/ /srv/artifacts/

@@ -76,6 +76,11 @@ def main():
         # Do not upload or distribute this synthetic baseline.
         run("/usr/bin/dpkg", "-i", str(prior))
         assert version() == BASELINE
+        # This is a diagnostic-only source patch, not a newly published package.
+        # Install the exact proposed helper into the disposable baseline before live check.
+        fixed=pathlib.Path("/usr/local/share/syspulse-test/fixed-updater")
+        assert fixed.is_file()
+        run("/usr/bin/install","-o","root","-g","root","-m","0755",str(fixed),"/usr/bin/syspulse-apt-update")
         discover("AVAILABLE " + VERSION)
         parent, child = socket.socketpair()
         parent.settimeout(240)
@@ -106,16 +111,19 @@ def main():
             parent.close()
             if proc.poll() is None:
                 proc.wait(timeout=250)
+        # The real Alpha.26 install restores its known old helper. Reapply only in
+        # the isolated test to verify the proposed helper current-version behavior.
+        run("/usr/bin/install","-o","root","-g","root","-m","0755",str(fixed),"/usr/bin/syspulse-apt-update")
         discover("CURRENT " + VERSION)
     assert run("/usr/sbin/runuser", "-u", "tester", "--", "/usr/bin/sha256sum", "-c", "/home/tester/preference.sha256").endswith(": OK")
     assert run("/usr/sbin/runuser", "-u", "tester", "--", "/usr/bin/syspulse", "--version").endswith("3.0.0-alpha.26")
     (out / "SHA256SUMS").write_text(DIGEST + "  " + NAME + "\n")
     (out / "LIVE-UPDATE-STATUS.txt").write_text(
-        "PASSED: actual owner-signed public HTTPS feed; canonical DEB digest; packaged key; ordinary-user discovery; "
+        "PASSED: actual owner-signed public HTTPS feed; canonical DEB digest; packaged key; ordinary-user discovery with proposed corrected updater; "
         "actual APT upgrade through one broker after a cache clean, then protected volume inspection on that same broker; "
         "installed version, current status, preference preservation and EOF revocation. "
         "Baseline was a disposable lower Debian revision of the identical released binary payload, not a second published release. "
-        "Broker launched as root in a container; real XFCE PolicyKit dialog, service-manager mutation and successive published releases still require testing.\n"
+        "The diagnostic baseline and final current-version check use the proposed corrected updater, not the published Alpha.26 updater. Broker launched as root in a container; real XFCE PolicyKit dialog, service-manager mutation and successive published releases still require testing.\n"
     )
     print("LIVE OWNER-SIGNED ONLINE UPGRADE THROUGH SAME BROKER PASSED", flush=True)
 

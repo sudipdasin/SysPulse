@@ -56,7 +56,7 @@ def build(package, expected_sha256, expected_version, output, fingerprint):
         require(index.stat().st_size > 0, 'empty package index')
         now = datetime.now(timezone.utc).replace(microsecond=0)
         release = root / 'Release'
-        release.write_text('Origin: SysPulse Community\nLabel: SysPulse\nArchitectures: amd64\nDate: ' + format_datetime(now, usegmt=True) + '\nValid-Until: ' + format_datetime(now + timedelta(days=7), usegmt=True) + '\nSHA256:\n ' + digest(index) + ' ' + str(index.stat().st_size) + ' Packages\n', encoding='ascii')
+        release.write_text('Origin: SysPulse Community\nLabel: SysPulse\nArchitectures: amd64\nDate: ' + format_datetime(now, usegmt=True) + '\nValid-Until: ' + format_datetime(now + timedelta(days=30), usegmt=True) + '\nSHA256:\n ' + digest(index) + ' ' + str(index.stat().st_size) + ' Packages\n', encoding='ascii')
         cmd = ['/usr/bin/gpg', '--batch', '--no-tty', '--local-user', fingerprint + '!', '--digest-algo', 'SHA256']
         run(*cmd, '--output', str(root / 'InRelease'), '--clearsign', str(release))
         run(*cmd, '--output', str(root / 'Release.gpg'), '--detach-sign', str(release))

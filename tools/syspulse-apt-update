@@ -62,7 +62,12 @@ def resolve_key(channel, bundled=BUNDLED_KEYS, legacy=KEYS):
 
 def run(args, timeout=90):
     # Do not import caller APT_CONFIG, proxy settings, loader settings or PATH.
-    result = subprocess.run(args, env=ENV, stdin=subprocess.DEVNULL,
+    env=ENV.copy()
+    # APT_CONFIG is read before system config fragments. Only our locally created
+    # configuration is allowed here; never import a caller-provided value.
+    if args[0] in ("/usr/bin/apt-get","/usr/bin/apt-cache") and len(args)>2 and args[1]=="-c":
+        env["APT_CONFIG"]=args[2]
+    result = subprocess.run(args, env=env, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
     if result.returncode:
         raise RuntimeError("Package manager operation failed. Check signed feed, network, locks and package state.")
@@ -93,8 +98,12 @@ def snapshot(key, url):
         for path in ("lists","archives","empty"):
             (work/path).mkdir(mode=0o755)
         source=work/"sources.list"
-        source.write_text(f"deb [arch=amd64 signed-by={key}] {url} ./\n",encoding="ascii")
-        opts=[]
+        # The flat suite "/" avoids a literal /./ URL and GitHub HTTP 307.
+        # Keep redirects disabled and continue checking signed metadata.
+        source.write_text(f"deb [arch=amd64 signed-by={key}] {url} /\n",encoding="ascii")
+        config=work/"apt.conf"
+        config.write_text('Dir::Etc::main "/dev/null";\nDir::Etc::parts "-";\n',encoding="ascii")
+        opts=["-c",str(config)]
         for setting in (
             "Dir::Etc::sourcelist="+str(source), "Dir::Etc::sourceparts=-",
             "Dir::Etc::main=/dev/null", "Dir::Etc::parts=-",
@@ -102,7 +111,7 @@ def snapshot(key, url):
             "Dir::State::lists="+str(work/"lists"), "Dir::State::status=/var/lib/dpkg/status",
             "Dir::Cache::archives="+str(work/"archives"),"Dir::Cache::pkgcache=","Dir::Cache::srcpkgcache=",
             "APT::Architecture=amd64","Acquire::Languages=none",
-            "Acquire::Check-Valid-Until=true","Acquire::Check-Date=true","Acquire::Max-ValidTime=604800",
+            "Acquire::Check-Valid-Until=true","Acquire::Check-Date=true","Acquire::Max-ValidTime=2592000",
             "Acquire::AllowInsecureRepositories=false","Acquire::AllowDowngradeToInsecureRepositories=false",
             "APT::Get::AllowUnauthenticated=false","Acquire::https::Verify-Peer=true",
             "Acquire::https::Verify-Host=true","Acquire::https::AllowRedirect=false",

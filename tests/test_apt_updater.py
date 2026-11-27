@@ -59,6 +59,16 @@ class Update(unittest.TestCase):
                 self.assertNotEqual(result.returncode,0)
             finally:
                 subprocess.run(["/usr/bin/gpgconf","--homedir",str(home),"--kill","gpg-agent"],capture_output=True,timeout=10)
+    def test_canonical_flat_suite_and_config(self):
+        with patch.object(u,"secure_key",return_value=True),patch.object(u,"run") as run:
+            with u.snapshot(pathlib.Path("/usr/share/key.gpg"),"https://example.invalid/updates/") as opts:
+                config=pathlib.Path(opts[1])
+                self.assertEqual(opts[0],"-c")
+                self.assertIn('Dir::Etc::parts "-";',config.read_text())
+                self.assertEqual((config.parent/"sources.list").read_text(),"deb [arch=amd64 signed-by=/usr/share/key.gpg] https://example.invalid/updates/ /\n")
+                self.assertIn("Acquire::https::AllowRedirect=false",opts)
+                self.assertIn("Acquire::Max-ValidTime=2592000",opts)
+                self.assertEqual(run.call_args[0][0][-1],"update")
     def test_nonroot_install_guard(self):
         with patch.object(u.os,"geteuid",return_value=1000):
             with self.assertRaisesRegex(ValueError,"authorization"):u.install("alpha","3.0.0~alpha22~render1",None,None)
