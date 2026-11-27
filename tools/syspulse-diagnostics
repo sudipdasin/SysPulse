@@ -92,7 +92,18 @@ def command(args,timeout=7,limit=MAX_READ):
             p.wait()
         p.stdout.close()
     return status,out.decode("utf-8","replace"),truncated
+# Explicit, narrowly scoped successful/recovered states are not active faults.
+# Keep error-priority journal events and mixed/ambiguous messages conservative.
+# fullmatch prevents suppression when another failure appears on the same line.
+BENIGN_STATES=tuple(re.compile(p,re.I) for p in (
+    r"SMART\s+health\s+passed[;,. ]+\s*0\s+pending\s+sectors[.]?",
+    r"No\s+errors?\s+detected\s+in\s+(?:the\s+)?(?:memory|RAM)\s+test[.]?",
+    r"Previous\s+error\s+resolved[;,. ]+\s*service\s+started\s+successfully[.]?",
+    r"GPU\s+reset\s+completed\s+successfully[.]?",
+))
 def classify(line,priority=None):
+    if priority is None or priority>3:
+        if any(rx.fullmatch(line.strip()) for rx in BENIGN_STATES):return None
     for key,rx in RULES:
         if rx.search(line):return key
     if priority is not None and priority<=3:return "other_error"
@@ -662,6 +673,14 @@ def run_tests():
             self.s.append(source("syslog","ok",{"oom":1},1));self.make();r=self.make()
             self.assertEqual(next(f for f in r["findings"] if f["code"]=="oom")["observed_in_recent_analyses"],2)
             self.assertEqual(r["trend_window"],2)
+        def test_recovery_controls_preserve_critical_errors(self):
+            for msg in ("SMART health passed; 0 pending sectors","No errors detected in the RAM test.","Previous error resolved; service started successfully","GPU reset completed successfully."):
+                self.assertIsNone(classify(msg))
+                self.assertIsNone(classify(msg,6))
+                self.assertIsNotNone(classify(msg,3))
+                self.assertEqual(classify(msg+"; Buffer I/O error on device sda"),"storage_io")
+            self.assertEqual(classify("SMART health passed; 2 pending sectors"),"disk_health")
+            self.assertEqual(classify("GPU reset completed successfully; GPU hang recurred"),"gpu")
         def test_retention(self):
             for _ in range(RETENTION+2):self.make()
             self.assertEqual(self.c.execute("SELECT count(*) FROM analysis").fetchone()[0],RETENTION)
