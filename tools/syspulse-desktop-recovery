@@ -66,20 +66,26 @@ def restore(snapshot,token,read,write):
     before=review['before']; changed=[]
     try:
         for key,value in snapshot.items():
-            if before[key]==value: continue
-            if read(key)!=before[key]: raise RuntimeError('Setting changed during restore')
+            if before[key] is value: continue
+            if read(key) is not before[key]: raise RuntimeError('Setting changed during restore')
             changed.append(key); write(key,value)
-            if read(key)!=value: raise RuntimeError('Setting readback failed')
+            if read(key) is not value: raise RuntimeError('Setting readback failed')
+        final=plan(snapshot,read)
+        if final['before']!=snapshot: raise RuntimeError('Complete setting readback differs from target')
+        return final
     except Exception as e:
-        failed=[]
         for key in reversed(changed):
             try:
-                now=read(key)
-                if now==snapshot[key]: write(key,before[key])
-                if read(key)!=before[key]: failed.append(key)
+                if read(key) is snapshot[key]: write(key,before[key])
+            except Exception: pass
+        # Check every reviewed property, including untouched properties. Never write
+        # an unrelated property just to make a rollback receipt look successful.
+        failed=[]
+        for key,value in before.items():
+            try:
+                if read(key) is not value: failed.append(key)
             except Exception: failed.append(key)
         raise RuntimeError('Restore failed; '+('rollback unverified: '+', '.join(failed) if failed else 'previous values verified')) from e
-    return plan(snapshot,read)
 
 class Tests(unittest.TestCase):
     def setUp(self): self.tmp=tempfile.TemporaryDirectory();self.p=path(Path(self.tmp.name));self.state={KEYS[0]:False,KEYS[1]:True}
@@ -105,6 +111,44 @@ class Tests(unittest.TestCase):
             self.write(k,v)
         with self.assertRaisesRegex(RuntimeError,'previous values verified'): restore(s,plan(s,self.read)['token'],self.read,writer)
         self.assertEqual(self.state,before)
+    def test_final_drift_on_written_key(self):
+        s={KEYS[0]:True,KEYS[1]:False}; before=dict(self.state)
+        def writer(k,v):
+            self.write(k,v)
+            if k==KEYS[1] and v is False:self.state[KEYS[0]]=False
+        with self.assertRaisesRegex(RuntimeError,'previous values verified'): restore(s,plan(s,self.read)['token'],self.read,writer)
+        self.assertEqual(self.state,before)
+    def test_untouched_drift_not_overwritten(self):
+        s={KEYS[0]:True,KEYS[1]:True}; calls=[]
+        def writer(k,v):
+            calls.append(k); self.write(k,v)
+            if v is True:self.state[KEYS[1]]=False
+        with self.assertRaisesRegex(RuntimeError,'rollback unverified: '+KEYS[1]): restore(s,plan(s,self.read)['token'],self.read,writer)
+        self.assertEqual(calls,[KEYS[0],KEYS[0]])
+        self.assertIs(self.state[KEYS[1]],False)
+    def test_final_read_exception_rolls_back(self):
+        s={KEYS[0]:True}; count=0
+        def reader(k):
+            nonlocal count
+            count+=1
+            if count==4:raise OSError('transient read failure')
+            return self.read(k)
+        with self.assertRaisesRegex(RuntimeError,'previous values verified'): restore(s,plan(s,self.read)['token'],reader,self.write)
+        self.assertIs(self.state[KEYS[0]],False)
+    def test_nonboolean_readback_not_success(self):
+        s={KEYS[0]:True}
+        def writer(k,v):self.state[k]=1
+        with self.assertRaisesRegex(RuntimeError,'rollback unverified'): restore(s,plan(s,self.read)['token'],self.read,writer)
+    def test_noop_never_writes(self):
+        s=dict(self.state)
+        def writer(k,v):self.fail('unexpected write')
+        self.assertEqual(restore(s,plan(s,self.read)['token'],self.read,writer)['before'],s)
+    def test_rollback_write_failure(self):
+        s={KEYS[0]:True,KEYS[1]:False}
+        def writer(k,v):
+            if k==KEYS[1] or v is False:raise OSError('write failure')
+            self.write(k,v)
+        with self.assertRaisesRegex(RuntimeError,'rollback unverified: '+KEYS[0]): restore(s,plan(s,self.read)['token'],self.read,writer)
     def test_symlink(self):
         target=self.p.parent/'target';target.write_text('safe');self.p.symlink_to(target)
         with self.assertRaises(OSError): save(self.p,self.state)
