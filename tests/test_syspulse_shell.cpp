@@ -185,6 +185,7 @@ int main(int argc,char** argv) {
         require(careReview->isEnabled(),"review enabled only after selection");careReview->click();
         require(controlTabs->currentIndex()==0,"care routes to existing memory optimizer");
         require(reportTable->rowCount()==0,"care scan and navigation never manufacture diagnostic reports");
+        require(window.findChild<QPushButton*>("quickBoost")&&window.findChild<QPushButton*>("maintenanceQuickBoost"),"visible primary Boost controls");
         auto* maintenance=window.findChild<QPushButton*>("openMaintenanceCenter");
         auto* baseline=window.findChild<QPushButton*>("maintenanceBaseline");
         auto* recheck=window.findChild<QPushButton*>("maintenanceRecheck");
