@@ -24,15 +24,19 @@ class Tests(unittest.TestCase):
         self.base = pathlib.Path(self.temp.name)
         self.root = self.base / "root"
         self.root.mkdir()
-        (self.root / "DEBIAN").mkdir()
+        (self.root / "DEBIAN").mkdir(mode=0o755)
+        (self.root / "DEBIAN").chmod(0o755)
         self.control = self.root / "DEBIAN/control"
         self.control.write_text(f"Package: syspulse\nVersion: {VERSION}\nArchitecture: amd64\nMaintainer: Fixture <fixture@example.invalid>\nDescription: Test data only\n")
+        self.control.chmod(0o644)
         self.deb = self.base / "fixture.deb"
         for name, mode in gate.REQUIRED.items():
             p = self.root / name
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(KEY if name == gate.KEY else (DIGEST + "\n").encode() if name == gate.KEY_HASH else b"fixture, not executable application\n")
             p.chmod(mode)
+        for name in gate.PARENTS:
+            (self.root / name).chmod(0o755)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -76,6 +80,11 @@ class Tests(unittest.TestCase):
 
     def test_writable_parent(self):
         (self.root / "usr/bin").chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "Unsafe required parent"):
+            self.check()
+
+    def test_inaccessible_parent(self):
+        (self.root / "usr/bin").chmod(0o700)
         with self.assertRaisesRegex(ValueError, "Unsafe required parent"):
             self.check()
 
