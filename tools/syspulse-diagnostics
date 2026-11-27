@@ -5,6 +5,7 @@ No remote telemetry, shell evaluation, automatic privilege elevation or learned 
 """
 import argparse, concurrent.futures, datetime, gzip, json, os
 import pathlib, re, secrets, selectors, signal, sqlite3, stat, subprocess, time, unittest
+import syspulse_research as research
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -313,14 +314,75 @@ def connect(path):
     c.execute("PRAGMA secure_delete=ON")
     c.execute("PRAGMA busy_timeout=4000")
     ver=c.execute("PRAGMA user_version").fetchone()[0]
-    require(ver in (0,1),"Unsupported diagnostics database version")
+    require(ver in (0,1,2),"Unsupported diagnostics database version")
     if not ver:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS analysis(id TEXT PRIMARY KEY, utc INTEGER NOT NULL, boot TEXT NOT NULL, tick REAL NOT NULL, state TEXT NOT NULL CHECK(state IN ('ready','reserved','finished','invalid')), context TEXT NOT NULL, metrics TEXT NOT NULL, sources TEXT NOT NULL, assessment TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS boost(id TEXT PRIMARY KEY REFERENCES analysis(id) ON DELETE CASCADE, utc INTEGER NOT NULL, selected TEXT NOT NULL, outcome TEXT, before_metrics TEXT, after_metrics TEXT, owner_pid INTEGER NOT NULL, owner_start TEXT NOT NULL);
         PRAGMA user_version=1;
         """)
+    if ver<2:
+        c.executescript("""
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS research(id TEXT PRIMARY KEY REFERENCES analysis(id) ON DELETE CASCADE, utc INTEGER NOT NULL, fingerprint TEXT NOT NULL, providers TEXT NOT NULL, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS research_budget(id INTEGER PRIMARY KEY CHECK(id=1), window_start INTEGER NOT NULL, calls INTEGER NOT NULL, last_call INTEGER NOT NULL, web_until INTEGER NOT NULL);
+        PRAGMA user_version=2;
+        COMMIT;
+        """)
     return c
+def key_lookup(provider):
+    # Desktop keyring only; no env, plaintext configuration, arguments or database secret.
+    status,raw,bounded=command(["secret-tool","lookup","application","syspulse","provider",provider],timeout=5,limit=512)
+    return raw.strip() if status=="ok" and not bounded else None
+def research_record(c,ident):
+    row=c.execute("SELECT data FROM research WHERE id=?",(ident,)).fetchone()
+    return json.loads(row[0]) if row else None
+def reserve_budget(c,now,want_web):
+    row=c.execute("SELECT window_start,calls,last_call,web_until FROM research_budget WHERE id=1").fetchone()
+    start,count,last,until=row or (now,0,0,0)
+    require(now>=last and now>=start,"Research clock rollback")
+    if now-start>=86400:start,count=now,0
+    require(count<4 and (not last or now-last>=60),"Local online research budget exhausted or cooling down")
+    c.execute("INSERT OR REPLACE INTO research_budget VALUES(1,?,?,?,?)",(start,count+1,now,until))
+    return not want_web or now>=until
+def investigate(c,ident,providers,boot,tick,now,lookup=key_lookup,runner=research.run,clock_fn=clock,now_fn=lambda:int(time.time())):
+    require(isinstance(providers,list) and providers and len(providers)<=3 and all(isinstance(x,str) and x in research.PROVIDERS for x in providers) and len(set(providers))==len(providers),"Invalid research consent")
+    providers=sorted(providers);provider_json=json.dumps(providers)
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        analysis=read_analysis(c,ident,boot,tick,now)
+        p=research.profile(analysis);fp=research.fingerprint(p)
+        old=research_record(c,ident)
+        if old:return old
+        if not p["codes"]:
+            return {"schema":1,"id":ident,"status":"not_needed","guidance":research.combine(p,[]),"results":[],"cached":False,"utc":now}
+        cached=c.execute("SELECT data FROM research WHERE fingerprint=? AND providers=? AND utc>=? AND utc<=? ORDER BY utc DESC LIMIT 1",(fp,provider_json,now-86400,now)).fetchone()
+        if cached:
+            previous=json.loads(cached[0])
+            if previous.get("status")=="complete" and all(x["status"]=="ok" for x in previous["results"]):
+                previous.update(id=ident,cached=True)
+                c.execute("INSERT INTO research VALUES(?,?,?,?,?)",(ident,previous["utc"],fp,provider_json,json.dumps(previous)))
+                return previous
+        web_ok=reserve_budget(c,now,"web" in providers)
+        # Claim once before any network request; failed/interrupted calls count.
+        placeholder={"schema":1,"id":ident,"status":"pending","guidance":research.combine(p,[]),"results":[],"cached":False,"utc":now}
+        c.execute("INSERT INTO research VALUES(?,?,?,?,?)",(ident,now,fp,provider_json,json.dumps(placeholder)))
+    enabled=[x for x in providers if x!="web" or web_ok]
+    results=runner(p,enabled,lookup)
+    if "web" in providers and not web_ok:results.append(research.failure("web","cooldown"))
+    completed=now_fn()
+    record={"schema":1,"id":ident,"status":"complete","guidance":research.combine(p,results),"results":results,"cached":False,"utc":completed}
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        # Honor provider backoff even if analysis expired while waiting.
+        backoff=max([r.get("backoff",0) for r in results if r["provider"]=="web"] or [0])
+        if backoff:c.execute("UPDATE research_budget SET web_until=max(web_until,?) WHERE id=1",(completed+backoff,))
+        current=c.execute("SELECT state,boot FROM analysis WHERE id=?",(ident,)).fetchone()
+        if current==("ready",boot):
+            read_analysis(c,ident,boot,clock_fn(),completed)
+            c.execute("UPDATE research SET utc=?,data=? WHERE id=?",(completed,json.dumps(record),ident))
+        else:raise ValueError("Analysis changed during research; no advice authorized")
+    return record
 def history(c):
     out={}
     for context,outcome in c.execute("SELECT analysis.context,boost.outcome FROM boost JOIN analysis USING(id) WHERE boost.outcome IS NOT NULL ORDER BY boost.utc DESC LIMIT 180"):
@@ -351,7 +413,9 @@ def read_analysis(c,ident,boot,tick,now):
     require(r is not None,"Analysis not found; analyze again")
     utc,b,t,state,metrics,sources,assessment=r
     require(state=="ready" and b==boot and 0<=tick-t<=MAX_AGE and 0<=now-utc<=MAX_AGE,"Analysis expired, consumed or from another boot; analyze again")
-    return {"schema":1,"id":ident,"utc":utc,"state":state,"metrics":json.loads(metrics),"sources":json.loads(sources),**json.loads(assessment)}
+    result={"schema":1,"id":ident,"utc":utc,"state":state,"metrics":json.loads(metrics),"sources":json.loads(sources),**json.loads(assessment)}
+    record=research_record(c,ident)
+    return research.apply_research(result,record if record and record["status"]=="complete" else None)
 def reserve(c,ident,selected,boot,tick,now,metrics,owner=None,fresh_sources=None):
     owner=owner or (os.getpid(),process_start(os.getpid()))
     require(owner[1] is not None,"Reservation owner unavailable")
@@ -384,10 +448,10 @@ def finish(c,ident,outcome,metrics,owner=None):
 def show_history(c):
     rows=[]
     for ident,utc,state,context,assessment in c.execute("SELECT id,utc,state,context,assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 30"):
-        a=json.loads(assessment);rows.append({"id":ident,"utc":utc,"state":state,"context":context,"findings":len(a["findings"]),"coverage":a["coverage"]})
+        a=json.loads(assessment);rows.append({"id":ident,"utc":utc,"state":state,"context":context,"findings":len(a["findings"]),"coverage":a["coverage"],"research":bool(research_record(c,ident))})
     return {"schema":1,"analyses":rows,"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
 def main():
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
     if a.mode=="self-test":return run_tests()
     os.umask(0o077)
     try:
@@ -406,6 +470,7 @@ def main():
                     c.execute("DELETE FROM analysis")
                 c.execute("VACUUM");result={"schema":1,"state":"cleared"}
             elif a.mode=="plan":result=read_analysis(c,a.id,boot_id(),clock(),int(time.time()))
+            elif a.mode=="research":result=investigate(c,a.id,json.loads(a.payload),boot_id(),clock(),int(time.time()))
             elif a.mode=="reserve":
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails") for x in selected):
