@@ -1,6 +1,9 @@
 #include "syspulse/result_state.hpp"
 #include "tux/admin_session.hpp"
 #include "tux/admin_session_async.hpp"
+#include "tux/admin_protocol.hpp"
+#include <QFile>
+#include <QSpinBox>
 #include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
@@ -482,6 +485,44 @@ struct Window::Impl {
             kernelStatus->setText(QString("System-wide zswap: %1. %2").arg(state==S::Enabled?"Enabled":state==S::Disabled?"Disabled":"Unavailable / unknown",state==S::Enabled?"Compression is active; new swap writes can be compressed.":enableProblem.isEmpty()?"Compatible configuration detected; review and authorize to enable.":enableProblem));
         };
         refreshMemoryKernel=refreshKernel;refreshKernel();
+        auto* swapPanel=panel();auto* swapLayout=new QVBoxLayout(swapPanel);
+        swapLayout->addWidget(text("Runtime swap tuning · readback and restore","sectionTitle"));
+        auto* swapStatus=text("Read the current kernel value before applying a profile.","muted");swapStatus->setObjectName("runtimeSwappinessStatus");swapLayout->addWidget(swapStatus);
+        auto* swapValue=new QSpinBox;swapValue->setRange(0,200);swapValue->setValue(60);swapValue->setObjectName("runtimeSwappinessValue");swapValue->setAccessibleName("Runtime swappiness 0 to 200");
+        auto* readSwap=new QPushButton("Read current swappiness");readSwap->setObjectName("readRuntimeSwappiness");
+        auto* applySwap=new QPushButton("Apply reviewed value…");applySwap->setObjectName("applyRuntimeSwappiness");applySwap->setEnabled(false);
+        auto* restoreSwap=new QPushButton("Restore captured value…");restoreSwap->setObjectName("restoreRuntimeSwappiness");restoreSwap->setEnabled(false);
+        auto* swapRow=new QHBoxLayout;swapRow->addWidget(readSwap);swapRow->addWidget(swapValue);swapRow->addWidget(applySwap);swapRow->addWidget(restoreSwap);swapLayout->addLayout(swapRow);
+        swapLayout->addWidget(text("Runtime only. Lower values discourage swap; values above 100 may suit measured compressed-swap workloads. Do not assume one value is best for all HDDs, SSDs or zRAM. Changes persist until changed or rebooted; restore uses the value captured in this session.","muted"));
+        const auto readValue=[]()->int{QFile file("/proc/sys/vm/swappiness");if(!file.open(QIODevice::ReadOnly))return -1;bool ok=false;const int value=file.read(32).trimmed().toInt(&ok);return ok&&value>=0&&value<=200?value:-1;};
+        auto originalSwap=std::make_shared<int>(-1);auto lastApplied=std::make_shared<int>(-1);
+        QObject::connect(readSwap,&QPushButton::clicked,content,[=]{const int now=readValue();if(now<0){swapStatus->setText("Swappiness unavailable.");applySwap->setEnabled(false);restoreSwap->setEnabled(false);return;}if(*originalSwap<0){*originalSwap=now;}swapValue->setValue(now);applySwap->setEnabled(true);restoreSwap->setEnabled(*lastApplied>=0&&now==*lastApplied&&now!=*originalSwap);swapStatus->setText(QString("Current: %1 · Original session value: %2").arg(now).arg(*originalSwap));});
+        const auto applyValue=[=](bool restore){
+            if(tux::admin::busy())return;
+            const int before=readValue(),target=restore?*originalSwap:swapValue->value();
+            if(before<0||*originalSwap<0||target<0||target>200||(restore&&before!=*lastApplied)){swapStatus->setText("Current state changed or is unavailable; read again before proceeding.");return;}
+            if(before==target){swapStatus->setText("Requested value already active.");return;}
+            const QStringList request={"memory","swappiness",QString::number(target)};
+            auto command=tux::admin::typedCommand(request);const auto auth=tux::trustedSystemExecutable("pkexec"),sysctl=tux::trustedSystemExecutable("sysctl");
+            if(command.isEmpty()||auth.isEmpty()||sysctl.isEmpty()){swapStatus->setText("Required trusted administrator utilities unavailable.");return;}
+            command[0]=sysctl;
+            if(QMessageBox::question(content,"Review runtime swap change",QString("Change vm.swappiness from %1 to %2 for the current boot? No persistent configuration files will be changed.").arg(before).arg(target),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            if(readValue()!=before||tux::admin::busy()){swapStatus->setText("System state changed during review. Read again.");return;}
+            QDialog progress(content);progress.setWindowTitle("Applying runtime memory setting");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+            auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator authorization and kernel readback…"));
+            applySwap->setEnabled(false);restoreSwap->setEnabled(false);readSwap->setEnabled(false);
+            tux::admin::runReviewed(&progress,request,auth,command,4096,[&](const AsyncCommandResult& result){
+                const int after=readValue();if(result.ok()&&after==target){*lastApplied=after;swapStatus->setText(QString("Verified kernel value: %1 · Original: %2").arg(after).arg(*originalSwap));}else swapStatus->setText(QString("Change not verified. Current kernel value: %1. Review before retrying.").arg(after));
+                if(after>=0)swapValue->setValue(after);
+                progress.done(0);
+            });
+            // A modal action must remain alive until the worker returns.
+            progress.exec();readSwap->setEnabled(true);applySwap->setEnabled(readValue()>=0);restoreSwap->setEnabled(*lastApplied>=0&&readValue()==*lastApplied&&*lastApplied!=*originalSwap);
+            refreshActionIndicators();
+        };
+        QObject::connect(applySwap,&QPushButton::clicked,content,[applyValue]{applyValue(false);});
+        QObject::connect(restoreSwap,&QPushButton::clicked,content,[applyValue]{applyValue(true);});
+        layout->addWidget(swapPanel);
         auto* activity=text("Swap activity not measured. Kernel paging counters are not physical disk throughput.","muted");
         activity->setObjectName("swapActivityStatus");activity->setTextFormat(Qt::PlainText);fl->addWidget(activity);
         auto* sample=new QPushButton("Measure system-wide swap activity (2 seconds)");
