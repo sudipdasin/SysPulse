@@ -3,7 +3,7 @@
 """Local, bounded read-only diagnostics and outcome-guided Boost policy.
 No remote telemetry, shell evaluation, automatic privilege elevation or learned commands.
 """
-import argparse, concurrent.futures, datetime, errno, gzip, hashlib, json, os
+import argparse, concurrent.futures, datetime, gzip, json, os
 import pathlib, re, secrets, selectors, signal, sqlite3, stat, subprocess, time, unittest
 P=pathlib.Path
 MAX_READ=1024*1024
@@ -117,6 +117,12 @@ def collect_job(spec):
         if kind=="file":
             raw,limited=bounded_file(args[0],tail=True)
             status="bounded" if limited else "ok"
+        elif kind=="gzip":
+            fd=os.open(args[0],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            with os.fdopen(fd,"rb") as f:
+                st=os.fstat(f.fileno());require(stat.S_ISREG(st.st_mode) and st.st_size<=MAX_READ,"Compressed source exceeds budget")
+                with gzip.GzipFile(fileobj=f) as gz:data=gz.read(MAX_READ+1)
+            limited=len(data)>MAX_READ;raw=data[:MAX_READ].decode("utf-8","replace");status="bounded" if limited else "ok"
         else:status,raw,limited=command(args,timeout=8)
         if kind=="journal":
             counts,lines,bad,more=event_counts(raw,True)
@@ -124,6 +130,7 @@ def collect_job(spec):
                 status="partial" if lines else "permission"
             if bad and status=="ok":status="partial"
             if more:limited=True;status="bounded"
+            if name!="journal-user-7days" and not lines and status=="ok":status="partial"
         elif kind=="services":
             lines=sum(1 for x in raw.splitlines() if x.strip())
             counts={"service_failure":lines} if lines and status=="ok" else {}
@@ -173,6 +180,7 @@ def specs():
       ("user-xorg-log",str(P.home()/".local/share/xorg/Xorg.0.log")),
       ("user-session-errors",str(P.home()/".xsession-errors")),
     ]:jobs.append((name,"file",[path]))
+    for name,path in [("syslog-rotated","/var/log/syslog.2.gz"),("kernel-log-rotated","/var/log/kern.log.2.gz"),("auth-log-rotated","/var/log/auth.log.2.gz"),("dpkg-log-rotated","/var/log/dpkg.log.2.gz"),("apt-history-rotated","/var/log/apt/history.log.1.gz"),("apt-terminal-rotated","/var/log/apt/term.log.1.gz")]:jobs.append((name,"gzip",[path]))
     return jobs
 def numeric_snapshot():
     def kv(path):
@@ -230,7 +238,7 @@ def assess(metrics,sources,history):
     # Unknown coverage never becomes a clean bill of health.
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
     package_ok=any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
-    kernel_ok=any(s["name"] in ("journal-system-current-boot","kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
+    kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
               "archives":storage_ok and kernel_ok and package_ok and not critical_storage and not critical_other,
@@ -250,7 +258,7 @@ def assess(metrics,sources,history):
             (action in ("thumbnails","archives") and context=="disk") or
             (action in ("own_memory","pause_monitoring") and context=="memory"))
         recommendations[action]={"allowed":bool(eligible[action]),"recommended":bool(default),
-            "reason":reasons[action]+(" Repeated historical failures: manual review preferred." if demoted else ""),
+            "reason":reasons[action]+(" Blocked: storage/kernel coverage or health is insufficient." if not eligible[action] else "")+(" Repeated historical failures: manual review preferred." if demoted else ""),
             "history":h}
     return {"findings":findings,"coverage":{"sources":len(sources),"readable":sum(s["status"] in ("ok","empty","bounded","partial") for s in sources),
             "limited":sum(s["status"] not in ("ok","empty") for s in sources)},
@@ -297,7 +305,8 @@ def record_analysis(c,metrics,sources,boot,tick,now):
     with c:
         c.execute("BEGIN IMMEDIATE")
         assessment=assess(metrics,sources,history(c));ident=secrets.token_hex(16)
-        c.execute("UPDATE analysis SET state='invalid' WHERE state='ready'")
+        require(not c.execute("SELECT 1 FROM analysis WHERE state='reserved' AND boot=? AND tick>=? LIMIT 1",(boot,tick-MAX_AGE)).fetchone(),"Previous Boost is still pending; review history before retry")
+        c.execute("UPDATE analysis SET state='invalid' WHERE state IN ('ready','reserved')")
         c.execute("INSERT INTO analysis VALUES(?,?,?,?,?,?,?,?,?)",(ident,now,boot,tick,"ready",assessment["context"],json.dumps(metrics),json.dumps(sources),json.dumps(assessment)))
         c.execute("DELETE FROM analysis WHERE id IN (SELECT id FROM analysis ORDER BY utc DESC,rowid DESC LIMIT -1 OFFSET ?)",(RETENTION,))
     return {"schema":1,"id":ident,"utc":now,"state":"ready","metrics":metrics,"sources":sources,**assessment}
@@ -350,7 +359,10 @@ def main():
                 result=record_analysis(c,m,rows,b,clock(),int(time.time()))
             elif a.mode=="history":result=show_history(c)
             elif a.mode=="clear":
-                with c:c.execute("DELETE FROM analysis")
+                with c:
+                    c.execute("BEGIN IMMEDIATE")
+                    require(not c.execute("SELECT 1 FROM analysis WHERE state='reserved' AND boot=? AND tick>=? LIMIT 1",(boot_id(),clock()-MAX_AGE)).fetchone(),"Boost pending; history cannot be cleared yet")
+                    c.execute("DELETE FROM analysis")
                 c.execute("VACUUM");result={"schema":1,"state":"cleared"}
             elif a.mode=="plan":result=read_analysis(c,a.id,boot_id(),clock(),int(time.time()))
             elif a.mode=="reserve":result=reserve(c,a.id,json.loads(a.payload),boot_id(),clock(),int(time.time()),numeric_snapshot())
@@ -426,6 +438,12 @@ def run_tests():
             r=self.make();reserve(self.c,r["id"],["archives"],self.b,self.t,self.n,self.m)
             finish(self.c,r["id"],{"archives":{"status":"success","bytes":50}},self.m)
             self.s.append(source("syslog","ok",{"filesystem":1},1));self.assertFalse(self.make()["recommendations"]["archives"]["allowed"])
+        def test_pending_blocks_new_analysis(self):
+            r=self.make();reserve(self.c,r["id"],["own_memory"],self.b,self.t,self.n,self.m)
+            self.assertRaises(ValueError,self.make)
+            r2=record_analysis(self.c,self.m,self.s,self.b,self.t+901,self.n+901)
+            self.assertEqual(r2["state"],"ready")
+            self.assertEqual(self.c.execute("SELECT state FROM analysis WHERE id=?",(r["id"],)).fetchone()[0],"invalid")
         def test_retention(self):
             for _ in range(RETENTION+2):self.make()
             self.assertEqual(self.c.execute("SELECT count(*) FROM analysis").fetchone()[0],RETENTION)
