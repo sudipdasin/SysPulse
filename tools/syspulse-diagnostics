@@ -10,6 +10,7 @@ import syspulse_hybrid as hybrid
 import syspulse_outcomes as outcomes
 import syspulse_recovery as recovery
 import syspulse_native_probes as native_probes
+import syspulse_integrity as integrity
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -221,6 +222,15 @@ def apt_solver_source():
                notes="Read-only APT simulation; package names discarded; no execution authorized.")
     row["apt_simulation"]=plan
     return row
+def integrity_source():
+    rows=integrity.integrity(command)
+    core=sum(x.get("core_file_changes",0) for x in rows)
+    complete=all(x["status"]!="unknown" for x in rows)
+    row=source("dpkg-core-integrity","ok" if complete else "partial",
+               {"package_failure":core} if core else {},lines=len(rows),
+               notes="Installed metadata comparison only; no proof of authenticity or malware status.")
+    row["integrity"]=rows
+    return row
 def interval_source():
     data=native_probes.collect_vm(command)
     row=source("procps-interval-sampling","ok" if data["status"]=="sampled" else "partial",
@@ -303,6 +313,7 @@ def assess(metrics,sources,history):
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
     package_ok=not events["package_failure"] and any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
     package_ok=package_ok and all(s.get("apt_simulation",{}).get("status")=="no_changes" for s in sources if s["name"]=="apt-repair-simulation")
+    package_ok=package_ok and all(s["status"]=="ok" and not s["events"] for s in sources if s["name"]=="dpkg-core-integrity")
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
@@ -620,8 +631,8 @@ def main():
             if a.mode=="analyze":
                 b=boot_id();start=clock()
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:rows=list(pool.map(collect_job,specs()))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                    extra=[pool.submit(fn) for fn in (smart_source,apt_solver_source,interval_source)]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    extra=[pool.submit(fn) for fn in (smart_source,apt_solver_source,interval_source,integrity_source)]
                     rows.extend(f.result() for f in extra)
                 m=numeric_snapshot();require(boot_id()==b and clock()-start<=120,"Analysis interrupted or exceeded time budget")
                 result=record_analysis(c,m,rows,b,clock(),int(time.time()))
@@ -641,9 +652,9 @@ def main():
                 if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
                 if fresh is not None:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                         extra=[pool.submit(smart_source)]
-                        if "archives" in selected:extra.append(pool.submit(apt_solver_source))
+                        if "archives" in selected:extra.extend([pool.submit(apt_solver_source),pool.submit(integrity_source)])
                         fresh.extend(f.result() for f in extra)
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
             else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
@@ -739,6 +750,10 @@ def run_tests():
             r=source("fixture","ok",counts,3);r["recovery_observations"]=obs
             a=record_analysis(self.c,self.m,self.s+[r],self.b,self.t,self.n)
             self.assertEqual(a["recovery_observations"],obs)
+        def test_integrity_gate(self):
+            for state,events in (("partial",{}),("ok",{"package_failure":1})):
+                row=source("dpkg-core-integrity",state,events)
+                self.assertFalse(assess(self.m,self.s+[row],{})["recommendations"]["archives"]["allowed"])
         def test_solver_requires_review(self):
             for state in ("review","removal_blocked","solver_failed","unknown"):
                 row=source("apt-repair-simulation","partial");row["apt_simulation"]={"status":state}
