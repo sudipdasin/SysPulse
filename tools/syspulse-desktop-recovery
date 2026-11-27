@@ -1,0 +1,128 @@
+#!/usr/bin/python3
+"""Capture and restore reviewed XFCE window-manager boolean settings."""
+import hashlib, json, os, re, stat, subprocess, sys, tempfile, unittest
+from pathlib import Path
+
+KEYS=('use_compositing','click_to_focus','raise_on_click','focus_new','snap_to_border','snap_to_windows','wrap_workspaces')
+EXE='/usr/bin/xfconf-query'
+def canonical(obj): return json.dumps(obj,sort_keys=True,separators=(',',':')).encode()
+def validate(data):
+    if not isinstance(data,dict) or not data or any(k not in KEYS or type(v) is not bool for k,v in data.items()):
+        raise ValueError('Invalid or unsupported desktop snapshot')
+    return data
+
+def path(home):
+    p=home
+    for item in ('','.local','state','syspulse','desktop-recovery'):
+        if item: p=p/item; p.mkdir(mode=0o700,exist_ok=True)
+        s=p.lstat()
+        if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&0o022: raise ValueError('Unsafe snapshot directory')
+    if p.stat().st_mode&0o077: raise ValueError('Snapshot directory must be private')
+    return p/'settings.json'
+
+def load(p):
+    fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,'rb') as f:
+        s=os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or s.st_mode&0o077 or s.st_size>4096: raise ValueError('Unsafe snapshot file')
+        obj=json.loads(f.read(4097))
+    if not isinstance(obj,dict) or set(obj)!={'schema','values'} or obj['schema']!=1: raise ValueError('Invalid snapshot schema')
+    return validate(obj['values'])
+
+def save(p,values):
+    validate(values)
+    if os.path.lexists(p): load(p)
+    fd,tmp=tempfile.mkstemp(dir=p.parent,prefix='.snapshot-')
+    try:
+        with os.fdopen(fd,'wb') as f: f.write(canonical({'schema':1,'values':values})+b'\n'); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp,p)
+    finally:
+        if os.path.exists(tmp): os.unlink(tmp)
+    if load(p)!=values: raise RuntimeError('Snapshot readback failed')
+
+def read_key(key):
+    if key not in KEYS: raise ValueError('Unknown setting')
+    r=subprocess.run([EXE,'-c','xfwm4','-p','/general/'+key],capture_output=True,text=True,timeout=5)
+    value=r.stdout.strip()
+    if r.returncode or value not in ('true','false'): return None
+    return value=='true'
+
+def write_key(key,value):
+    if key not in KEYS or type(value) is not bool: raise ValueError('Invalid setting')
+    subprocess.run([EXE,'-c','xfwm4','-p','/general/'+key,'-s','true' if value else 'false'],stdin=subprocess.DEVNULL,capture_output=True,timeout=5,check=True)
+
+def capture(read):
+    values={k:read(k) for k in KEYS}
+    return validate({k:v for k,v in values.items() if type(v) is bool})
+
+def plan(snapshot,read):
+    validate(snapshot); before={k:read(k) for k in snapshot}
+    if any(type(v) is not bool for v in before.values()): raise ValueError('Saved property unavailable; nothing changed')
+    return {'before':before,'target':snapshot,'token':hashlib.sha256(canonical([before,snapshot])).hexdigest()}
+
+def restore(snapshot,token,read,write):
+    review=plan(snapshot,read)
+    if review['token']!=token: raise ValueError('Snapshot or current desktop state changed; review again')
+    before=review['before']; changed=[]
+    try:
+        for key,value in snapshot.items():
+            if before[key]==value: continue
+            if read(key)!=before[key]: raise RuntimeError('Setting changed during restore')
+            changed.append(key); write(key,value)
+            if read(key)!=value: raise RuntimeError('Setting readback failed')
+    except Exception as e:
+        failed=[]
+        for key in reversed(changed):
+            try:
+                now=read(key)
+                if now==snapshot[key]: write(key,before[key])
+                if read(key)!=before[key]: failed.append(key)
+            except Exception: failed.append(key)
+        raise RuntimeError('Restore failed; '+('rollback unverified: '+', '.join(failed) if failed else 'previous values verified')) from e
+    return plan(snapshot,read)
+
+class Tests(unittest.TestCase):
+    def setUp(self): self.tmp=tempfile.TemporaryDirectory();self.p=path(Path(self.tmp.name));self.state={KEYS[0]:False,KEYS[1]:True}
+    def tearDown(self): self.tmp.cleanup()
+    def read(self,k): return self.state.get(k)
+    def write(self,k,v): self.state[k]=v
+    def test_capture(self): self.assertEqual(capture(self.read),self.state)
+    def test_save(self): save(self.p,self.state);self.assertEqual(load(self.p),self.state);self.assertEqual(self.p.stat().st_mode&0o777,0o600)
+    def test_restore(self):
+        s={KEYS[0]:True,KEYS[1]:False}; result=restore(s,plan(s,self.read)['token'],self.read,self.write);self.assertEqual(result['before'],s)
+    def test_stale(self):
+        s={KEYS[0]:True};t=plan(s,self.read)['token'];self.state[KEYS[0]]=True
+        with self.assertRaises(ValueError): restore(s,t,self.read,self.write)
+    def test_invalid(self):
+        for s in ({'arbitrary':True},{KEYS[0]:'true'},{KEYS[0]:1},{},[]):
+            with self.assertRaises(ValueError): validate(s)
+    def test_missing(self):
+        with self.assertRaises(ValueError): plan({KEYS[2]:True},self.read)
+    def test_partial(self):
+        s={KEYS[0]:True,KEYS[1]:False}; before=dict(self.state)
+        def writer(k,v):
+            if k==KEYS[1]: raise RuntimeError('failure')
+            self.write(k,v)
+        with self.assertRaisesRegex(RuntimeError,'previous values verified'): restore(s,plan(s,self.read)['token'],self.read,writer)
+        self.assertEqual(self.state,before)
+    def test_symlink(self):
+        target=self.p.parent/'target';target.write_text('safe');self.p.symlink_to(target)
+        with self.assertRaises(OSError): save(self.p,self.state)
+        self.assertEqual(target.read_text(),'safe')
+    def test_malformed(self):
+        self.p.write_text('{}');self.p.chmod(0o600)
+        with self.assertRaises(ValueError): save(self.p,self.state)
+    def test_permissions(self):
+        save(self.p,self.state);self.p.chmod(0o644)
+        with self.assertRaises(ValueError): load(self.p)
+
+if __name__=='__main__':
+    if sys.argv[1:]==['--self-test']: unittest.main(argv=[sys.argv[0]])
+    try:
+        if os.geteuid()==0: raise ValueError('Run as the desktop user')
+        p=path(Path.home());args=sys.argv[1:]
+        if args==['capture']: save(p,capture(read_key));print('Saved '+str(p))
+        elif args==['plan']: print(canonical(plan(load(p),read_key)).decode())
+        elif len(args)==2 and args[0]=='restore' and re.fullmatch(r'[a-f0-9]{64}',args[1]): print(canonical(restore(load(p),args[1],read_key,write_key)).decode())
+        else: raise ValueError('Use capture, plan or restore TOKEN')
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as e: print('ERROR: '+str(e),file=sys.stderr);sys.exit(1)
