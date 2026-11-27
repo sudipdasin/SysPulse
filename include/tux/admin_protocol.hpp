@@ -27,6 +27,13 @@ inline QStringList typedCommand(const QStringList& fields){
         if(!a.startsWith('/')||a.size()>4096||a.contains(QChar::Null)||(b!="standard"&&b!="extended"))return {};
         return {"syspulse-volume-scan",a,b}; // helper independently validates exact canonical mounted local root
     }
+    if(kind=="memory"){
+        // Runtime-only, bounded kernel tuning. No caller-selected sysctl paths.
+        static const QRegularExpression number(R"(\A(?:0|[1-9][0-9]{0,2})\z)");
+        bool ok=false;const int value=b.toInt(&ok);
+        if(a!="swappiness"||!number.match(b).hasMatch()||!ok||value>200)return {};
+        return {"sysctl","-w","vm.swappiness="+b};
+    }
     if(kind=="service"){
         static const QSet<QString> verbs={"start","stop","restart","enable","disable"};
         static const QRegularExpression unit(R"(\A[A-Za-z0-9_@:.\\-]+\.service\z)");
