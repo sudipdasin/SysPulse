@@ -128,6 +128,24 @@ class PolicyTests(unittest.TestCase):
     def test_report_digest_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(f,"download",return_value=b"altered report"):
             with self.assertRaises(ValueError):f.fetch(P(tmp),self.p,self.c)
+    def test_protected_handoff_real_accounts(self):
+        from source_signer import read_protected
+        p=P("/var/lib/deb-release-test/validator/approval.json")
+        self.assertEqual(read_protected(p,10002),b"fixture approval\n")
+        self.assertFalse(os.access(p,os.W_OK))
+        self.assertFalse(os.access(p.parent,os.W_OK))
+        self.assertFalse(os.access("/var/lib/deb-release-test/validator/private-token",os.R_OK))
+        for name in ("writable.json","hardlink.json","symlink.json","unsafe/approval.json","foreign.json"):
+            with self.subTest(name=name),self.assertRaises((ValueError,OSError)):read_protected(p.parent/name,10002)
+        with self.assertRaises(ValueError):read_protected(p,os.getuid())
+    def test_sign_without_private_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home=P(tmp);p=policy(strict(trusted_file("/etc/deb-release/syspulse.json")));key=f.anchor(home,p)
+            gpg=home/"gnupg";gpg.mkdir(mode=0o700);root=home/"feed";root.mkdir()
+            (root/"Release").write_text("fixture content\n")
+            f.run(home,"gpg","--batch","--homedir",gpg,"--import",key)
+            with self.assertRaises(ValueError):f.sign(home,p,root,gpg,None)
+            self.assertFalse((root/"InRelease").exists())
     def test_signed_owner_fixture(self):
         # Uses actual public owner signature, not a generated or private key.
         with tempfile.TemporaryDirectory() as tmp:
