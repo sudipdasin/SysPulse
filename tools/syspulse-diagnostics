@@ -11,6 +11,7 @@ import syspulse_outcomes as outcomes
 import syspulse_recovery as recovery
 import syspulse_native_probes as native_probes
 import syspulse_integrity as integrity
+from syspulse_package_evidence import package_evidence_ok
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -311,9 +312,7 @@ def assess(metrics,sources,history):
     if critical_storage:findings.append({"code":"storage_review_required","level":"critical","observations":1})
     # Unknown coverage never becomes a clean bill of health.
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
-    package_ok=not events["package_failure"] and any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
-    package_ok=package_ok and all(s.get("apt_simulation",{}).get("status")=="no_changes" for s in sources if s["name"]=="apt-repair-simulation")
-    package_ok=package_ok and all(s["status"]=="ok" and not s["events"] for s in sources if s["name"]=="dpkg-core-integrity")
+    package_ok=not events["package_failure"] and package_evidence_ok(sources)
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
@@ -560,6 +559,8 @@ def reserve(c,ident,selected,boot,tick,now,metrics,owner=None,fresh_sources=None
         require(all(row["recommendations"][a]["allowed"] is True for a in selected),"Action not permitted by analysis")
         if any(a in ("thumbnails","failed_thumbnails","archives") for a in selected):
             require(all(metrics.get(x+"_readonly") is False and metrics.get(x+"_total_bytes",0)>0 and metrics.get(x+"_device")==row["metrics"].get(x+"_device") for x in ("root","home","apt")),"Storage changed or unavailable")
+            if "archives" in selected:
+                require(fresh_sources is not None,"Fresh native package checks required")
             if fresh_sources is not None:
                 fresh=assess(metrics,fresh_sources,{})
                 require(all(fresh["recommendations"][a]["allowed"] for a in selected),"Fresh kernel/package checks block the selected actions")
@@ -663,11 +664,17 @@ def main():
         print(json.dumps({"schema":1,"error":str(e)[:300]}));return 1
 def run_tests():
     import tempfile
+    def package_fixture():
+        solver=source("apt-repair-simulation","ok")
+        solver["apt_simulation"]={"status":"no_changes","execution_authorized":False,"install_or_upgrade":0,"configure":0,"remove":0,"held_back":0}
+        core=source("dpkg-core-integrity","ok",lines=3)
+        core["integrity"]=[{"package":p,"status":"no_reported_differences","core_file_changes":0} for p in ("dpkg","apt","systemd")]
+        return [solver,core]
     class Tests(unittest.TestCase):
         def setUp(self):
             self.c=connect(":memory:");self.b="boot-fixture";self.t=100.0;self.n=1000
             self.m={"memory_total_kib":1000,"memory_available_kib":100,"root_total_bytes":1000,"root_free_bytes":100,"root_readonly":False,"home_total_bytes":1000,"home_free_bytes":500,"home_readonly":False,"apt_total_bytes":1000,"apt_free_bytes":100,"apt_readonly":False}
-            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]
+            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]+package_fixture()
         def tearDown(self):self.c.close()
         def make(self):return record_analysis(self.c,self.m,self.s,self.b,self.t,self.n)
         def test_classification(self):
@@ -729,7 +736,7 @@ def run_tests():
             v=self.make()["recommendations"]["thumbnails"]
             self.assertFalse(v["recommended"]);self.assertTrue(v["allowed"]);self.assertEqual(v["history"]["failures"],3)
         def test_learning_never_overrides_safety(self):
-            r=self.make();reserve(self.c,r["id"],["archives"],self.b,self.t,self.n,self.m)
+            r=self.make();reserve(self.c,r["id"],["archives"],self.b,self.t,self.n,self.m,fresh_sources=self.s)
             finish(self.c,r["id"],{"archives":{"status":"success","bytes":50}},self.m)
             self.s.append(source("syslog","ok",{"filesystem":1},1));self.assertFalse(self.make()["recommendations"]["archives"]["allowed"])
         def test_pending_blocks_new_analysis(self):
@@ -759,8 +766,18 @@ def run_tests():
                 row=source("apt-repair-simulation","partial");row["apt_simulation"]={"status":state}
                 a=assess(self.m,self.s+[row],{})
                 self.assertFalse(a["recommendations"]["archives"]["allowed"])
-            row=source("apt-repair-simulation","ok");row["apt_simulation"]={"status":"no_changes"}
-            self.assertTrue(assess(self.m,self.s+[row],{})["recommendations"]["archives"]["allowed"])
+            self.assertTrue(assess(self.m,self.s,{})["recommendations"]["archives"]["allowed"])
+        def test_package_evidence_required(self):
+            for name in ("dpkg-audit","apt-repair-simulation","dpkg-core-integrity"):
+                rows=[s for s in self.s if s["name"]!=name]
+                result=assess(self.m,rows,{})["recommendations"]
+                self.assertFalse(result["archives"]["allowed"])
+                self.assertTrue(result["thumbnails"]["allowed"])
+        def test_archive_reservation_requires_fresh_evidence(self):
+            r=self.make()
+            self.assertRaises(ValueError,reserve,self.c,r["id"],["archives"],self.b,self.t,self.n,self.m)
+            self.assertRaises(ValueError,reserve,self.c,r["id"],["archives"],self.b,self.t,self.n,self.m,fresh_sources=self.s[:2])
+            self.assertEqual(reserve(self.c,r["id"],["archives"],self.b,self.t,self.n,self.m,fresh_sources=self.s)["state"],"reserved")
         def test_recovery_controls_preserve_critical_errors(self):
             for msg in ("SMART health passed; 0 pending sectors","No errors detected in the RAM test.","Previous error resolved; service started successfully","GPU reset completed successfully."):
                 self.assertIsNone(classify(msg))
@@ -790,7 +807,7 @@ def run_tests():
         def setUp(self):
             self.c=connect(":memory:");self.now=1000;self.t=100.0;self.boot="boot-test"
             self.m={"memory_total_kib":1000,"memory_available_kib":100,"root_total_bytes":1000,"root_free_bytes":100,"root_readonly":False,"home_total_bytes":1000,"home_free_bytes":500,"home_readonly":False,"apt_total_bytes":1000,"apt_free_bytes":100,"apt_readonly":False}
-            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]
+            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]+package_fixture()
             self.calls=0
         def tearDown(self):self.c.close()
         def make(self):return record_analysis(self.c,self.m,self.s,self.boot,self.t,self.now)
