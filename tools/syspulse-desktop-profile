@@ -82,11 +82,12 @@ def review(profile,path,read):
     return {"profile":profile,"before":before,"target":target,"token":digest([profile,before,target,old])}
 def change(before,target,read,write,attempted=None):
     for k,v in target.items():
-        if read(k)!=before[k]: raise RuntimeError("Desktop setting changed during review")
+        if read(k) is not before[k]: raise RuntimeError("Desktop setting changed during review")
         if before[k]!=v:
             if attempted is not None: attempted.append(k)
             write(k,v)
-        if read(k)!=v: raise RuntimeError("Setting readback failed")
+        if read(k) is not v: raise RuntimeError("Setting readback failed")
+    if any(read(k) is not v for k,v in target.items()): raise RuntimeError("Complete desktop readback differs from target")
 def apply(profile,token,path,read,write):
     plan=review(profile,path,read)
     if plan["token"]!=token: raise ValueError("Settings or journal changed; review again")
@@ -95,7 +96,9 @@ def apply(profile,token,path,read,write):
     if profile=="restore":
         journal=old
     else:
-        if before==target: return {"status":"already-active","values":before}
+        if before==target:
+            if any(read(k) is not v for k,v in target.items()): raise RuntimeError("Desktop changed during review")
+            return {"status":"already-active","values":before}
         journal={"schema":1,"profile":profile,"before":before,"target":target}
         save_new(path,journal)
     attempted=[]
@@ -106,10 +109,16 @@ def apply(profile,token,path,read,write):
         # uncertain outcome, including a partial restore.
         try:
             for k in reversed(attempted):
-                now=read(k)
-                if now==target[k] and now!=before[k]:write(k,before[k])
-                if read(k)!=before[k]:raise RuntimeError('Rollback readback failed')
-            if any(read(k)!=v for k,v in before.items()):raise RuntimeError('External change during operation')
+                try:
+                    now=read(k)
+                    if now is target[k] and now is not before[k]:write(k,before[k])
+                except Exception: pass
+            failed=[]
+            for k,v in before.items():
+                try:
+                    if read(k) is not v:failed.append(k)
+                except Exception:failed.append(k)
+            if failed:raise RuntimeError('Rollback readback failed')
             if profile!="restore": clear(path,journal)
         except Exception as rollback:
             raise RuntimeError("Change failed; rollback unverified. Recovery journal retained.") from rollback
@@ -174,6 +183,49 @@ class Tests(unittest.TestCase):
         plan=review("responsive",self.p,self.read)
         save_new(self.p,{"schema":1,"profile":"responsive","before":plan["before"],"target":plan["target"]})
         self.state["compositing"]=False;self.go("restore");self.assertTrue(all(self.state.values()))
+    def test_final_apply_drift(self):
+        def writer(k,v):
+            self.write(k,v)
+            if k=="animations" and v is False:self.state["compositing"]=True
+        with self.assertRaisesRegex(RuntimeError,"previous values verified"):self.go("responsive",writer)
+        self.assertTrue(all(self.state.values()));self.assertFalse(self.p.exists())
+    def test_final_restore_drift_retains_journal(self):
+        self.go("responsive")
+        def writer(k,v):
+            self.write(k,v)
+            if k=="compositing" and v is True:self.state["animations"]=False
+        with self.assertRaisesRegex(RuntimeError,"previous values verified"):self.go("restore",writer)
+        self.assertFalse(any(self.state.values()));self.assertIsNotNone(load(self.p))
+        self.go("restore");self.assertFalse(self.p.exists())
+    def test_invalid_boolean_readback(self):
+        def writer(k,v):self.state[k]=int(v)
+        with self.assertRaisesRegex(RuntimeError,"journal retained"):self.go("responsive",writer)
+        self.assertIsNotNone(load(self.p))
+    def test_rollback_attempts_all_keys(self):
+        def writer(k,v):
+            if k=="animations" and v is True:raise OSError("restore failure")
+            self.write(k,v)
+            if k=="animations" and v is False:raise OSError("write partially completed")
+        with self.assertRaisesRegex(RuntimeError,"journal retained"):self.go("responsive",writer)
+        self.assertIs(self.state["compositing"],True);self.assertIs(self.state["animations"],False)
+        self.assertIsNotNone(load(self.p))
+    def test_already_active_drift(self):
+        token=review("visual",self.p,self.read)["token"]
+        calls=0
+        def reader(k):
+            nonlocal calls
+            calls+=1
+            return False if calls==3 else self.read(k)
+        with self.assertRaisesRegex(RuntimeError,"changed during review"):apply("visual",token,self.p,reader,self.write)
+        self.assertFalse(self.p.exists())
+    def test_final_untouched_drift(self):
+        self.state["compositing"]=False
+        def writer(k,v):
+            self.write(k,v)
+            if k=="animations" and v is False:self.state["compositing"]=True
+        with self.assertRaisesRegex(RuntimeError,"journal retained"):self.go("responsive",writer)
+        self.assertIs(self.state["compositing"],True);self.assertIs(self.state["animations"],True)
+        self.assertIsNotNone(load(self.p))
     def test_symlink(self):
         target=self.p.parent/"target";target.write_text("keep");self.p.symlink_to(target)
         with self.assertRaises(OSError):self.go("responsive")
