@@ -255,6 +255,7 @@ int main(int argc,char** argv) {
         require(window.findChild<QPushButton*>("offlineFilesystemRefresh")&&window.findChild<QPushButton*>("offlineFilesystemCheck")&&!window.findChild<QPushButton*>("offlineFilesystemRepair")->isEnabled(),"offline repair gated until reviewed check");
         require(window.findChild<QPushButton*>("applyRuntimeSwappiness")&&!window.findChild<QPushButton*>("applyRuntimeSwappiness")->isEnabled(),"runtime memory action gated until capture");
         require(window.findChild<QPushButton*>("launchBraveBounded")&&window.findChild<QComboBox*>("physicalInputDevices"),"browser and input action controls present");
+        require(window.findChild<QComboBox*>("wifiRadioValue")&&window.findChild<QComboBox*>("powerProfileValue"),"native radio and power controls present");
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
