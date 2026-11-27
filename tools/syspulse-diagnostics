@@ -35,7 +35,7 @@ def require(ok,msg):
     if not ok:raise ValueError(msg)
 def boot_id():
     s=P("/proc/sys/kernel/random/boot_id").read_text().strip()
-    require(re.fullmatch(r"[0-9a-f-]{36}",s),"Boot identity unavailable")
+    require(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",s),"Boot identity unavailable")
     return s
 def clock():return time.clock_gettime(time.CLOCK_BOOTTIME)
 def bounded_file(path,tail=False,limit=MAX_READ):
@@ -451,6 +451,12 @@ def run_tests():
             with tempfile.TemporaryDirectory() as t:
                 p=P(t);(p/"x").symlink_to("/etc/passwd");os.mkfifo(p/"fifo")
                 self.assertRaises(OSError,bounded_file,p/"x");self.assertRaises(ValueError,bounded_file,p/"fifo")
+        def test_actual_command_limits(self):
+            status,raw,bounded=command(["printf","%s","x"*2000],limit=100)
+            self.assertEqual(status,"bounded");self.assertTrue(bounded);self.assertEqual(len(raw),100)
+        def test_actual_command_timeout(self):
+            status,_,_=command(["sleep","1"],timeout=0.03)
+            self.assertEqual(status,"timeout")
         def test_bounded_tail(self):
             with tempfile.TemporaryDirectory() as t:
                 p=P(t)/"log";p.write_text("secret-old\n"+"x"*50+"\nnew\n")
