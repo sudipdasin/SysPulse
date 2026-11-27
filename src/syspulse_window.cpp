@@ -281,7 +281,7 @@ struct Window::Impl {
         auto* storage=toolbox({"Storage","Maintenance"});toolboxes.insert("storage",storage);
         auto* storageTabs=new QTabWidget;storageTabs->setObjectName("storageWorkspaceTabs");storageTabs->addTab(storage,"Diagnostics & cleanup");
         storageTabs->addTab(installedTools("Use installed disk tools. Partition changes can destroy data; back up before modifying a disk.",{{"Disk management","gnome-disks"},{"Partition editor","gparted"},{"Disk usage analyzer","baobab"},{"File manager","thunar"},{"Cache cleanup","bleachbit"}}),"Disk tools");
-        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");storageTabs->addTab(offlineDiskPage(),"Filesystem repair");storageTabs->setCurrentIndex(2);
+        storageTabs->addTab(cleanerPage([this](const QString& id){locateMaintenanceTool(id);}),"Cleaner");storageTabs->addTab(offlineDiskPage(),"Filesystem repair");storageTabs->addTab(hddProfilePage(),"HDD optimization");storageTabs->setCurrentIndex(2);
         pages.insert("storage",workspace("Storage & cleanup","Scan disks, review and delete eligible cache files, or run reviewed system maintenance actions.",storageTabs));
         pages.insert("management",management);
         pages.insert("control",controlPanelPage());
@@ -520,6 +520,52 @@ struct Window::Impl {
             grid->addWidget(toolTile(b,entry.first,!program.isEmpty()),index/2,index%2);++index;
         }
         layout->addLayout(grid);layout->addStretch();return content;
+    }
+    QWidget* hddProfilePage() {
+        auto* page=new QWidget;auto* layout=new QVBoxLayout(page);
+        layout->addWidget(text("Rotational disk runtime tuning","sectionTitle"));
+        layout->addWidget(text("Adjust kernel read-ahead on eligible whole physical HDDs only. No filesystem data, partitions or persistent settings are changed. Larger read-ahead can help sequential workloads but hurt random I/O. Capture and restore the original setting; benchmark your actual workload. SSDs, partitions and devices without stable identity are excluded.","muted"));
+        auto* devices=new QComboBox;devices->setObjectName("hddProfileDevices");layout->addWidget(devices);
+        auto* status=text("Refresh eligible HDDs.","muted");status->setObjectName("hddProfileStatus");status->setTextFormat(Qt::PlainText);layout->addWidget(status);
+        auto* value=new QSpinBox;value->setRange(0,4096);value->setSuffix(" KiB");value->setObjectName("hddReadAheadValue");
+        auto* refresh=new QPushButton("Refresh disk settings");auto* apply=new QPushButton("Apply reviewed read-ahead…");apply->setObjectName("hddProfileApply");auto* restore=new QPushButton("Restore original setting…");restore->setObjectName("hddProfileRestore");
+        apply->setEnabled(false);restore->setEnabled(false);value->setEnabled(false);
+        auto* row=new QHBoxLayout;row->addWidget(refresh);row->addWidget(value);row->addWidget(apply);row->addWidget(restore);layout->addLayout(row);
+        auto original=std::make_shared<QMap<QString,int>>(),lastApplied=std::make_shared<QMap<QString,int>>();
+        const auto selection=[=]{
+            const auto d=devices->currentData().toMap();const auto key=d.value("name").toString()+":"+d.value("identity").toString();const int before=d.value("read_ahead_kb",-1).toInt();
+            const bool ok=refresh->isEnabled()&&before>=0&&before<=4096;
+            value->setEnabled(ok);apply->setEnabled(ok);restore->setEnabled(ok&&original->contains(key)&&lastApplied->value(key,-1)==before&&original->value(key)!=before);
+            if(ok)value->setValue(before);
+        };
+        QObject::connect(devices,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[selection](int){selection();});
+        const auto reload=[=]{
+            const auto old=devices->currentData().toMap().value("identity").toString();devices->clear();refresh->setEnabled(false);apply->setEnabled(false);restore->setEnabled(false);value->setEnabled(false);
+            const auto exe=tux::trustedSystemExecutable("syspulse-hdd-profile");if(exe.isEmpty()){status->setText("Installed HDD helper unavailable.");refresh->setEnabled(true);return;}
+            AsyncCommand::run(page,exe,{"list"},10000,32768,[=](const AsyncCommandResult& result){
+                refresh->setEnabled(true);QJsonParseError error;const auto doc=QJsonDocument::fromJson(result.output,&error);
+                if(!result.ok()||error.error!=QJsonParseError::NoError||!doc.isArray()){status->setText("HDD inventory unavailable.");return;}
+                for(const auto& item:doc.array()){const auto d=item.toObject();const auto name=d.value("name").toString(),id=d.value("identity").toString();const int n=d.value("read_ahead_kb").toInt(-1);if(name.isEmpty()||id.isEmpty()||n<0||n>4096)continue;devices->addItem(name+" · "+QString::number(n)+" KiB",d.toVariantMap());if(id==old)devices->setCurrentIndex(devices->count()-1);}
+                status->setText(devices->count()?"Select a disk and review the proposed kernel setting.":"No eligible physical rotational disk found.");
+                selection();
+            });
+        };
+        QObject::connect(refresh,&QPushButton::clicked,page,reload);
+        const auto operate=[=](bool undo){
+            const auto d=devices->currentData().toMap();const auto name=d.value("name").toString(),id=d.value("identity").toString(),key=name+":"+id;const int before=d.value("read_ahead_kb",-1).toInt();
+            const int target=undo?original->value(key,-1):value->value();if(before<0||target<0||before==target||tux::admin::busy()||(undo&&lastApplied->value(key,-1)!=before))return;
+            const QStringList request={"hdd",name,id+","+QString::number(before)+","+QString::number(target)};
+            auto command=tux::admin::typedCommand(request);const auto exe=tux::trustedSystemExecutable("syspulse-hdd-profile"),auth=tux::trustedSystemExecutable("pkexec");
+            if(command.isEmpty()||exe.isEmpty()||auth.isEmpty())return;command[0]=exe;
+            if(QMessageBox::question(page,"Review rotational disk tuning",QString("Change %1 read-ahead from %2 to %3 KiB for this boot? The exact disk identity and current value are checked before writing. Performance improvement is not guaranteed.").arg(name).arg(before).arg(target),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            ReviewedProgress progress(page);progress.setWindowTitle("Applying reviewed HDD setting");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for authorization and kernel readback…"));
+            bool verified=false;QString output;
+            tux::admin::runReviewed(&progress,request,auth,command,4096,[&](const AsyncCommandResult& result){output=QString::fromUtf8(result.output).trimmed();verified=result.ok()&&output==QString::number(target);progress.done(0);});
+            progress.exec();if(verified){if(!original->contains(key))original->insert(key,before);lastApplied->insert(key,target);}
+            QMessageBox::information(page,"HDD setting",verified?"Kernel setting verified: "+output+" KiB":"Change not verified: "+output.left(600));refreshActionIndicators();reload();
+        };
+        QObject::connect(apply,&QPushButton::clicked,page,[operate]{operate(false);});QObject::connect(restore,&QPushButton::clicked,page,[operate]{operate(true);});
+        layout->addStretch();return page;
     }
     QWidget* offlineDiskPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);
