@@ -13,6 +13,10 @@ class Tests(unittest.TestCase):
     def test_removal_disabled(self):
         for status in ("ok","failed"):
             self.assertEqual(p.apt_result(status,"E: Packages need to be removed but remove is disabled.",False)["status"],"removal_blocked")
+    def test_summary_removal_count(self):
+        raw="0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.\nE: Packages need to be removed but remove is disabled."
+        r=p.apt_result("failed",raw,False)
+        self.assertEqual(r["status"],"removal_blocked");self.assertEqual(r["remove"],1);self.assertFalse(r["execution_authorized"])
     def test_purge_is_removal(self):
         self.assertEqual(p.apt_result("ok",SUMMARY+"Purg secret",False)["status"],"removal_blocked")
     def test_malformed_actions(self):
