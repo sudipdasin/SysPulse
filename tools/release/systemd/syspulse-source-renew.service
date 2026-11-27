@@ -1,0 +1,26 @@
+[Unit]
+Description=SysPulse source metadata renewal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=syspulse-signer
+Group=syspulse-signer
+UMask=0077
+WorkingDirectory=/opt/syspulse-release
+ExecStart=/usr/bin/python3 /opt/syspulse-release/tools/release/source_signer.py renew --state /var/lib/syspulse-signer --gpg-home /var/lib/syspulse-signer/gnupg --git-token /run/credentials/syspulse-source-renew.service/git-token --passphrase /run/credentials/syspulse-source-renew.service/gpg-passphrase --apply
+LoadCredential=git-token:/etc/syspulse-release/credentials/git-token
+LoadCredential=gpg-passphrase:/etc/syspulse-release/credentials/gpg-passphrase
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/syspulse-signer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+TimeoutStartSec=15min
