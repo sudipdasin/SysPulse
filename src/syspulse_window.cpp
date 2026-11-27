@@ -365,6 +365,67 @@ struct Window::Impl {
     void updateMetrics() {
         cpu->setText(performance->cpuValue());memory->setText(performance->memoryValue());disk->setText(performance->diskValue());network->setText(performance->networkValue());
     }
+    QWidget* reviewedSettingPanel(bool wifi) {
+        auto* page=panel();auto* layout=new QVBoxLayout(page);
+        const QString tool=wifi?"nmcli":"powerprofilesctl";
+        const QStringList readArgs=wifi?QStringList{"radio","wifi"}:QStringList{"get"};
+        layout->addWidget(text(wifi?"Wi-Fi radio control":"CPU/platform power profiles","sectionTitle"));
+        layout->addWidget(text(wifi?"Disabling Wi-Fi can disconnect this computer. The wired network is not changed.":"Uses power-profiles-daemon when installed; unsupported profiles fail without forcing kernel governor changes. Do not install it over a conflicting power manager.","muted"));
+        auto* status=text("Read current state first.","muted");status->setTextFormat(Qt::PlainText);layout->addWidget(status);
+        auto* choice=new QComboBox;choice->setObjectName(wifi?"wifiRadioValue":"powerProfileValue");
+        if(wifi){choice->addItem("Enabled","on");choice->addItem("Disabled","off");}
+        else{choice->addItem("Balanced","balanced");choice->addItem("Power saver","power-saver");choice->addItem("Performance","performance");}
+        auto* read=new QPushButton("Read current state");auto* apply=new QPushButton("Apply reviewed setting…");auto* restore=new QPushButton("Restore captured state…");
+        apply->setEnabled(false);restore->setEnabled(false);auto* row=new QHBoxLayout;row->addWidget(read);row->addWidget(choice);row->addWidget(apply);row->addWidget(restore);layout->addLayout(row);
+        auto original=std::make_shared<QString>(),currentValue=std::make_shared<QString>(),lastApplied=std::make_shared<QString>();
+        const auto normalize=[=](const AsyncCommandResult& r)->QString{
+            if(!r.ok())return {};const auto value=QString::fromUtf8(r.output).trimmed();
+            if(wifi)return value=="enabled"?"on":value=="disabled"?"off":QString{};
+            return value=="balanced"||value=="power-saver"||value=="performance"?value:QString{};
+        };
+        const auto readState=[=]{
+            const auto exe=tux::trustedSystemExecutable(tool);apply->setEnabled(false);restore->setEnabled(false);
+            if(exe.isEmpty()){status->setText("Required trusted utility unavailable: "+tool);return;}
+            read->setEnabled(false);
+            AsyncCommand::run(page,exe,readArgs,8000,4096,[=](const AsyncCommandResult& r){
+                read->setEnabled(true);*currentValue=normalize(r);
+                if(currentValue->isEmpty()){status->setText("State unavailable or unsupported.");return;}
+                if(original->isEmpty())*original=*currentValue;
+                choice->setCurrentIndex(choice->findData(*currentValue));apply->setEnabled(true);
+                restore->setEnabled(!lastApplied->isEmpty()&&*currentValue==*lastApplied&&*currentValue!=*original);
+                status->setText("Current: "+*currentValue+" · Original: "+*original);
+            });
+        };
+        QObject::connect(read,&QPushButton::clicked,page,readState);
+        const auto change=[=](bool undo){
+            const auto target=undo?*original:choice->currentData().toString();
+            const auto before=*currentValue;if(target.isEmpty()||before.isEmpty()||target==before||tux::admin::busy())return;
+            if(undo&&before!=*lastApplied)return;
+            const auto exe=tux::trustedSystemExecutable(tool),auth=tux::trustedSystemExecutable("pkexec");
+            const QStringList request={wifi?"network":"power",wifi?"wifi":"profile",target};
+            auto command=tux::admin::typedCommand(request);
+            if(exe.isEmpty()||auth.isEmpty()||command.isEmpty())return;command[0]=exe;
+            if(QMessageBox::question(page,"Review setting change",QString("Change %1 from %2 to %3? %4").arg(wifi?"Wi-Fi radio":"power profile",before,target,wifi&&target=="off"?"This can interrupt network access.":"You can restore the captured value."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            read->setEnabled(false);apply->setEnabled(false);restore->setEnabled(false);
+            AsyncCommand::run(page,exe,readArgs,8000,4096,[=](const AsyncCommandResult& query){
+                if(normalize(query)!=before||tux::admin::busy()){status->setText("State changed during review; read again.");read->setEnabled(true);return;}
+                ReviewedProgress progress(page);progress.setWindowTitle("Applying reviewed system setting");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+                auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for authorization and completion…"));
+                bool success=false;
+                tux::admin::runReviewed(&progress,request,auth,command,4096,[&](const AsyncCommandResult& result){success=result.ok();progress.done(0);});
+                progress.exec();refreshActionIndicators();
+                AsyncCommand::run(page,exe,readArgs,8000,4096,[=](const AsyncCommandResult& r){
+                    *currentValue=normalize(r);read->setEnabled(true);apply->setEnabled(!currentValue->isEmpty());
+                    if(success&&*currentValue==target){*lastApplied=target;status->setText("Verified: "+target+" · Original: "+*original);}
+                    else status->setText("Change not verified. Current: "+(currentValue->isEmpty()?QString("unknown"):*currentValue));
+                    if(!currentValue->isEmpty())choice->setCurrentIndex(choice->findData(*currentValue));
+                    restore->setEnabled(!lastApplied->isEmpty()&&*currentValue==*lastApplied&&*currentValue!=*original);
+                });
+            });
+        };
+        QObject::connect(apply,&QPushButton::clicked,page,[change]{change(false);});QObject::connect(restore,&QPushButton::clicked,page,[change]{change(true);});
+        return page;
+    }
     QWidget* networkPage() {
         auto* tabs=new QTabWidget;tabs->setObjectName("networkWorkspaceTabs");auto* connections=new QWidget;auto* layout=new QVBoxLayout(connections);
         auto* row=new QHBoxLayout;auto* reveal=new QCheckBox("Show local addresses");reveal->setObjectName("showNetworkAddresses");row->addWidget(reveal);row->addStretch();
@@ -379,7 +440,7 @@ struct Window::Impl {
                 table->setItem(row++,3,new QTableWidgetItem(reveal->isChecked()?addresses.join(", "):"Hidden · reveal locally"));
             }
         };
-        row->addWidget(button("Refresh interfaces",refresh,w));layout->addLayout(row);layout->addWidget(text("Addresses are hidden by default. Nothing is uploaded.","muted"));layout->addWidget(table,1);
+        row->addWidget(button("Refresh interfaces",refresh,w));layout->addLayout(row);layout->addWidget(text("Addresses are hidden by default. Nothing is uploaded.","muted"));layout->addWidget(table,1);layout->addWidget(reviewedSettingPanel(true));
         QObject::connect(reveal,&QCheckBox::toggled,w,[refresh]{refresh();});refresh();tabs->addTab(connections,"Connections");
         auto* diagnostics=toolbox({"Network"});toolboxes.insert("network",diagnostics);tabs->addTab(diagnostics,"Diagnostics");
         auto* throughput=new QWidget;auto* tl=new QVBoxLayout(throughput);tl->addWidget(text("Receive/transmit histories and interface selectors are available in Performance.","muted"));tl->addWidget(button("Open network throughput",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(4);},w,true));tl->addStretch();tabs->addTab(throughput,"Throughput");
@@ -691,7 +752,7 @@ struct Window::Impl {
         };
         QObject::connect(applySwap,&QPushButton::clicked,content,[applyValue]{applyValue(false);});
         QObject::connect(restoreSwap,&QPushButton::clicked,content,[applyValue]{applyValue(true);});
-        layout->addWidget(swapPanel);
+        layout->addWidget(swapPanel);layout->addWidget(reviewedSettingPanel(false));
         auto* activity=text("Swap activity not measured. Kernel paging counters are not physical disk throughput.","muted");
         activity->setObjectName("swapActivityStatus");activity->setTextFormat(Qt::PlainText);fl->addWidget(activity);
         auto* sample=new QPushButton("Measure system-wide swap activity (2 seconds)");
