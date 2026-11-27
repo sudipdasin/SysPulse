@@ -374,7 +374,9 @@
     "3.0.0-alpha.20",
     "3.0.0-alpha.21",
     "3.0.0-alpha.22",
-    "3.0.0-alpha.23"
+    "3.0.0-alpha.23",
+    "3.0.0-alpha.24",
+    "3.0.0-alpha.25"
   ],
   "audit_reference": "3.0.0-alpha.19",
   "audit_targets": [
@@ -401,6 +403,8 @@
     "unknown",
     "3.0.0-alpha.21",
     "3.0.0-alpha.22",
-    "3.0.0-alpha.23"
+    "3.0.0-alpha.23",
+    "3.0.0-alpha.24",
+    "3.0.0-alpha.25"
   ]
 }
