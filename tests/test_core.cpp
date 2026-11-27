@@ -42,7 +42,7 @@ int main(int argc,char** argv) {
         return tux::runCommand({self,"--child",mode},ms,std::move(cb));
     };
     try {
-        require(tux::actions().size()==57,"37 inherited tools plus twenty read-only diagnostic entries");
+        require(tux::actions().size()==58,"57 existing tools plus reversible SSD timer control");
         const QStringList added={"cpu-topology","kernel-version","uptime-summary","systemd-state","boot-history","discard-support","disk-transport","package-holds","package-origins","native-architecture","pci-inventory","usb-inventory","display-modes","compositor-state","graphics-renderer","link-counters","socket-summary","network-manager-state","system-timer-files","user-timer-files"};
         for(const auto& id:added) {
             const auto& a=tux::action(id);
@@ -73,6 +73,7 @@ int main(int argc,char** argv) {
         require(tux::action("user-timer-files").command==QStringList{"systemctl","--user","list-unit-files","--type=timer","--no-pager"},"user-timer-files fixed argument contract");
         require(tux::action("display-modes").x11&&tux::action("graphics-renderer").x11,"X11 queries gated");
         require(tux::action("zswap-enable").admin&&tux::action("zswap-enable").changes&&tux::action("zswap-disable").admin&&tux::action("zswap-disable").changes,"kernel controls require review and authorization");
+        require(tux::action("trim-disable").admin&&tux::action("trim-disable").changes&&tux::action("trim-disable").command==QStringList{"systemctl","disable","--now","fstrim.timer"},"fixed reviewed timer disable action");
         QSet<QString> ids;
         for (const auto& a:tux::actions()) {
             ids.insert(a.id);
