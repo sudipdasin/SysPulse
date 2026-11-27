@@ -49,3 +49,5 @@ Alpha.22 build gate exercises the actual updater helper against the previous ins
 
 ### Alpha.23 startup and Cleaner checkpoint
 Fix pre-parent visibility of dependency buttons causing transient top-level windows. Add mounted local filesystem selector with explicit whole-volume budgets, default custom folder, permission vs mount exclusion counters and same-device directory alias detection. Normal-user inspection only; no elevated arbitrary deletion. Existing APT and archived-journal cleanup routes retain explicit administrator approval. Full regression and Mint desktop validation required. No intake IDs promoted.
+
+Alpha.23 administrative scan candidate: PolicyKit-authorized fixed helper, exact local mount root and fixed budget only, no file-content reads, no delete operations, bounded metadata result. Root scan does not create deletion candidates or compare duplicates. Same-mount traversal checks Linux statx mount ID where available, with directory inode alias fallback. Not a raw disk/partition recovery scanner. Root scan and X11 startup tests required before distribution.

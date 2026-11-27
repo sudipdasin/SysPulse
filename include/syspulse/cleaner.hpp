@@ -71,6 +71,15 @@ inline void retain(std::vector<Entry>& v,Entry e,unsigned max){
     if(v.size()<max){v.push_back(std::move(e));std::push_heap(v.begin(),v.end(),cmp);}
     else if(e.bytes>v.front().bytes){std::pop_heap(v.begin(),v.end(),cmp);v.back()=std::move(e);std::push_heap(v.begin(),v.end(),cmp);}
 }
+inline std::uint64_t mountId(int fd){
+#ifdef STATX_MNT_ID
+    struct statx sx{};
+    if(::statx(fd,"",AT_EMPTY_PATH|AT_STATX_DONT_SYNC,STATX_MNT_ID,&sx)==0&&(sx.stx_mask&STATX_MNT_ID))return sx.stx_mnt_id;
+#else
+    (void)fd;
+#endif
+    return 0;
+}
 inline Volume volume(int fd){
     struct statvfs v{};if(::fstatvfs(fd,&v)||!v.f_frsize||v.f_bfree>v.f_blocks||v.f_bavail>v.f_bfree||v.f_blocks>std::numeric_limits<std::uint64_t>::max()/v.f_frsize)return {};
     return {(v.f_blocks-v.f_bfree)*v.f_frsize,v.f_bavail*v.f_frsize,(v.f_bfree-v.f_bavail)*v.f_frsize,true};
@@ -78,7 +87,7 @@ inline Volume volume(int fd){
 inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limits,const std::atomic_bool& cancel){
     Result out;out.resolvedRoot=root;Fd fd(openDir(root));if(fd.n<0){const int reason=errno;out.error="Cannot open scan directory: "+std::string(std::strerror(reason))+". Choose an accessible folder.";return out;}
     struct stat rootStat{};if(::fstat(fd.n,&rootStat)){out.error="Cannot inspect scan directory.";return out;}
-    out.volume=volume(fd.n);
+    out.volume=volume(fd.n);const auto rootMount=mountId(fd.n);
     const auto start=std::chrono::steady_clock::now();const auto now=std::time(nullptr);
     const auto stop=[&]{if(cancel.load()){out.cancelled=true;return true;}if(out.visited>=limits.entries||std::chrono::steady_clock::now()-start>=std::chrono::seconds(limits.seconds)){out.limited=true;return true;}return false;};
     std::set<std::pair<dev_t,ino_t>> seen,seenDirectories;
@@ -105,8 +114,9 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
                 if(child.n<0){skip(errno);continue;}
                 if(::fstat(child.n,&actual)){skip(errno);continue;}
                 if(actual.st_dev!=st.st_dev||actual.st_ino!=st.st_ino){skip(ESTALE);continue;}
+                const auto childMount=mountId(child.n);if(rootMount&&childMount&&rootMount!=childMount){exclude();continue;}
                 // Same-device bind aliases or directory cycles are not rescanned.
-                if(!seenDirectories.emplace(actual.st_dev,actual.st_ino).second){exclude();continue;}
+                if((!rootMount||!childMount)&&!seenDirectories.emplace(actual.st_dev,actual.st_ino).second){exclude();continue;}
                 self(self,child.n,full,depth+1);continue;
             }
             if(!S_ISREG(st.st_mode)||st.st_size<0)continue;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/cleaner_page.hpp"
 #include "syspulse/cleaner.hpp"
+#include "syspulse/volume_inspection.hpp"
 #include "syspulse/duplicates.hpp"
 #include "tux/async_command.hpp"
 #include "tux/trusted_command.hpp"
@@ -25,6 +26,7 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QThread>
@@ -102,7 +104,8 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* duplicateOpt=new QCheckBox("Compare file contents for duplicates (at least 1 MiB; up to 256 MiB read)");duplicateOpt->setObjectName("cleanerDuplicateOpt");form->addWidget(duplicateOpt,3,0,1,4);
     auto* diskLabel=label("Mounted volume");form->addWidget(diskLabel,4,0);form->addWidget(volumes,4,1,1,2);form->addWidget(reloadVolumes,4,3);
     auto* budgetLabel=label("Volume scan budget");form->addWidget(budgetLabel,5,0);form->addWidget(budget,5,1,1,3);
-    auto* scopeHint=label("Normal-user scan; protected directories may be inaccessible. Each mounted filesystem is scanned separately. System cleanup requires separate authorization.","muted");form->addWidget(scopeHint,6,0,1,4);
+    auto* privileged=new QCheckBox("Include protected directories (administrator · read-only metadata)");privileged->setObjectName("cleanerAdminScan");form->addWidget(privileged,6,0,1,4);
+    auto* scopeHint=label("Each mounted filesystem is scanned separately. Administrator scanning reads metadata only and cannot delete files. System cleanup requires separate authorization.","muted");form->addWidget(scopeHint,7,0,1,4);
     layout->addLayout(form);auto* actions=new QHBoxLayout;actions->addWidget(scan);actions->addWidget(cancel);actions->addStretch();layout->addLayout(actions);
     auto* status=label("Ready · no scan performed.","cleanerStatus");layout->addWidget(status);
     auto* tabs=new QTabWidget;tabs->setObjectName("cleanerTabs");layout->addWidget(tabs,1);
@@ -178,17 +181,16 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto customPath=std::make_shared<QString>(QDir::homePath());
     const auto refreshVolumes=[=]{
         const auto previous=volumes->currentData().toString();volumes->clear();
-        const QSet<QByteArray> local={"ext2","ext3","ext4","btrfs","xfs","f2fs","jfs","reiserfs","zfs","vfat","exfat","ntfs","ntfs3","fuseblk","overlay","udf","iso9660"};
+        const QSignalBlocker block(volumes);
         QSet<QString> added;
         const auto addVolume=[&](const QStorageInfo& v){
-            if(!v.isValid()||!v.isReady()||!local.contains(v.fileSystemType())||v.rootPath().isEmpty()||added.contains(v.rootPath()))return;
+            if(!c::localVolume(v)||added.contains(v.rootPath()))return;
             const auto path=v.rootPath();added.insert(path);
             volumes->addItem(QString("%1 · %2 · %3%4").arg(path,QString::fromLatin1(v.fileSystemType()),sizeText(qMax<qint64>(0,v.bytesTotal())),v.isReadOnly()?" · read-only":""),path);
         };
         addVolume(QStorageInfo::root());for(const auto& v:QStorageInfo::mountedVolumes())addVolume(v);
         const int index=volumes->findData(previous);if(index>=0)volumes->setCurrentIndex(index);
     };
-    refreshVolumes();
     auto generation=std::make_shared<unsigned long long>(0);
     auto hasResults=std::make_shared<bool>(false);
     const auto resetResults=[=]{
@@ -204,10 +206,13 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(*hasResults){resetResults();status->setText("Scan settings changed. Start a new scan before using results.");}
     };
     const auto modeChanged=[=]{const int i=modes->currentIndex();
+        if(i==2&&volumes->count()==0)refreshVolumes();
         root->setText(i==0?cachePath():i==1?QDir::homePath():i==2?volumes->currentData().toString():*customPath);
         root->setEnabled(i==3);browse->setEnabled(i==3);minimum->setEnabled(i==3);age->setEnabled(i==3);
         diskLabel->setVisible(i==2);volumes->setVisible(i==2);reloadVolumes->setVisible(i==2);budgetLabel->setVisible(i==2);budget->setVisible(i==2);
         volumes->setEnabled(i==2);reloadVolumes->setEnabled(i==2);budget->setEnabled(i==2);
+        privileged->setVisible(i==2);privileged->setEnabled(i==2&&!tux::trustedSystemExecutable("pkexec").isEmpty()&&!tux::trustedSystemExecutable("syspulse-volume-scan").isEmpty());
+        duplicateOpt->setEnabled(i!=2||!privileged->isChecked());
         root->setToolTip(i==0?"Actual user cache location, including XDG configuration.":i==1?"Actual desktop user home directory.":i==2?"Mounted filesystem root; choose a disk above or use Custom for a folder.":"Choose an absolute folder to scan.");
     };
     QObject::connect(root,&QLineEdit::textChanged,page,[=](const QString& value){if(modes->currentIndex()==3)*customPath=value;});
@@ -215,6 +220,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     QObject::connect(volumes,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[=](int){invalidate();if(modes->currentIndex()==2)modeChanged();});
     QObject::connect(reloadVolumes,&QPushButton::clicked,page,[=]{invalidate();refreshVolumes();modeChanged();});
     QObject::connect(budget,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[invalidate](int){invalidate();});
+    QObject::connect(privileged,&QCheckBox::toggled,page,[=](bool on){invalidate();duplicateOpt->setEnabled(!on);});
     QObject::connect(root,&QLineEdit::textChanged,page,[invalidate]{invalidate();});
     QObject::connect(minimum,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
     QObject::connect(age,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
@@ -229,18 +235,21 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         const auto cleanupCache=c::homeCache();
         const c::fs::path path=QFile::encodeName(root->text()).constData();
         if(path.empty()||!path.is_absolute()){resetResults();status->setText("Choose an absolute folder path.");return;}
-        if(mode==2){const QStorageInfo selected(root->text());if(!selected.isValid()||!selected.isReady()||selected.rootPath()!=root->text()){resetResults();status->setText("Selected disk is no longer mounted. Refresh disks.");return;}}
+        if(mode==2&&!c::mountedVolume(root->text())){resetResults();status->setText("Selected disk is no longer mounted or supported. Refresh disks.");return;}
+        const bool admin=mode==2&&privileged->isChecked();
+        const auto helper=tux::trustedSystemExecutable("syspulse-volume-scan"),auth=tux::trustedSystemExecutable("pkexec");
+        if(admin){if(helper.isEmpty()||auth.isEmpty()){status->setText("Administrative scan is unavailable; use normal-user inspection.");return;}
+            if(QMessageBox::question(page,"Administrator scan","Inspect protected directory metadata on this mounted filesystem? The scan may show private filenames of other accounts locally. No file contents or deletions. It runs until completion or its bounded deadline.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;}
         c::Limits limits;limits.entries=mode==0?25000:mode==1?150000:mode==2?(budget->currentIndex()==1?3000000:1000000):300000;limits.seconds=mode==0?10:mode==1?45:mode==2?(budget->currentIndex()==1?600:180):60;
         if(mode==3){limits.minBytes=static_cast<std::uint64_t>(minimum->value())*1048576;limits.ageDays=age->value();}
-        limits.collectDuplicates=duplicateOpt->isChecked();
-        *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(true);remove->setEnabled(false);
-        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);volumes->setEnabled(false);reloadVolumes->setEnabled(false);budget->setEnabled(false);
+        limits.collectDuplicates=!admin&&duplicateOpt->isChecked();
+        *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(!admin);remove->setEnabled(false);
+        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);volumes->setEnabled(false);reloadVolumes->setEnabled(false);budget->setEnabled(false);privileged->setEnabled(false);
         resetResults();dupStatus->setText(limits.collectDuplicates?"Scanning and comparing selected file scope…":"Duplicate comparison not requested.");totals->setText("Scan running…");
-        status->setText("Scanning "+pathText(path)+" · bounded, same filesystem, no symlink traversal…");
+        status->setText("Scanning "+pathText(path)+(admin?" · awaiting administrator authorization; read-only metadata…":" · bounded, same filesystem, no symlink traversal…"));
         auto result=std::make_shared<c::Result>();
         auto comparison=std::make_shared<c::DuplicateResult>();
-        auto* thread=QThread::create([result,comparison,path,cache,cleanupCache,limits,token,mode]{try{*result=c::scanRequested(path,cache,cleanupCache,limits,*token,mode==0);if(limits.collectDuplicates&&!result->cancelled&&result->error.empty())*comparison=c::duplicates(result->duplicateInput,*token);}catch(const std::exception&){result->error="Scan interrupted by a filesystem or resource error.";}}); 
-        QObject::connect(thread,&QThread::finished,page,[=]{
+        const auto finish=[=]{
             *current=std::move(*result);*duplicateResult=std::move(*comparison);
             if(token->load()){current->cancelled=true;current->complete=false;}
             duplicateOpt->setEnabled(true);scan->setEnabled(true);cancel->setEnabled(false);modes->setEnabled(true);modeChanged();*busy=false;
@@ -270,10 +279,19 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             if(current->permissionDenied)status->setText(status->text()+" · protected entries not scanned; use authorized system cleanup tools where applicable. Do not run SysPulse as root.");
             if(current->missingCache)status->setText("Cache directory does not exist yet · nothing to scan or clean. Deep scan remains available.");
             else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · inspection only");
-            else if(current->readOnly)status->setText(status->text()+" · inspection only (nonstandard or unavailable cleanup cache)");
+            else if(current->readOnly)status->setText(status->text()+(admin?" · administrator metadata inspection only; no deletion":" · inspection only (nonstandard or unavailable cleanup cache)"));
             current->duplicateInput.clear();
             remove->setEnabled(current->error.empty()&&!current->readOnly&&!current->cancelled&&!duplicateResult->cancelled&&!current->candidates.empty());
-        });QObject::connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();
+        };
+        if(admin){
+            AsyncCommand::runAction(page,auth,{helper,root->text(),budget->currentIndex()==1?"extended":"standard"},4*1024*1024,[=](const AsyncCommandResult& response){
+                if(!response.ok()||!c::decodeInspection(response.output,path,*result))result->error="Administrative scan failed, was denied, exceeded its deadline, or returned invalid data. No cleanup performed.";
+                finish();
+            });
+        }else{
+        auto* thread=QThread::create([result,comparison,path,cache,cleanupCache,limits,token,mode]{try{*result=c::scanRequested(path,cache,cleanupCache,limits,*token,mode==0);if(limits.collectDuplicates&&!result->cancelled&&result->error.empty())*comparison=c::duplicates(result->duplicateInput,*token);}catch(const std::exception&){result->error="Scan interrupted by a filesystem or resource error.";}}); 
+            QObject::connect(thread,&QThread::finished,page,finish);QObject::connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();
+        }
     });
     QObject::connect(remove,&QPushButton::clicked,page,[=]{
         if(*busy||!*hasResults||current->readOnly||!current->error.empty()||current->cancelled||duplicateResult->cancelled)return;
