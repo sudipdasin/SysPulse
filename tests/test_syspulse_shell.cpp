@@ -256,6 +256,8 @@ int main(int argc,char** argv) {
         require(window.findChild<QPushButton*>("applyRuntimeSwappiness")&&!window.findChild<QPushButton*>("applyRuntimeSwappiness")->isEnabled(),"runtime memory action gated until capture");
         require(window.findChild<QPushButton*>("launchBraveBounded")&&window.findChild<QComboBox*>("physicalInputDevices"),"browser and input action controls present");
         require(window.findChild<QComboBox*>("wifiRadioValue")&&window.findChild<QComboBox*>("powerProfileValue"),"native radio and power controls present");
+        require(window.findChild<QPushButton*>("saveBraveProfile")&&window.findChild<QPushButton*>("captureDesktopSnapshot")&&window.findChild<QPushButton*>("restoreDesktopSnapshot"),"persistent Brave and scoped desktop recovery controls present");
+        require(window.findChild<QComboBox*>("scheduleProfileChoice")&&window.findChild<QPushButton*>("scheduleProfileApply")&&!window.findChild<QPushButton*>("scheduleProfileApply")->isEnabled(),"schedule mutation gated by current timer state");
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
