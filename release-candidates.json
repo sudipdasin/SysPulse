@@ -8,7 +8,8 @@
       "origin": "https://syspulse-alpha32-boost-eval.onrender.com/",
       "sha256": "4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc",
       "tested_from": 27,
-      "suites": 52
+      "suites": 52,
+      "tested_from_sha256": "fc2a4bda1e27e269c99fabb9fbfb4e7a9c736d1c7a03b546dc24e04b5ff41139"
     },
     {
       "alpha": 33,
@@ -17,7 +18,8 @@
       "origin": "https://syspulse-alpha33-profile-eval.onrender.com/",
       "sha256": "0ee1a08fd6c148b4e5396435eea03972674e7bbee9ac174d5a6cd0200e459ae8",
       "tested_from": 27,
-      "suites": 54
+      "suites": 54,
+      "tested_from_sha256": "fc2a4bda1e27e269c99fabb9fbfb4e7a9c736d1c7a03b546dc24e04b5ff41139"
     }
   ]
 }
