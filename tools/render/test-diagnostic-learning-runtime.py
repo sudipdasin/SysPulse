@@ -20,12 +20,19 @@ with tempfile.TemporaryDirectory(prefix="syspulse-diagnostics-smoke-") as home:
     assert call("reserve",ident,'["own_memory"]',ok=False)["error"]
     # Receipt exercises the learning transaction only; no memory operation is claimed.
     assert call("finish",ident,'{"own_memory":{"status":"no_effect","bytes":0}}')["state"]=="finished"
-    h=call("history");assert h["analyses"][0]["state"]=="finished"
+    v=call("verify-boost",ident)
+    assert v["id"]==ident and v["status"] in ("observed","limited","review")
+    assert call("verify-boost",ident)==v
+    assert "not proof of causal speed gain" in v["interpretation"]
+    h=call("history");assert h["verification"][0]["status"]==v["status"]
+    assert h["analyses"][0]["state"]=="finished"
     assert h["learning"][0]["attempts"]==1 and h["learning"][0]["no_effect"]==1
     assert call("plan",ident,ok=False)["error"]
     with sqlite3.connect(db) as c:
         assert c.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
         assert c.execute("SELECT count(*) FROM boost").fetchone()[0]==1
+        assert c.execute("PRAGMA user_version").fetchone()[0]==3
+        assert c.execute("SELECT count(*) FROM verification").fetchone()[0]==1
     assert call("clear")["state"]=="cleared"
-    h=call("history");assert h["analyses"]==[] and h["learning"]==[]
-    print("Actual non-root diagnostics, "+str(len(a["sources"]))+" source coverage, private SQLite persistence, same-caller one-use reservation, simulated receipt, history and clear passed. No maintenance mutation.")
+    h=call("history");assert h["analyses"]==[] and h["learning"]==[] and h["verification"]==[]
+    print("Actual non-root diagnostics, "+str(len(a["sources"]))+" source coverage, private SQLite persistence, same-caller one-use reservation, simulated receipt, actual post-maintenance read-only verification, idempotency, history and clear passed. No maintenance mutation.")
