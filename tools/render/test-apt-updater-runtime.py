@@ -18,7 +18,7 @@ try:
     pin=bundled/"alpha.sha256"
     pin.write_text(hashlib.sha256(shipped.read_bytes()).hexdigest()+"\n");pin.chmod(0o644)
     assert u["resolve_key"]("alpha",bundled=bundled)==shipped
-    assert u["check"]("alpha",u["resolve_key"]("alpha",bundled=bundled),url)=="AVAILABLE 3.0.0~alpha31~render1"
+    assert u["check"]("alpha",u["resolve_key"]("alpha",bundled=bundled),url)=="AVAILABLE 3.0.0~alpha32~render1"
     shipped.write_bytes(b"altered fixture")
     try:
         u["resolve_key"]("alpha",bundled=bundled)
@@ -30,14 +30,14 @@ finally:
 assert u["resolve_key"]("alpha")==Path("/usr/share/syspulse/update-keys/alpha.gpg"),"Canonical installed owner anchor must remain untouched"
 print("Automatic package-managed trust discovery, signed metadata and tamper rejection passed")
 result=u["check"]("alpha",key,url)
-assert result=="AVAILABLE 3.0.0~alpha31~render1", result
+assert result=="AVAILABLE 3.0.0~alpha32~render1", result
 try:
-    u["install"]("stable","3.0.0~alpha31~render1",key,url)
+    u["install"]("stable","3.0.0~alpha32~render1",key,url)
     raise AssertionError("channel crossing accepted")
 except ValueError:
     pass
-assert u["install"]("alpha","3.0.0~alpha31~render1",key,url)=="INSTALLED 3.0.0~alpha31~render1"
-assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha31~render1"
+assert u["install"]("alpha","3.0.0~alpha32~render1",key,url)=="INSTALLED 3.0.0~alpha32~render1"
+assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha32~render1"
 try:
     u["install"]("alpha","3.0.0~alpha27~render1",key,url)
     raise AssertionError("downgrade accepted")
