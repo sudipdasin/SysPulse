@@ -1,0 +1,14 @@
+FROM ubuntu:24.04 AS test
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 git gnupg dpkg-dev ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 signer && mkdir -p /src /state /out && chown signer:signer /state /out && chmod 0700 /state
+COPY tools/release/source_signer.py /src/tools/release/source_signer.py
+COPY assets/update-trust/alpha-public.gpg.b64 /src/assets/update-trust/alpha-public.gpg.b64
+USER signer
+RUN python3 /src/tools/release/source_signer.py self-test > /out/SELF-TEST.txt 2>&1 && cat /out/SELF-TEST.txt
+RUN python3 /src/tools/release/source_signer.py verify --state /state > /out/FEED-VERIFY.txt && cat /out/FEED-VERIFY.txt
+RUN if python3 /src/tools/release/source_signer.py publish --state /state > /out/REFUSAL.txt 2>&1; then exit 1; fi && grep -F 'Protected independent validator approval required' /out/REFUSAL.txt && cat /out/REFUSAL.txt
+FROM python:3.11-slim-bookworm
+COPY --from=test /out/ /srv/results/
+USER 10001:10001
+EXPOSE 10000
+CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/results/"]
