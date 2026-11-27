@@ -1,4 +1,4 @@
-import importlib.machinery, importlib.util, pathlib, unittest, tempfile
+import importlib.machinery, importlib.util, pathlib, unittest, tempfile, hashlib
 from unittest.mock import patch
 p=pathlib.Path(__file__).parents[1]/"tools/syspulse-apt-update"
 loader=importlib.machinery.SourceFileLoader("update",str(p))
@@ -25,6 +25,22 @@ class Update(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             key=pathlib.Path(d)/"test.gpg";key.write_bytes(b"fake")
             self.assertFalse(u.secure_key(key)) # writable /tmp ancestor
+    def test_package_managed_trust(self):
+        with tempfile.TemporaryDirectory() as d:
+            bundled=pathlib.Path(d)/"bundled";bundled.mkdir()
+            legacy=pathlib.Path(d)/"legacy"
+            self.assertEqual(u.resolve_key("alpha",bundled,legacy),legacy/"alpha.gpg")
+            key=bundled/"alpha.gpg";pin=bundled/"alpha.sha256"
+            key.write_bytes(b"synthetic public fixture")
+            with patch.object(u,"secure_key",side_effect=lambda p:p.is_file() and not p.is_symlink()):
+                with self.assertRaises(ValueError):u.resolve_key("alpha",bundled,legacy)
+                pin.write_text(hashlib.sha256(key.read_bytes()).hexdigest()+"\n")
+                self.assertEqual(u.resolve_key("alpha",bundled,legacy),key)
+                self.assertEqual(u.resolve_key("beta",bundled,legacy),legacy/"beta.gpg")
+                key.write_bytes(b"tampered")
+                with self.assertRaises(ValueError):u.resolve_key("alpha",bundled,legacy)
+                key.unlink();key.symlink_to(pin)
+                with self.assertRaises(ValueError):u.resolve_key("alpha",bundled,legacy)
     def test_nonroot_install_guard(self):
         with patch.object(u.os,"geteuid",return_value=1000):
             with self.assertRaisesRegex(ValueError,"authorization"):u.install("alpha","3.0.0~alpha22~render1",None,None)

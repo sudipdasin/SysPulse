@@ -249,7 +249,7 @@ int main(int argc,char** argv) {
         require(reportTable->rowCount()==0,"memory relief does not fabricate diagnostic records");
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
-        require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="stable"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"stable default and no unreviewed install");
+        require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
         auto* autoCheck=window.findChild<QCheckBox*>("automaticCachedUpdateCheck");
         auto* updateTimer=window.findChild<QTimer*>("cachedUpdateTimer");
         require(autoCheck&&updateTimer&&!autoCheck->isChecked()&&!updateTimer->isActive(),"cached update checks off by default");

@@ -707,7 +707,7 @@ struct Window::Impl {
         layout->setContentsMargins(22,20,22,20);
         layout->addWidget(text("Application updates","sectionTitle"));
         layout->addWidget(text(QString("Running version: %1 · Official repository: SysPulse").arg(tux::Version),"muted"));
-        auto* status=text("Check the selected signed update channel. First-time trust enrollment is required; no key is downloaded automatically.","muted");
+        auto* status=text("Update authentication is initialized from the trusted installed package. No user account or manual key setup is needed for provisioned releases.","muted");
         status->setObjectName("applicationUpdateStatus");status->setTextFormat(Qt::PlainText);layout->addWidget(status);
         auto* channel=new QComboBox;channel->setObjectName("applicationUpdateChannel");
         channel->addItem("Stable","stable");channel->addItem("Beta (preview)","beta");channel->addItem("Alpha (preview)","alpha");
@@ -731,7 +731,7 @@ struct Window::Impl {
         QObject::connect(timer,&QTimer::timeout,check,[check]{if(check->isEnabled())check->click();});
         auto* preferenceStatus=text("","muted");preferenceStatus->setObjectName("updatePreferenceStatus");preferenceStatus->setTextFormat(Qt::PlainText);layout->addWidget(preferenceStatus);
         QSettings saved(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
-        const auto selected=saved.value("updates/channel","stable").toString();channel->setCurrentIndex(qMax(0,channel->findData(selected)));
+        const auto selected=saved.value("updates/channel","alpha").toString();channel->setCurrentIndex(qMax(0,channel->findData(selected)));
         const bool initial=saved.status()==QSettings::NoError&&saved.value("updates/automaticSignedCheck",false).toBool();
         automatic->setChecked(initial);if(initial)timer->start();
         if(saved.status()!=QSettings::NoError)preferenceStatus->setText("Update preference could not be read; automatic checks remain off.");
@@ -755,7 +755,7 @@ struct Window::Impl {
                 check->setEnabled(true);channel->setEnabled(true);
                 const auto line=QString::fromUtf8(result.output).trimmed();
                 if(!result.ok()){status->setText(line.startsWith("ERROR ")?line.mid(6):"Signed repository check failed. No update authorized.");return;}
-                if(line.startsWith("UNCONFIGURED ")){status->setText("Signing key not enrolled for this channel. Follow the official independent key enrollment instructions. Installed: "+line.mid(13));return;}
+                if(line.startsWith("UNCONFIGURED ")){status->setText("This release has no trusted signing key for the selected channel. The maintainer must provision the signed feed and a trusted package. Installed: "+line.mid(13));return;}
                 if(line.startsWith("CURRENT ")){status->setText("No newer signed package in selected channel. Installed: "+line.mid(8));return;}
                 static const QRegularExpression valid("^AVAILABLE ([0-9]+\\.[0-9]+\\.[0-9]+(?:~(?:alpha|beta)[0-9]+)?(?:~render[0-9]+)?)$");
                 const auto match=valid.match(line);
@@ -781,7 +781,9 @@ struct Window::Impl {
             });
             progress.exec();check->setEnabled(true);channel->setEnabled(true);
         });
-        layout->addWidget(text("Only the selected repository and independently enrolled signing key are used. Fresh signed metadata and package hashes are verified by APT. No automatic installation or downgrade. If recovery is required, use a separately retained trusted package.","muted"));
+        // Only an explicit saved network opt-in triggers a startup check. No blocking work during construction.
+        QTimer::singleShot(1500,frame,[automatic,check]{if(automatic->isChecked()&&check->isEnabled())check->click();});
+        layout->addWidget(text("The selected channel uses the package-managed public release key when provisioned. APT verifies server metadata signatures and package hashes. No client identity or private signing key is created. Updates require administrator approval; no unattended installation or downgrade.","muted"));
         return frame;
     }
     QWidget* settingsPage() {
