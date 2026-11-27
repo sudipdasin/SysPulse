@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "syspulse/bounded_line.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -14,8 +15,10 @@ struct Rates { double inKiB, outKiB; };
 inline std::optional<Counters> parse(std::istream& input) {
     std::optional<std::uint64_t> in,out;
     std::string line; unsigned count=0;
-    while(std::getline(input,line)) {
-        if(++count>4096||line.size()>4096)return {};
+    for(;;) {
+        const auto state=boundedLine<4096>(input,line);
+        if(state==LineState::End)break;
+        if(state!=LineState::Line||++count>4096)return {};
         std::istringstream row(line);std::string key,value,extra;
         if(!(row>>key)||(key!="pswpin"&&key!="pswpout"))continue;
         auto& target=key=="pswpin"?in:out;
