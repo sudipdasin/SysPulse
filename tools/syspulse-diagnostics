@@ -1,0 +1,515 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Local, bounded read-only diagnostics and outcome-guided Boost policy.
+No remote telemetry, shell evaluation, automatic privilege elevation or learned commands.
+"""
+import argparse, concurrent.futures, datetime, gzip, json, os
+import pathlib, re, secrets, selectors, signal, sqlite3, stat, subprocess, time, unittest
+P=pathlib.Path
+MAX_READ=1024*1024
+MAX_LINES=6000
+MAX_AGE=900
+RETENTION=180
+ACTIONS=("thumbnails","archives","own_memory","pause_monitoring")
+CATEGORIES=("storage_io","filesystem","disk_health","oom","memory_pressure","gpu","thermal","kernel_fault","service_failure","package_failure","network","authentication","application_crash","other_error")
+CRITICAL={"storage_io","filesystem","disk_health","oom","thermal","kernel_fault"}
+# Fixed ordered rules. Raw messages are classified in memory and never persisted.
+PATTERNS=[
+ ("storage_io",r"\b(?:i/o error|buffer i/o|blk_update_request|ata[0-9].*failed command|nvme.*(?:timeout|reset|abort)|medium error|uncorrectable error)\b"),
+ ("filesystem",r"(?:ext[234]-fs error|btrfs.*(?:error|corrupt)|xfs.*(?:corrupt|metadata error)|filesystem.*(?:corrupt|read-only)|remounting filesystem read-only)"),
+ ("disk_health",r"(?:smart.*(?:fail|critical|bad)|pending sectors|reallocated sector.*(?:fail|critical)|critical warning.*(?:nvme|disk))"),
+ ("oom",r"(?:out of memory|oom-kill|oom_reaper|killed process.*total-vm|systemd-oomd.*killed)"),
+ ("memory_pressure",r"(?:memory pressure|swap.*(?:exhausted|full)|allocation failure)"),
+ ("gpu",r"(?:gpu hang|gpu reset|amdgpu.*(?:fault|timeout|error)|i915.*(?:hang|error)|nvrm: xid|drm.*(?:error|failed))"),
+ ("thermal",r"(?:critical temperature|thermal throttling|temperature above threshold|overheat)"),
+ ("kernel_fault",r"(?:kernel panic|kernel bug|general protection fault|soft lockup|hard lockup|watchdog.*lockup|call trace:|machine check|hardware error)"),
+ ("package_failure",r"(?:dpkg: error|unmet dependencies|sub-process.*returned an error|failed to fetch|package.*(?:broken|failed)|error processing package)"),
+ ("authentication",r"(?:authentication failure|failed password|invalid user|pam_.*(?:failure|failed))"),
+ ("network",r"(?:network.*(?:unreachable|failed|down)|dns.*(?:failure|timeout)|dhcp.*(?:fail|timeout)|connection timed out|link is down)"),
+ ("application_crash",r"(?:segfault|segmentation fault|core dumped|coredump.*(?:crash|dumped)|fatal exception|aborted.*core)"),
+ ("service_failure",r"(?:failed to start|failed with result|main process exited|dependency failed|start request repeated too quickly|unit .* failed)"),
+ ("other_error",r"(?:\berror\b|\bfailed\b|\bfailure\b|\bcritical\b|\bpanic\b)"),
+]
+RULES=[(k,re.compile(v,re.I)) for k,v in PATTERNS]
+def require(ok,msg):
+    if not ok:raise ValueError(msg)
+def boot_id():
+    s=P("/proc/sys/kernel/random/boot_id").read_text().strip()
+    require(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",s),"Boot identity unavailable")
+    return s
+def clock():return time.clock_gettime(time.CLOCK_BOOTTIME)
+def process_start(pid):
+    try:
+        raw=P(f"/proc/{pid}/stat").read_text();return raw.rsplit(")",1)[1].split()[19]
+    except (OSError,IndexError):return None
+def caller():
+    pid=os.getppid();stamp=process_start(pid);require(stamp is not None,"Caller identity unavailable");return pid,stamp
+def bounded_file(path,tail=False,limit=MAX_READ):
+    # No follows, special files, blocking FIFO or unbounded reads.
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd,"rb") as f:
+        s=os.fstat(f.fileno());require(stat.S_ISREG(s.st_mode),"Not a regular diagnostic source")
+        if tail and s.st_size>limit:
+            f.seek(s.st_size-limit);data=f.read(limit+1)
+            data=data.partition(b"\n")[2]
+            return data[:limit].decode("utf-8","replace"),True
+        data=f.read(limit+1);return data[:limit].decode("utf-8","replace"),len(data)>limit
+def command(args,timeout=7,limit=MAX_READ):
+    # Absolute executable from fixed trusted system directories. Never use user PATH.
+    name=args[0]
+    exe=next((str(P(d)/name) for d in ("/usr/bin","/usr/sbin","/bin","/sbin") if (P(d)/name).is_file() and os.access(P(d)/name,os.X_OK)),None)
+    if not exe:return "unavailable","",False
+    env={"PATH":"/usr/bin:/usr/sbin:/bin:/sbin","HOME":str(P.home()),"LANG":"C","LC_ALL":"C","SYSTEMD_PAGER":"","SYSTEMD_COLORS":"0","PAGER":"cat"}
+    # Preserve only session bus address for read-only user journal/services.
+    if os.environ.get("XDG_RUNTIME_DIR")=="/run/user/"+str(os.getuid()):
+        env["XDG_RUNTIME_DIR"]=os.environ["XDG_RUNTIME_DIR"]
+        env["DBUS_SESSION_BUS_ADDRESS"]="unix:path="+env["XDG_RUNTIME_DIR"]+"/bus"
+    p=subprocess.Popen([exe,*args[1:]],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
+    out=bytearray();status="ok";truncated=False;deadline=time.monotonic()+timeout
+    try:
+        with selectors.DefaultSelector() as sel:
+            sel.register(p.stdout,selectors.EVENT_READ)
+            while True:
+                remaining=deadline-time.monotonic()
+                if remaining<=0:status="timeout";break
+                events=sel.select(remaining)
+                if not events:status="timeout";break
+                data=os.read(p.stdout.fileno(),16384)
+                if not data:break
+                room=limit-len(out);out.extend(data[:room])
+                if len(data)>room:status="bounded";truncated=True;break
+        if status=="ok":
+            try:
+                rc=p.wait(timeout=max(0.05,deadline-time.monotonic()))
+                if rc:status="permission" if b"Permission denied" in out or b"Access denied" in out else "failed"
+            except subprocess.TimeoutExpired:status="timeout"
+    finally:
+        if p.poll() is None:
+            try:os.killpg(p.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            p.wait()
+        p.stdout.close()
+    return status,out.decode("utf-8","replace"),truncated
+def classify(line,priority=None):
+    for key,rx in RULES:
+        if rx.search(line):return key
+    if priority is not None and priority<=3:return "other_error"
+    return None
+def event_counts(text,journal=False):
+    counts={};total=0;bad=0;seen=set()
+    for line in text.splitlines()[:MAX_LINES]:
+        if not line.strip():continue
+        total+=1
+        if journal:
+            try:
+                row=json.loads(line);msg=row.get("MESSAGE","")
+                if not isinstance(msg,str):bad+=1;continue
+                pr=int(row.get("PRIORITY",7))
+                cursor=row.get("__CURSOR")
+                if isinstance(cursor,str):
+                    if cursor in seen:continue
+                    seen.add(cursor)
+                key=classify(msg[:8192],pr)
+            except (ValueError,TypeError,AttributeError):bad+=1;continue
+        else:key=classify(line[:8192])
+        if key:counts[key]=counts.get(key,0)+1
+    return counts,total,bad,len(text.splitlines())>MAX_LINES
+def source(name,status,counts=None,lines=0,bounded=False,notes=""):
+    require(status in ("ok","empty","bounded","unavailable","permission","failed","timeout","partial"),"Invalid coverage status")
+    return {"name":name,"status":status,"lines":int(lines),"bounded":bool(bounded),"events":counts or {},"note":notes}
+def collect_job(spec):
+    name,kind,args=spec
+    try:
+        if kind=="file":
+            raw,limited=bounded_file(args[0],tail=True)
+            status="bounded" if limited else "ok"
+        elif kind=="gzip":
+            fd=os.open(args[0],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            with os.fdopen(fd,"rb") as f:
+                st=os.fstat(f.fileno());require(stat.S_ISREG(st.st_mode) and st.st_size<=MAX_READ,"Compressed source exceeds budget")
+                with gzip.GzipFile(fileobj=f) as gz:data=gz.read(MAX_READ+1)
+            limited=len(data)>MAX_READ;raw=data[:MAX_READ].decode("utf-8","replace");status="bounded" if limited else "ok"
+        else:status,raw,limited=command(args,timeout=8)
+        if kind=="journal":
+            counts,lines,bad,more=event_counts(raw,True)
+            if "not seeing messages from other users" in raw.lower() or "no journal files were opened due to insufficient permissions" in raw.lower():
+                status="partial" if lines else "permission"
+            if bad and status=="ok":status="partial"
+            if more:limited=True;status="bounded"
+            if name!="journal-user-7days" and not lines and status=="ok":
+                # A quiet warning view is not necessarily unreadable: prove a current
+                # kernel journal record is readable without the severity filter.
+                if name=="kernel-journal-current-boot":
+                    probe,raw_probe,_=command(["journalctl","-k","-b","-n","1","--no-pager","-o","json"],timeout=4,limit=32768)
+                    try:visible=probe=="ok" and isinstance(json.loads(raw_probe.strip()),dict)
+                    except (ValueError,TypeError):visible=False
+                    status="empty" if visible else "partial"
+                else:status="partial"
+        elif kind=="services":
+            lines=sum(1 for x in raw.splitlines() if x.strip())
+            counts={"service_failure":lines} if lines and status=="ok" else {}
+        elif kind=="audit":
+            lines=sum(1 for x in raw.splitlines() if x.strip())
+            counts={"package_failure":1} if lines and status=="ok" else {}
+        elif kind=="crashes":
+            lines=sum(1 for x in raw.splitlines() if x.strip())
+            counts={"application_crash":lines} if lines and status=="ok" else {}
+        elif kind=="inventory":
+            lines=sum(1 for x in raw.splitlines() if x.strip());counts={}
+        else:
+            counts,lines,bad,more=event_counts(raw)
+            if more:limited=True;status="bounded"
+        if status=="ok" and not lines:status="empty"
+        # Command failure itself is a coverage failure, not a fabricated system fault.
+        if status in ("permission","failed","timeout","unavailable"):counts={}
+        return source(name,status,counts,lines,limited,"Raw messages discarded; counts may overlap across sources.")
+    except FileNotFoundError:return source(name,"unavailable")
+    except PermissionError:return source(name,"permission")
+    except (OSError,ValueError,subprocess.SubprocessError):return source(name,"failed")
+def specs():
+    jobs=[
+      ("journal-system-current-boot","journal",["journalctl","--system","-b","-p","warning","-n","2500","--no-pager","-o","json"]),
+      ("journal-system-7days","journal",["journalctl","--system","--since","7 days ago","-p","warning","-n","3000","--no-pager","-o","json"]),
+      ("journal-user-7days","journal",["journalctl","--user","--since","7 days ago","-p","warning","-n","2000","--no-pager","-o","json"]),
+      ("journal-system-recent-all-priorities","journal",["journalctl","--system","-b","-n","1500","--no-pager","-o","json"]),
+      ("journal-user-recent-all-priorities","journal",["journalctl","--user","-b","-n","1000","--no-pager","-o","json"]),
+      ("kernel-journal-current-boot","journal",["journalctl","-k","-b","-p","warning","-n","2000","--no-pager","-o","json"]),
+      ("kernel-ring","log",["dmesg","--level=err,warn,crit,alert,emerg"]),
+      ("failed-system-services","services",["systemctl","--failed","--plain","--no-legend","--no-pager"]),
+      ("failed-user-services","services",["systemctl","--user","--failed","--plain","--no-legend","--no-pager"]),
+      ("dpkg-audit","audit",["dpkg","--audit"]),
+      ("coredump-7days","crashes",["coredumpctl","--since","7 days ago","--no-pager","--no-legend","list"]),
+      ("block-devices","inventory",["lsblk","-b","-o","TYPE,SIZE,ROTA,RO,FSTYPE,MOUNTPOINTS"]),
+      ("mounts","inventory",["findmnt","-rn","-o","TARGET,FSTYPE,OPTIONS"]),
+      ("network-interfaces","inventory",["ip","-brief","link"]),
+      ("network-routes","inventory",["ip","route","show"]),
+      ("hardware-cpu","inventory",["lscpu"]),
+    ]
+    for name,path in [
+      ("syslog","/var/log/syslog"),("syslog-previous","/var/log/syslog.1"),
+      ("kernel-log","/var/log/kern.log"),("kernel-log-previous","/var/log/kern.log.1"),
+      ("auth-log","/var/log/auth.log"),("auth-log-previous","/var/log/auth.log.1"),
+      ("dpkg-log","/var/log/dpkg.log"),("dpkg-log-previous","/var/log/dpkg.log.1"),
+      ("apt-history","/var/log/apt/history.log"),("apt-terminal","/var/log/apt/term.log"),
+      ("boot-log","/var/log/boot.log"),("xorg-log","/var/log/Xorg.0.log"),
+      ("xorg-log-previous","/var/log/Xorg.0.log.old"),
+      ("user-xorg-log",str(P.home()/".local/share/xorg/Xorg.0.log")),
+      ("user-session-errors",str(P.home()/".xsession-errors")),
+    ]:jobs.append((name,"file",[path]))
+    for name,path in [("syslog-rotated","/var/log/syslog.2.gz"),("kernel-log-rotated","/var/log/kern.log.2.gz"),("auth-log-rotated","/var/log/auth.log.2.gz"),("dpkg-log-rotated","/var/log/dpkg.log.2.gz"),("apt-history-rotated","/var/log/apt/history.log.1.gz"),("apt-terminal-rotated","/var/log/apt/term.log.1.gz")]:jobs.append((name,"gzip",[path]))
+    return jobs
+def numeric_snapshot():
+    def kv(path):
+        try:
+            raw,_=bounded_file(path,limit=65536);return {m[1]:int(m[2]) for line in raw.splitlines() if (m:=re.match(r"^([A-Za-z_()]+):?\s+([0-9]+)",line))}
+        except (OSError,ValueError):return {}
+    m=kv("/proc/meminfo");v=kv("/proc/vmstat");data={}
+    for k,name in (("MemTotal","memory_total_kib"),("MemAvailable","memory_available_kib"),("SwapTotal","swap_total_kib"),("SwapFree","swap_free_kib")):
+        if k in m:data[name]=m[k]
+    for k in ("pswpin","pswpout","pgmajfault","oom_kill"):
+        if k in v:data[k]=v[k]
+    for name,path in (("root","/"),("home",str(P.home())),("apt","/var/cache/apt/archives")):
+        try:
+            s=os.statvfs(path)
+            data[name+"_total_bytes"]=s.f_blocks*s.f_frsize;data[name+"_free_bytes"]=s.f_bavail*s.f_frsize
+            data[name+"_readonly"]=bool(s.f_flag&os.ST_RDONLY)
+            data[name+"_device"]=os.stat(path).st_dev
+            if s.f_files:data[name+"_inode_free_pct"]=round(100*s.f_favail/s.f_files,2)
+        except OSError:pass
+    try:
+        raw,_=bounded_file("/proc/loadavg",limit=4096);data["load1"]=float(raw.split()[0]);data["cpu_count"]=os.cpu_count() or 1
+    except (OSError,ValueError,IndexError):pass
+    for area in ("cpu","memory","io"):
+        try:
+            raw,_=bounded_file("/proc/pressure/"+area,limit=4096)
+            for line in raw.splitlines():
+                m=re.match(r"^(some|full) avg10=([0-9.]+)",line)
+                if m:data[area+"_psi_"+m[1]]=float(m[2])
+        except (OSError,ValueError):pass
+    # Temperature measurements are advisory; no fan/clock changes.
+    temps=[]
+    for path in sorted(P("/sys/class/thermal").glob("thermal_zone*/temp"))[:64]:
+        try:
+            raw,_=bounded_file(path,limit=64);n=int(raw.strip())
+            if 0<n<150000:temps.append(n/1000)
+        except (OSError,ValueError):pass
+    if temps:data["max_temperature_c"]=max(temps)
+    # Aggregate inventory; no serials, MACs, network addresses or process names.
+    for area,path in (("block_device_count","/sys/class/block"),("network_interface_count","/sys/class/net"),("power_supply_count","/sys/class/power_supply")):
+        try:data[area]=min(4096,len(list(P(path).iterdir())))
+        except OSError:pass
+    try:
+        raw,_=bounded_file("/proc/stat",limit=65536)
+        for line in raw.splitlines():
+            m=re.match(r"^(procs_running|procs_blocked|processes) ([0-9]+)$",line)
+            if m:data[m[1]]=int(m[2])
+    except (OSError,ValueError):pass
+    return data
+def assess(metrics,sources,history):
+    events={k:sum(s["events"].get(k,0) for s in sources) for k in CATEGORIES}
+    # Duplicate sources may overlap. These are observations, not unique incident counts.
+    findings=[]
+    for k,n in events.items():
+        if n:findings.append({"code":k,"level":"critical" if k in CRITICAL else "warning","observations":n})
+    total=metrics.get("memory_total_kib",0);avail=metrics.get("memory_available_kib")
+    lowmem=bool(total and avail is not None and avail/total<0.15)
+    lowdisk=any(metrics.get(x+"_total_bytes",0)>0 and metrics.get(x+"_free_bytes",10**30)/metrics[x+"_total_bytes"]<0.15 for x in ("root","home","apt"))
+    inode=any(metrics.get(x+"_inode_free_pct",100)<5 for x in ("root","home","apt"))
+    if lowmem:findings.append({"code":"low_available_memory","level":"warning","observations":1})
+    if lowdisk:findings.append({"code":"low_disk_space","level":"warning","observations":1})
+    if inode:findings.append({"code":"low_inodes","level":"warning","observations":1})
+    critical_storage=bool(events["storage_io"] or events["filesystem"] or events["disk_health"] or any(metrics.get(x+"_readonly") for x in ("root","home","apt")))
+    critical_other=bool(events["thermal"] or events["kernel_fault"] or metrics.get("max_temperature_c",0)>=90)
+    if critical_other:findings.append({"code":"hardware_or_kernel_review","level":"critical","observations":1})
+    if critical_storage:findings.append({"code":"storage_review_required","level":"critical","observations":1})
+    # Unknown coverage never becomes a clean bill of health.
+    storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
+    package_ok=any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
+    kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
+    # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
+    eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
+              "archives":storage_ok and kernel_ok and package_ok and not critical_storage and not critical_other,
+              "own_memory":True,"pause_monitoring":True}
+    context="disk" if lowdisk or inode else "memory" if lowmem else "normal"
+    reasons={"thumbnails":"Generated cache only; fresh native eligibility scan still required.",
+             "archives":"Package downloads only; package audit and fresh native checks required.",
+             "own_memory":"Release unused SysPulse allocator pages only.",
+             "pause_monitoring":"Reduce SysPulse sampling, not system services."}
+    recommendations={}
+    for action in ACTIONS:
+        h=history.get((context,action),{"attempts":0,"successes":0,"failures":0,"no_effect":0,"bytes":0})
+        # Learn only from verified action-specific results. Repeated failures demote;
+        # successful historical cleanup is not evidence of a speed increase.
+        demoted=h["attempts"]>=3 and (h["failures"]+h["no_effect"])*2>=h["attempts"]
+        default=eligible[action] and not demoted and (
+            (action in ("thumbnails","archives") and context=="disk") or
+            (action in ("own_memory","pause_monitoring") and context=="memory"))
+        recommendations[action]={"allowed":bool(eligible[action]),"recommended":bool(default),
+            "reason":reasons[action]+(" Blocked: storage/kernel coverage or health is insufficient." if not eligible[action] else "")+(" Repeated historical failures: manual review preferred." if demoted else ""),
+            "history":h}
+    return {"findings":findings,"coverage":{"sources":len(sources),"readable":sum(s["status"] in ("ok","empty","bounded","partial") for s in sources),
+            "limited":sum(s["status"] not in ("ok","empty") for s in sources)},
+            "context":context,"recommendations":recommendations,"critical_storage":critical_storage,"critical_other":critical_other}
+def secure_db():
+    require(os.geteuid()!=0,"Analysis must run as ordinary desktop user")
+    # Fixed local path; no XDG redirection or arbitrary database CLI path.
+    home=P.home();require(home.is_absolute() and home.resolve(strict=True)==home,"Home path redirected; local history disabled")
+    root=home/".local"
+    for path in (root,root/"state",root/"state/syspulse",root/"state/syspulse/diagnostics"):
+        try:path.mkdir(mode=0o700)
+        except FileExistsError:pass
+        s=path.lstat();require(stat.S_ISDIR(s.st_mode) and s.st_uid==os.getuid() and not s.st_mode&0o022,"Unsafe diagnostics directory")
+    folder=root/"state/syspulse/diagnostics";require(not folder.stat().st_mode&0o077,"Diagnostics directory must be private")
+    db=folder/"history.sqlite3"
+    for f in (db,P(str(db)+"-wal"),P(str(db)+"-shm"),P(str(db)+"-journal")):
+        if os.path.lexists(f):
+            s=f.lstat();require(stat.S_ISREG(s.st_mode) and s.st_uid==os.getuid() and s.st_nlink==1 and not s.st_mode&0o077,"Unsafe diagnostics database file")
+    return db
+def connect(path):
+    c=sqlite3.connect(path,timeout=4)
+    c.execute("PRAGMA foreign_keys=ON")
+    c.execute("PRAGMA trusted_schema=OFF")
+    c.execute("PRAGMA journal_mode=DELETE")
+    c.execute("PRAGMA secure_delete=ON")
+    c.execute("PRAGMA busy_timeout=4000")
+    ver=c.execute("PRAGMA user_version").fetchone()[0]
+    require(ver in (0,1),"Unsupported diagnostics database version")
+    if not ver:
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS analysis(id TEXT PRIMARY KEY, utc INTEGER NOT NULL, boot TEXT NOT NULL, tick REAL NOT NULL, state TEXT NOT NULL CHECK(state IN ('ready','reserved','finished','invalid')), context TEXT NOT NULL, metrics TEXT NOT NULL, sources TEXT NOT NULL, assessment TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS boost(id TEXT PRIMARY KEY REFERENCES analysis(id) ON DELETE CASCADE, utc INTEGER NOT NULL, selected TEXT NOT NULL, outcome TEXT, before_metrics TEXT, after_metrics TEXT, owner_pid INTEGER NOT NULL, owner_start TEXT NOT NULL);
+        PRAGMA user_version=1;
+        """)
+    return c
+def history(c):
+    out={}
+    for context,outcome in c.execute("SELECT analysis.context,boost.outcome FROM boost JOIN analysis USING(id) WHERE boost.outcome IS NOT NULL ORDER BY boost.utc DESC LIMIT 180"):
+        for action,result in json.loads(outcome).items():
+            key=(context,action);row=out.setdefault(key,{"attempts":0,"successes":0,"failures":0,"no_effect":0,"bytes":0})
+            row["attempts"]+=result["status"]!="skipped";row["successes"]+=result["status"]=="success";row["failures"]+=result["status"]=="failure";row["no_effect"]+=result["status"]=="no_effect";row["bytes"]+=result["bytes"]
+    return out
+def pending(c,boot):
+    return any(process_start(pid)==stamp for pid,stamp in c.execute("SELECT owner_pid,owner_start FROM boost JOIN analysis USING(id) WHERE state='reserved' AND boot=?",(boot,)))
+def record_analysis(c,metrics,sources,boot,tick,now):
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        assessment=assess(metrics,sources,history(c));ident=secrets.token_hex(16)
+        previous=list(c.execute("SELECT assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 9"))
+        recurrence={}
+        for (raw,) in previous:
+            for f in json.loads(raw).get("findings",[]):recurrence[f["code"]]=recurrence.get(f["code"],0)+1
+        for finding in assessment["findings"]:finding["observed_in_recent_analyses"]=1+recurrence.get(finding["code"],0)
+        assessment["trend_window"]=len(previous)+1
+        require(not pending(c,boot),"Previous Boost is still pending; review history before retry")
+        c.execute("UPDATE analysis SET state='invalid' WHERE state IN ('ready','reserved')")
+        c.execute("INSERT INTO analysis VALUES(?,?,?,?,?,?,?,?,?)",(ident,now,boot,tick,"ready",assessment["context"],json.dumps(metrics),json.dumps(sources),json.dumps(assessment)))
+        c.execute("DELETE FROM analysis WHERE id IN (SELECT id FROM analysis ORDER BY utc DESC,rowid DESC LIMIT -1 OFFSET ?)",(RETENTION,))
+    return {"schema":1,"id":ident,"utc":now,"state":"ready","metrics":metrics,"sources":sources,**assessment}
+def read_analysis(c,ident,boot,tick,now):
+    require(isinstance(ident,str) and re.fullmatch(r"[0-9a-f]{32}",ident),"Invalid analysis identifier")
+    r=c.execute("SELECT utc,boot,tick,state,metrics,sources,assessment FROM analysis WHERE id=?",(ident,)).fetchone()
+    require(r is not None,"Analysis not found; analyze again")
+    utc,b,t,state,metrics,sources,assessment=r
+    require(state=="ready" and b==boot and 0<=tick-t<=MAX_AGE and 0<=now-utc<=MAX_AGE,"Analysis expired, consumed or from another boot; analyze again")
+    return {"schema":1,"id":ident,"utc":utc,"state":state,"metrics":json.loads(metrics),"sources":json.loads(sources),**json.loads(assessment)}
+def reserve(c,ident,selected,boot,tick,now,metrics,owner=None,fresh_sources=None):
+    owner=owner or (os.getpid(),process_start(os.getpid()))
+    require(owner[1] is not None,"Reservation owner unavailable")
+    require(isinstance(selected,list) and selected and len(set(selected))==len(selected) and all(a in ACTIONS for a in selected),"Invalid selected actions")
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        row=read_analysis(c,ident,boot,tick,now)
+        require(all(row["recommendations"][a]["allowed"] is True for a in selected),"Action not permitted by analysis")
+        if any(a in ("thumbnails","archives") for a in selected):
+            require(all(metrics.get(x+"_readonly") is False and metrics.get(x+"_total_bytes",0)>0 and metrics.get(x+"_device")==row["metrics"].get(x+"_device") for x in ("root","home","apt")),"Storage changed or unavailable")
+            if fresh_sources is not None:
+                fresh=assess(metrics,fresh_sources,{})
+                require(all(fresh["recommendations"][a]["allowed"] for a in selected),"Fresh kernel/package checks block the selected actions")
+        c.execute("UPDATE analysis SET state='reserved' WHERE id=?",(ident,))
+        c.execute("INSERT INTO boost(id,utc,selected,before_metrics,owner_pid,owner_start) VALUES(?,?,?,?,?,?)",(ident,now,json.dumps(selected),json.dumps(metrics),*owner))
+    return {"schema":1,"id":ident,"state":"reserved"}
+def finish(c,ident,outcome,metrics,owner=None):
+    owner=owner or (os.getpid(),process_start(os.getpid()))
+    require(isinstance(outcome,dict) and outcome and all(a in ACTIONS for a in outcome),"Invalid boost receipt")
+    for a,r in outcome.items():
+        require(isinstance(r,dict) and set(r)=={"status","bytes"} and r["status"] in ("success","failure","no_effect","skipped") and type(r["bytes"]) is int and 0<=r["bytes"]<=2**53-1,"Invalid action result")
+        require(r["status"]=="success" or r["bytes"]==0,"Unverified gain")
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("SELECT analysis.state,boost.selected,boost.owner_pid,boost.owner_start FROM boost JOIN analysis USING(id) WHERE id=?",(ident,)).fetchone()
+        require(row and row[0]=="reserved" and tuple(row[2:])==owner and set(json.loads(row[1]))==set(outcome),"Receipt does not match reserved actions")
+        c.execute("UPDATE boost SET outcome=?,after_metrics=? WHERE id=?",(json.dumps(outcome),json.dumps(metrics),ident))
+        c.execute("UPDATE analysis SET state='finished' WHERE id=?",(ident,))
+    return {"schema":1,"id":ident,"state":"finished"}
+def show_history(c):
+    rows=[]
+    for ident,utc,state,context,assessment in c.execute("SELECT id,utc,state,context,assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 30"):
+        a=json.loads(assessment);rows.append({"id":ident,"utc":utc,"state":state,"context":context,"findings":len(a["findings"]),"coverage":a["coverage"]})
+    return {"schema":1,"analyses":rows,"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
+def main():
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
+    if a.mode=="self-test":return run_tests()
+    os.umask(0o077)
+    try:
+        path=secure_db()
+        with connect(path) as c:
+            if a.mode=="analyze":
+                b=boot_id();start=clock()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:rows=list(pool.map(collect_job,specs()))
+                m=numeric_snapshot();require(boot_id()==b and clock()-start<=120,"Analysis interrupted or exceeded time budget")
+                result=record_analysis(c,m,rows,b,clock(),int(time.time()))
+            elif a.mode=="history":result=show_history(c)
+            elif a.mode=="clear":
+                with c:
+                    c.execute("BEGIN IMMEDIATE")
+                    require(not pending(c,boot_id()),"Boost pending; history cannot be cleared yet")
+                    c.execute("DELETE FROM analysis")
+                c.execute("VACUUM");result={"schema":1,"state":"cleared"}
+            elif a.mode=="plan":result=read_analysis(c,a.id,boot_id(),clock(),int(time.time()))
+            elif a.mode=="reserve":
+                selected=json.loads(a.payload);fresh=None
+                if any(x in ("archives","thumbnails") for x in selected):
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
+                result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
+            else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
+        print(json.dumps(result,ensure_ascii=True,separators=(",",":"),allow_nan=False));return 0
+    except (OSError,ValueError,TypeError,sqlite3.Error,subprocess.SubprocessError) as e:
+        print(json.dumps({"schema":1,"error":str(e)[:300]}));return 1
+def run_tests():
+    import tempfile
+    class Tests(unittest.TestCase):
+        def setUp(self):
+            self.c=connect(":memory:");self.b="boot-fixture";self.t=100.0;self.n=1000
+            self.m={"memory_total_kib":1000,"memory_available_kib":100,"root_total_bytes":1000,"root_free_bytes":100,"root_readonly":False,"home_total_bytes":1000,"home_free_bytes":500,"home_readonly":False,"apt_total_bytes":1000,"apt_free_bytes":100,"apt_readonly":False}
+            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]
+        def tearDown(self):self.c.close()
+        def make(self):return record_analysis(self.c,self.m,self.s,self.b,self.t,self.n)
+        def test_classification(self):
+            for msg,key in [("Buffer I/O error on dev sda","storage_io"),("EXT4-fs error","filesystem"),("Out of memory: Killed process","oom"),("GPU HANG","gpu"),("thermal throttling","thermal"),("Failed to start foo","service_failure"),("dpkg: error processing package","package_failure"),("segfault at x","application_crash"),("Failed password","authentication")]:
+                self.assertEqual(classify(msg),key)
+        def test_privacy(self):
+            r=self.make();self.assertNotIn("MESSAGE",json.dumps(r))
+            c,n,b,_=event_counts('{"MESSAGE":"Failed password for private@example.org","PRIORITY":"3"}',True)
+            self.assertEqual(c,{"authentication":1});self.assertNotIn("private",json.dumps(c))
+        def test_journal_malformed(self):self.assertEqual(event_counts("not-json",True)[2],1)
+        def test_cursor_dedupe(self):
+            line='{"MESSAGE":"error","PRIORITY":"3","__CURSOR":"a"}'
+            self.assertEqual(event_counts(line+"\n"+line,True)[0],{"other_error":1})
+        def test_critical_storage(self):
+            self.s.append(source("syslog","ok",{"storage_io":1},1));r=self.make()
+            self.assertFalse(r["recommendations"]["archives"]["allowed"]);self.assertFalse(r["recommendations"]["thumbnails"]["allowed"])
+        def test_missing_kernel(self):
+            self.s=self.s[1:];self.assertFalse(self.make()["recommendations"]["thumbnails"]["allowed"])
+        def test_package_audit(self):
+            self.s[1]=source("dpkg-audit","ok",{"package_failure":1},1);r=self.make()
+            self.assertFalse(r["recommendations"]["archives"]["allowed"]);self.assertTrue(r["recommendations"]["thumbnails"]["allowed"])
+        def test_readonly(self):
+            self.m["home_readonly"]=True;self.assertFalse(self.make()["recommendations"]["thumbnails"]["allowed"])
+        def test_thermal(self):
+            self.m["max_temperature_c"]=95;self.assertFalse(self.make()["recommendations"]["archives"]["allowed"])
+        def test_recommend_disk(self):self.assertTrue(self.make()["recommendations"]["thumbnails"]["recommended"])
+        def test_normal_no_generic_default(self):
+            self.m["memory_available_kib"]=600;self.m["root_free_bytes"]=self.m["apt_free_bytes"]=500
+            self.assertFalse(any(v["recommended"] for v in self.make()["recommendations"].values()))
+        def test_expired(self):
+            r=self.make();self.assertRaises(ValueError,read_analysis,self.c,r["id"],self.b,self.t+901,self.n)
+        def test_wrong_boot(self):
+            r=self.make();self.assertRaises(ValueError,read_analysis,self.c,r["id"],"other",self.t,self.n)
+        def test_clock_rollback(self):
+            r=self.make();self.assertRaises(ValueError,read_analysis,self.c,r["id"],self.b,self.t,self.n-1)
+        def test_new_invalidates_old(self):
+            r=self.make();self.make();self.assertRaises(ValueError,read_analysis,self.c,r["id"],self.b,self.t,self.n)
+        def test_single_use(self):
+            r=self.make();reserve(self.c,r["id"],["own_memory"],self.b,self.t,self.n,self.m)
+            self.assertRaises(ValueError,reserve,self.c,r["id"],["own_memory"],self.b,self.t,self.n,self.m)
+        def test_unknown_action(self):
+            r=self.make();self.assertRaises(ValueError,reserve,self.c,r["id"],["rm"],self.b,self.t,self.n,self.m)
+        def test_changed_storage(self):
+            r=self.make();self.m["home_readonly"]=True
+            self.assertRaises(ValueError,reserve,self.c,r["id"],["thumbnails"],self.b,self.t,self.n,self.m)
+        def test_receipt_exact(self):
+            r=self.make();reserve(self.c,r["id"],["own_memory"],self.b,self.t,self.n,self.m)
+            self.assertRaises(ValueError,finish,self.c,r["id"],{"archives":{"status":"success","bytes":1}},self.m)
+            finish(self.c,r["id"],{"own_memory":{"status":"no_effect","bytes":0}},self.m)
+            self.assertEqual(history(self.c)[("disk","own_memory")]["attempts"],1)
+            self.assertRaises(ValueError,finish,self.c,r["id"],{"own_memory":{"status":"success","bytes":1}},self.m)
+        def test_learning_demotion(self):
+            for _ in range(3):
+                r=self.make();reserve(self.c,r["id"],["thumbnails"],self.b,self.t,self.n,self.m)
+                finish(self.c,r["id"],{"thumbnails":{"status":"failure","bytes":0}},self.m)
+            v=self.make()["recommendations"]["thumbnails"]
+            self.assertFalse(v["recommended"]);self.assertTrue(v["allowed"]);self.assertEqual(v["history"]["failures"],3)
+        def test_learning_never_overrides_safety(self):
+            r=self.make();reserve(self.c,r["id"],["archives"],self.b,self.t,self.n,self.m)
+            finish(self.c,r["id"],{"archives":{"status":"success","bytes":50}},self.m)
+            self.s.append(source("syslog","ok",{"filesystem":1},1));self.assertFalse(self.make()["recommendations"]["archives"]["allowed"])
+        def test_pending_blocks_new_analysis(self):
+            r=self.make();reserve(self.c,r["id"],["own_memory"],self.b,self.t,self.n,self.m)
+            self.assertRaises(ValueError,self.make)
+            r2=record_analysis(self.c,self.m,self.s,"new-boot",self.t+901,self.n+901)
+            self.assertEqual(r2["state"],"ready")
+            self.assertEqual(self.c.execute("SELECT state FROM analysis WHERE id=?",(r["id"],)).fetchone()[0],"invalid")
+        def test_recurrence(self):
+            self.s.append(source("syslog","ok",{"oom":1},1));self.make();r=self.make()
+            self.assertEqual(next(f for f in r["findings"] if f["code"]=="oom")["observed_in_recent_analyses"],2)
+            self.assertEqual(r["trend_window"],2)
+        def test_retention(self):
+            for _ in range(RETENTION+2):self.make()
+            self.assertEqual(self.c.execute("SELECT count(*) FROM analysis").fetchone()[0],RETENTION)
+        def test_symlink_fifo(self):
+            with tempfile.TemporaryDirectory() as t:
+                p=P(t);(p/"x").symlink_to("/etc/passwd");os.mkfifo(p/"fifo")
+                self.assertRaises(OSError,bounded_file,p/"x");self.assertRaises(ValueError,bounded_file,p/"fifo")
+        def test_actual_command_limits(self):
+            status,raw,bounded=command(["printf","%s","x"*2000],limit=100)
+            self.assertEqual(status,"bounded");self.assertTrue(bounded);self.assertEqual(len(raw),100)
+        def test_actual_command_timeout(self):
+            status,_,_=command(["sleep","1"],timeout=0.03)
+            self.assertEqual(status,"timeout")
+        def test_bounded_tail(self):
+            with tempfile.TemporaryDirectory() as t:
+                p=P(t)/"log";p.write_text("secret-old\n"+"x"*50+"\nnew\n")
+                data,truncated=bounded_file(p,True,10);self.assertTrue(truncated);self.assertEqual(data,"new\n")
+    suite=unittest.defaultTestLoader.loadTestsFromTestCase(Tests)
+    return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+if __name__=="__main__":raise SystemExit(main())
