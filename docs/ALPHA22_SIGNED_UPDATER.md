@@ -10,3 +10,5 @@ No update URL or signing key is accepted from user input; no raw unsigned instal
 Evaluation runtime: the disposable signed repository is exercised by the actual installed helper implementation with a test-only in-process fixture URL. The packaged CLI never accepts URL or key overrides. Gate includes actual upgrade, installed version readback, equal-version handling and refusal of downgrade or channel crossing.
 
 First alpha.22 attempt: all 43 native suites and package metadata checks passed. The installation stage failed at the tampered-package fixture before helper execution; previous runtime image omitted the new CA certificate dependency. Retry explicitly provisions Python and CA certificates as expected runtime prerequisites and retains corruption rejection and all other gates. No failed build published.
+
+Second attempt: corrupted package hash was correctly rejected and old version retained. The helper discovery assertion failed before installation, likely because copied disposable key ownership was not root-controlled. Retry explicitly makes the fixture tree root-owned and asserts the same strict trust check before discovery. No failed build published.

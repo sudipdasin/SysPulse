@@ -35,7 +35,7 @@ RUN bash /src/tools/render/make-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.22-
 FROM ubuntu:24.04 AS installcheck
 COPY --from=previous /oldout/ /previous/
 COPY --from=build /out/ /candidate/
-COPY --from=build /upgrade/ /upgrade/
+COPY --from=build --chown=0:0 /upgrade/ /upgrade/
 COPY --from=build /work/build/syspulse-cleaner-ui-tests /usr/local/bin/syspulse-cleaner-runtime-test
 COPY --from=build /work/build/tux-tests /usr/local/bin/syspulse-core-runtime-test
 COPY --from=build /work/build/syspulse-shell-tests /usr/local/bin/syspulse-shell-runtime-test
