@@ -30,12 +30,13 @@ python3 "$source_dir/tests/test_apt_snapshot.py"
 python3 "$source_dir/tests/benchmark_diagnostic_detection.py" > "$output/DETECTION39-TUNED.json"
 python3 "$source_dir/tests/benchmark_diagnostic_holdout.py" > "$output/DETECTION39-REPLAY.json" || { cat "$output/DETECTION39-REPLAY.json"; exit 1; }
 cat "$output/DETECTION39-TUNED.json" "$output/DETECTION39-REPLAY.json"
-cpack --config "$work/build/CPackConfig.cmake" -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version"
-cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$app_version" -P "$source_dir/tests/verify_packages.cmake"
+(cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version")
 shopt -s nullglob
 packages=("$work/build/packages/"*.deb)
 [[ ${#packages[@]} == 1 && -f ${packages[0]} && ! -L ${packages[0]} ]] || { echo 'Exactly one regular DEB required' >&2; exit 1; }
 deb=${packages[0]}
+python3 "$source_dir/tools/verify-alpha39-payload.py" "$deb" "$deb_version" | tee "$output/PAYLOAD-STATUS.txt"
+cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$app_version" -P "$source_dir/tests/verify_packages.cmake"
 # Confirm the public anchor is present in the actual DEB, not merely in CMake configuration.
 trust_dir="$work/trust-package-check"
 mkdir "$trust_dir"
