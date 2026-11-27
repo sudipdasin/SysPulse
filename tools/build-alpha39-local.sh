@@ -7,64 +7,96 @@ readonly version=3.0.0-alpha.39
 readonly deb_version=3.0.0~alpha39~local1
 readonly repository=https://github.com/sudipdasin/SysPulse.git
 mode=${1:---check}
+source_repo=
 if [[ $mode == --check && $# -le 1 ]]; then
     readonly revision=not-selected
-elif [[ $mode == --build && $# == 2 && $2 =~ ^[0-9a-f]{40}$ ]]; then
+elif [[ ( $mode == --build || $mode == --diagnostics ) && ( $# == 2 || $# == 3 ) && $2 =~ ^[0-9a-f]{40}$ ]]; then
     readonly revision=$2
+    if [[ $# == 3 ]]; then
+        source_repo=$(realpath -e -- "$3") || { echo 'Local Git repository unavailable.' >&2; exit 2; }
+        [[ -d $source_repo ]] || { echo 'Local Git repository must be a directory.' >&2; exit 2; }
+    fi
 else
-    echo 'Usage: bash tools/build-alpha39-local.sh --check | --build FULL_COMMIT' >&2
+    echo 'Usage: bash tools/build-alpha39-local.sh --check | --diagnostics FULL_COMMIT [LOCAL_GIT_REPO] | --build FULL_COMMIT [LOCAL_GIT_REPO]' >&2
     exit 2
 fi
+if [[ $EUID == 0 ]]; then echo 'Run as a normal desktop user, not root.' >&2; exit 1; fi
+export PATH=/usr/bin:/bin
 missing=0
-if [[ $EUID == 0 ]]; then echo 'Run as a normal desktop user, not root.'; missing=1; fi
-. /etc/os-release
-case "${ID:-}:${VERSION_ID:-}:${UBUNTU_CODENAME:-}" in
-    linuxmint:22*:noble) target=linuxmint-22-noble;;
-    ubuntu:24.04:*) target=ubuntu-24.04;;
-    ubuntu:22.04:*) target=ubuntu-22.04;;
-    *) echo 'Unsupported build distribution; use Linux Mint 22.x or Ubuntu 22.04/24.04.'; missing=1; target=unsupported;;
-esac
-for tool in git g++ cmake ctest cpack pkg-config dpkg dpkg-deb dpkg-shlibdeps python3 openssl gpg file desktop-file-validate sha256sum; do
+target=diagnostics-only
+required=(git g++ python3 dpkg-deb timeout tar sha256sum)
+if [[ $mode != --diagnostics ]]; then
+    . /etc/os-release
+    case "${ID:-}:${VERSION_ID:-}:${UBUNTU_CODENAME:-}" in
+        linuxmint:22*:noble) target=linuxmint-22-noble;;
+        ubuntu:24.04:*) target=ubuntu-24.04;;
+        ubuntu:22.04:*) target=ubuntu-22.04;;
+        *) echo 'Unsupported build distribution; use Linux Mint 22.x or Ubuntu 22.04/24.04.'; missing=1; target=unsupported;;
+    esac
+    required+=(cmake ctest cpack pkg-config dpkg dpkg-shlibdeps openssl gpg file desktop-file-validate)
+    if command -v dpkg >/dev/null && [[ $(dpkg --print-architecture) != amd64 ]]; then echo 'amd64 required.'; missing=1; fi
+    if ! command -v pkg-config >/dev/null || ! pkg-config --exists 'Qt5Core >= 5.15' Qt5Widgets Qt5Network; then echo 'Missing Qt5 development files (qtbase5-dev).'; missing=1; fi
+fi
+for tool in "${required[@]}"; do
     if ! command -v "$tool" >/dev/null; then echo "Missing: $tool"; missing=1; fi
 done
-if command -v dpkg >/dev/null && [[ $(dpkg --print-architecture) != amd64 ]]; then echo 'amd64 required.'; missing=1; fi
-if ! command -v pkg-config >/dev/null || ! pkg-config --exists 'Qt5Core >= 5.15' Qt5Widgets Qt5Network; then echo 'Missing Qt5 development files (qtbase5-dev).'; missing=1; fi
 if [[ $missing == 1 ]]; then
     echo 'Preflight blocked. Review missing prerequisites. No system packages changed.'
     echo 'Typical build prerequisites: build-essential cmake pkg-config qtbase5-dev dpkg-dev desktop-file-utils python3 openssl gnupg file git ca-certificates.'
     exit 1
 fi
-printf 'Preflight passed: %s, amd64, source %s\n' "$target" "$revision"
-[[ $mode == --build ]] || exit 0
+printf 'Preflight passed: %s, source %s\n' "$target" "$revision"
+[[ $mode != --check ]] || exit 0
 work=$(mktemp -d "$HOME/SysPulse-alpha39-local.XXXXXXXX")
-mkdir -m 700 "$work/source" "$work/results" "$work/home"
+mkdir -m 700 "$work/source" "$work/results" "$work/home" "$work/git"
 export XDG_CONFIG_HOME="$work/home/config" XDG_DATA_HOME="$work/home/data" XDG_CACHE_HOME="$work/home/cache" XDG_STATE_HOME="$work/home/state" XDG_RUNTIME_DIR="$work/home/runtime" QT_QPA_PLATFORM=offscreen
-export HOME="$work/home"
+export HOME="$work/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR PYTHONPATH PYTHONHOME
 mkdir -m 700 "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
 printf 'Build directory: %s\n' "$work"
-git -C "$work/source" init --quiet
-git -C "$work/source" -c protocol.file.allow=never -c http.sslVerify=true -c http.followRedirects=false fetch --depth 1 "$repository" "$revision"
-git -C "$work/source" checkout --quiet --detach FETCH_HEAD
-[[ $(git -C "$work/source" rev-parse HEAD) == "$revision" ]]
+phase=source
+trap 'rc=$?; if ((rc != 0)); then printf "FAILED: %s (exit %s)\n" "$phase" "$rc" > "$work/results/FAILURE-STATUS.txt"; printf "Failed phase: %s. Local evidence: %s/results\n" "$phase" "$work" >&2; fi' EXIT
+git -C "$work/git" init --quiet
+if [[ -n $source_repo ]]; then
+    [[ $(git -C "$source_repo" rev-parse --verify "$revision^{commit}") == "$revision" ]] || { echo 'Exact commit unavailable in local repository.' >&2; exit 1; }
+    timeout 180s git -C "$work/git" -c protocol.file.allow=always fetch --depth 1 "$source_repo" "$revision"
+else
+    timeout 180s git -C "$work/git" -c protocol.file.allow=never -c http.sslVerify=true -c http.followRedirects=false fetch --depth 1 "$repository" "$revision"
+fi
+[[ $(git -C "$work/git" rev-parse FETCH_HEAD) == "$revision" ]]
+git -C "$work/git" archive --format=tar "$revision" | tar -xf - -C "$work/source"
 grep -Fx 'set(SYSPULSE_ALPHA_NUMBER 39)' "$work/source/CMakeLists.txt" >/dev/null
 printf '%s\n' "$revision" > "$work/results/SOURCE-CHECKOUT.txt"
-bash "$work/source/tests/test_alpha39_build_provenance.sh" | tee "$work/results/PROVENANCE-TESTS.txt"
+phase=offline-diagnostics
+bash "$work/source/tools/test-offline-alpha39.sh" --full 2>&1 | tee "$work/results/OFFLINE-DIAGNOSTICS.txt"
+printf 'Source: %s\nSelected offline diagnostic suites completed; review individual skip reports. No native GUI, application package, installed upgrade or physical hardware validation claimed.\n' "$revision" > "$work/results/DIAGNOSTIC-STATUS.txt"
+if [[ $mode == --diagnostics ]]; then
+    printf 'Diagnostic evidence: %s/results\nNo compilation of the GUI or installation performed.\n' "$work"
+    exit 0
+fi
+phase=configure
 cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET="$target" -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
+phase=compile
 cmake --build "$work/build" --parallel 2
+phase=ctest
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error | tee "$work/results/CTEST.txt"
+phase=benchmark
 python3 "$work/source/tests/benchmark_diagnostic_detection.py" > "$work/results/DETECTION-TUNED.json"
 python3 "$work/source/tests/benchmark_diagnostic_holdout.py" > "$work/results/DETECTION-REPLAY.json"
+phase=package
 (umask 022; cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version")
 shopt -s nullglob
 packages=("$work/build/packages/"*.deb)
 [[ ${#packages[@]} == 1 && -f ${packages[0]} && ! -L ${packages[0]} ]]
 deb=${packages[0]}
+phase=payload
 python3 "$work/source/tools/verify-alpha39-payload.py" "$deb" "$deb_version" | tee "$work/results/PAYLOAD-STATUS.txt"
 cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$version" -P "$work/source/tests/verify_packages.cmake"
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]]
 mkdir "$work/anchor-check"
 dpkg-deb -x "$deb" "$work/anchor-check"
 [[ $(sha256sum "$work/anchor-check/usr/share/syspulse/update-keys/alpha.gpg" | cut -d' ' -f1) == 1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6 ]]
+phase=export
 name="syspulse-${version}-${target}-amd64-local-eval.deb"
 cp -- "$deb" "$work/results/$name"
 (cd "$work/results" && sha256sum "$name" > SHA256SUMS && sha256sum -c SHA256SUMS)
