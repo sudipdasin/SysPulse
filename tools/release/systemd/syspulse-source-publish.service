@@ -1,0 +1,29 @@
+[Unit]
+Description=SysPulse approved Alpha source publication
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/syspulse-validator/approval.json
+
+[Service]
+Type=oneshot
+User=syspulse-signer
+Group=syspulse-signer
+SupplementaryGroups=syspulse-release-readers
+UMask=0077
+WorkingDirectory=/opt/syspulse-release
+EnvironmentFile=/etc/syspulse-release/signer.conf
+ExecStart=/usr/bin/python3 /opt/syspulse-release/tools/release/source_signer.py publish --state /var/lib/syspulse-signer --approval /var/lib/syspulse-validator/approval.json --validator-uid ${VALIDATOR_UID} --gpg-home /var/lib/syspulse-signer/gnupg --git-token /run/credentials/syspulse-source-publish.service/git-token --passphrase /run/credentials/syspulse-source-publish.service/gpg-passphrase --apply
+LoadCredential=git-token:/etc/syspulse-release/credentials/git-token
+LoadCredential=gpg-passphrase:/etc/syspulse-release/credentials/gpg-passphrase
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/syspulse-signer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+TimeoutStartSec=15min
