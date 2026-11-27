@@ -518,6 +518,45 @@ struct Window::Impl {
         report.setText(outcome.exitCode==0?"APT reported a successful exit. Review the installed applications.":"APT did not confirm completion. Review the package manager and do not retry blindly.");
         report.setDetailedText(QString::fromUtf8(outcome.output)+(!outcome.error.isEmpty()?"\n"+outcome.error:QString())+(outcome.truncated?"\nOutput truncated.":QString()));report.exec();
     }
+    QWidget* inputControlPage() {
+        auto* page=new QWidget;auto* layout=new QVBoxLayout(page);
+        layout->addWidget(text("Physical X11 input controls","sectionTitle"));
+        layout->addWidget(text("Enable a detected internal keyboard or touchpad, or temporarily disable it for 15 seconds. An independent recovery process attempts re-enable even if the main helper exits. Keep an alternate input device available. Permanent Xorg/udev rules are deliberately not written.","muted"));
+        auto* list=new QComboBox;list->setObjectName("physicalInputDevices");layout->addWidget(list);
+        auto* state=text("Refresh to inventory eligible input devices.","muted");state->setTextFormat(Qt::PlainText);layout->addWidget(state);
+        auto* refresh=new QPushButton("Refresh physical input devices");auto* enable=new QPushButton("Enable selected device…");auto* test=new QPushButton("Test disable for 15 seconds…");
+        enable->setEnabled(false);test->setEnabled(false);auto* row=new QHBoxLayout;row->addWidget(refresh);row->addWidget(enable);row->addWidget(test);layout->addLayout(row);
+        const auto load=[=]{
+            list->clear();enable->setEnabled(false);test->setEnabled(false);
+            const auto helper=tux::trustedSystemExecutable("syspulse-input-control");
+            if(helper.isEmpty()){state->setText("Trusted input helper unavailable.");return;}
+            refresh->setEnabled(false);
+            AsyncCommand::run(page,helper,{"list"},35000,262144,[=](const AsyncCommandResult& r){
+                refresh->setEnabled(true);QJsonParseError error;const auto doc=QJsonDocument::fromJson(r.output,&error);
+                if(!r.ok()||error.error!=QJsonParseError::NoError||!doc.isArray()){state->setText("Input inventory unavailable. Requires a local X11 desktop and xinput. "+QString::fromUtf8(r.output).left(500));return;}
+                for(const auto& v:doc.array()){
+                    const auto d=v.toObject();const int id=d.value("id").toInt(-1);const auto name=d.value("name").toString();const int active=d.value("enabled").toInt(-1);
+                    if(id<1||id>65535||name.isEmpty()||name.size()>256||(active!=0&&active!=1))continue;
+                    list->addItem(name+QString(active?" · enabled":" · disabled"),d.toVariantMap());
+                }
+                enable->setEnabled(list->count()>0);test->setEnabled(list->count()>0);state->setText(list->count()?"Select the exact device.":"No eligible internal keyboard or touchpad found.");
+            });
+        };
+        QObject::connect(refresh,&QPushButton::clicked,page,load);
+        const auto act=[=](bool disable){
+            const auto d=list->currentData().toMap();const int id=d.value("id").toInt();const auto name=d.value("name").toString();
+            const auto helper=tux::trustedSystemExecutable("syspulse-input-control");
+            if(id<1||id>65535||name.isEmpty()||helper.isEmpty())return;
+            if(QMessageBox::question(page,"Review input operation",QString("%1\nDevice: %2 (ID %3)\n%4").arg(disable?"Temporarily disable this device?":"Enable this device?",name).arg(id).arg(disable?"Automatic restoration is attempted after 15 seconds; keep an alternate input device available.":"The current device identity will be checked before enabling."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            ReviewedProgress progress(page);progress.setWindowTitle("Physical input operation");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+            auto* pl=new QVBoxLayout(&progress);pl->addWidget(text(disable?"Testing input disable and recovery. Do not close the desktop session.":"Enabling and verifying device state."));
+            QString outcome;
+            AsyncCommand::runAction(&progress,helper,{disable?"test-disable":"enable",QString::number(id),name},4096,[&](const AsyncCommandResult& r){outcome=(r.ok()?"Verified: ":"Not verified: ")+QString::fromUtf8(r.output).left(800);progress.done(0);});
+            progress.exec();QMessageBox::information(page,"Input result",outcome);load();
+        };
+        QObject::connect(enable,&QPushButton::clicked,page,[act]{act(false);});QObject::connect(test,&QPushButton::clicked,page,[act]{act(true);});
+        layout->addStretch();return page;
+    }
     QWidget* desktopPage() {
         auto* tabs=new QTabWidget;tabs->setObjectName("desktopWorkspaceTabs");auto* settings=new QWidget;auto* layout=new QVBoxLayout(settings);
         layout->addWidget(text("Open installed XFCE settings tools. Changes are made through their native interfaces.","muted"));
@@ -555,7 +594,7 @@ struct Window::Impl {
             auto* mode=outer->findChild<QComboBox*>("cleanerMode");auto* root=outer->findChild<QLineEdit*>("cleanerRoot");
             if(mode&&root){mode->setCurrentIndex(3);root->setText(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)+"/BraveSoftware/Brave-Browser");}
         },integrations));
-        il->addStretch();auto* integrationScroll=new QScrollArea;integrationScroll->setWidgetResizable(true);integrationScroll->setWidget(integrations);tabs->addTab(integrationScroll,"Gaming & browser");
+        il->addStretch();auto* integrationScroll=new QScrollArea;integrationScroll->setWidgetResizable(true);integrationScroll->setWidget(integrations);tabs->addTab(integrationScroll,"Gaming & browser");tabs->addTab(inputControlPage(),"Input controls");
         return workspace("XFCE desktop","Desktop, input, power and installed Linux integrations.",tabs);
     }
     QWidget* recoveryPage() {
