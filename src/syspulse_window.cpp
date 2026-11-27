@@ -275,7 +275,11 @@ struct Window::Impl {
         securityTabs->addTab(installedTools("Open distribution-supported software and security tools; they manage their own authorization.",{{"Update manager","mintupdate"},{"Software manager","mintinstall"},{"Package manager","synaptic"},{"Software sources","mintsources"},{"Firewall","gufw"},{"System logs","gnome-logs"}}),"Software & security tools");
         pages.insert("security",workspace("Security & privacy","Review system warnings, update state, permissions and available firewall tools. Reports stay local.",securityTabs));
         auto* schedules=toolbox({"Schedules"});toolboxes.insert("schedules",schedules);
-        pages.insert("schedules",workspace("Schedules","Inspect system and user timers. SysPulse does not enable automation at startup.",schedules));
+        auto* schedulePage=new QWidget;auto* scheduleLayout=new QVBoxLayout(schedulePage);auto* scheduleActions=new QHBoxLayout;
+        scheduleActions->addWidget(button("Enable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-enable");},w,true));
+        scheduleActions->addWidget(button("Disable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-disable");},w));
+        scheduleLayout->addLayout(scheduleActions);scheduleLayout->addWidget(schedules,1);
+        pages.insert("schedules",workspace("Schedules","Inspect timers, or explicitly enable and disable scheduled SSD maintenance. No timer changes at startup.",schedulePage));
         pages.insert("recovery",recoveryPage());
         pages.insert("reports",reportsPage());
         auto* experiments=toolbox({},true);toolboxes.insert("experimental",experiments);
