@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QString>
+#include <QStringList>
+#include <QByteArray>
 #include <QVector>
 namespace syspulse::offline {
 struct Device {
