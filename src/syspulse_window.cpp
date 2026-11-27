@@ -243,6 +243,7 @@ struct Window::Impl {
         }
         const auto g=record.value("guidance").toObject();
         lines<<QString("Independent model responses: %1. Only agreement can suppress a default action; no permission is added.").arg(g.value("model_count").toInt());
+        QStringList corroborated;for(const auto& a:g.value("corroborated_routes").toArray())corroborated<<a.toString();if(!corroborated.isEmpty())lines<<"Model and public-answer concept overlap (not verified repair): "+corroborated.join(", ");
         QStringList caution,priority;for(const auto& a:g.value("consensus_caution").toArray())caution<<a.toString();for(const auto& a:g.value("consensus_priority").toArray())priority<<a.toString();
         if(!caution.isEmpty())lines<<"Shared caution: "+caution.join(", ");
         if(!priority.isEmpty())lines<<"Shared suggestions (local eligibility and learned outcomes still control): "+priority.join(", ");
@@ -319,6 +320,8 @@ struct Window::Impl {
         lines<<"Recent analyses (up to 30):";
         for(const auto& v:data.value("analyses").toArray()){const auto a=v.toObject(),c=a.value("coverage").toObject();lines<<QString("%1 · %2 · %3 · %4 findings · %5/%6 readable").arg(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(a.value("utc").toDouble())).toLocalTime().toString("yyyy-MM-dd HH:mm"),a.value("state").toString(),a.value("context").toString()).arg(a.value("findings").toInt()).arg(c.value("readable").toInt()).arg(c.value("sources").toInt());}
         lines<<"\nOutcome-based learning (local only):";for(const auto& v:data.value("learning").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
+        lines<<"\nMeasured outcomes from research-associated sessions (association, not proof of AI benefit):";
+        for(const auto& v:data.value("assisted_outcomes").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
         lines<<"\nRecent saved web and AI evidence:";for(const auto& v:data.value("research").toArray()){lines<<researchLines(v.toObject());lines<<"";}
         view->setPlainText(lines.join("\n"));layout->addWidget(view,1);
         layout->addWidget(text("Retains up to 180 analyses and their associated outcomes. Learning changes recommendations only, never security gates or executable commands.","muted"));
