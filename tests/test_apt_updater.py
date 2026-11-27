@@ -41,6 +41,24 @@ class Update(unittest.TestCase):
                 with self.assertRaises(ValueError):u.resolve_key("alpha",bundled,legacy)
                 key.unlink();key.symlink_to(pin)
                 with self.assertRaises(ValueError):u.resolve_key("alpha",bundled,legacy)
+    def test_public_key_build_gate(self):
+        import subprocess, os
+        validator=p.parent/"validate-update-key.py"
+        with tempfile.TemporaryDirectory() as temp:
+            home=pathlib.Path(temp)/"gpg";home.mkdir(mode=0o700)
+            args=["/usr/bin/gpg","--no-options","--batch","--homedir",str(home),"--pinentry-mode","loopback","--passphrase",""]
+            try:
+                subprocess.run(args+["--quick-generate-key","SysPulse disposable test key","ed25519","sign","1d"],check=True,capture_output=True,timeout=30)
+                public=pathlib.Path(temp)/"public.gpg";secret=pathlib.Path(temp)/"secret.gpg"
+                public.write_bytes(subprocess.check_output(args+["--export"],timeout=15))
+                secret.write_bytes(subprocess.check_output(args+["--export-secret-keys"],timeout=15))
+                for path,accepted in ((public,True),(secret,False)):
+                    result=subprocess.run(["/usr/bin/python3",str(validator),str(path),hashlib.sha256(path.read_bytes()).hexdigest()],capture_output=True,timeout=30)
+                    self.assertEqual(result.returncode==0,accepted)
+                result=subprocess.run(["/usr/bin/python3",str(validator),str(public),"0"*64],capture_output=True,timeout=30)
+                self.assertNotEqual(result.returncode,0)
+            finally:
+                subprocess.run(["/usr/bin/gpgconf","--homedir",str(home),"--kill","gpg-agent"],capture_output=True,timeout=10)
     def test_nonroot_install_guard(self):
         with patch.object(u.os,"geteuid",return_value=1000):
             with self.assertRaisesRegex(ValueError,"authorization"):u.install("alpha","3.0.0~alpha22~render1",None,None)
