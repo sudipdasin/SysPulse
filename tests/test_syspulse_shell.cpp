@@ -26,6 +26,8 @@
 #include <QSettings>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QMessageBox>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 namespace {
@@ -186,6 +188,8 @@ int main(int argc,char** argv) {
         require(controlTabs->currentIndex()==0,"care routes to existing memory optimizer");
         require(reportTable->rowCount()==0,"care scan and navigation never manufacture diagnostic reports");
         require(window.findChild<QPushButton*>("quickBoost")&&window.findChild<QPushButton*>("maintenanceQuickBoost"),"visible primary Boost controls");
+        require(!window.findChild<QPushButton*>("quickBoost")->isEnabled()&&!window.findChild<QPushButton*>("maintenanceQuickBoost")->isEnabled(),"Boost locked without fresh analysis");
+        require(window.findChild<QPushButton*>("diagnosticHistory"),"local learning history control present");
         require(window.findChild<QPushButton*>("quickDesktopProfiles")&&window.findChild<QPushButton*>("lastBoostResults")&&!window.findChild<QPushButton*>("lastBoostResults")->isEnabled(),"visible preset and saved results controls without fabricated receipt");
         auto* maintenance=window.findChild<QPushButton*>("openMaintenanceCenter");
         auto* baseline=window.findChild<QPushButton*>("maintenanceBaseline");
@@ -285,8 +289,35 @@ int main(int argc,char** argv) {
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");
         auto* analyze=window.findChild<QPushButton*>("analyzeSystem");require(analyze,"analysis action exists");
-        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="healthCheckDialog";if(dialog)dialog->reject();});
-        analyze->click();require(reviewed,"analysis opens the reviewed plan before executing");require(reportTable->rowCount()==0,"cancelling analysis leaves reports empty");
+        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="deepAnalysisReview";if(reviewed){for(const auto& name:{"researchWebConsent","researchGroqConsent","researchGeminiConsent"}){auto* check=dialog->findChild<QCheckBox*>(name);reviewed=reviewed&&check&&!check->isChecked();}}if(dialog)dialog->reject();});
+        analyze->click();require(reviewed,"analysis opens the reviewed plan before executing");require(reportTable->rowCount()==0,"cancelling analysis leaves reports empty");require(!window.findChild<QPushButton*>("quickBoost")->isEnabled(),"cancelled analysis cannot authorize Boost");
+        if(qEnvironmentVariableIntValue("SYSPULSE_DIAGNOSTICS_RUNTIME")==1){
+            QTemporaryDir isolatedHome;require(isolatedHome.isValid(),"isolated diagnostics runtime home");
+            const auto oldHome=qgetenv("HOME");qputenv("HOME",isolatedHome.path().toUtf8());
+            bool analyzed=false,reviewedBoost=false,finishedBoost=false,errorDialog=false;
+            QTimer watchdog;watchdog.setSingleShot(true);QObject::connect(&watchdog,&QTimer::timeout,&app,[]{std::cerr<<"diagnostics GUI watchdog expired\n";std::exit(2);});watchdog.start(175000);
+            QTimer driver;driver.setInterval(50);
+            QObject::connect(&driver,&QTimer::timeout,&app,[&]{
+                auto* dlg=qobject_cast<QDialog*>(QApplication::activeModalWidget());if(!dlg)return;
+                if(dlg->objectName()=="deepAnalysisReview"){if(auto* b=dlg->findChild<QPushButton*>("runDeepAnalysis"))b->click();}
+                else if(dlg->objectName()=="deepAnalysisResults"){analyzed=true;dlg->accept();}
+                else if(dlg->objectName()=="adaptiveBoostReview"){
+                    for(auto* check:dlg->findChildren<QCheckBox*>())check->setChecked(false);
+                    auto* own=dlg->findChild<QCheckBox*>("boostOwnMemory");auto* apply=dlg->findChild<QPushButton*>("applyQuickBoost");
+                    if(own&&own->isEnabled()&&apply){own->setChecked(true);reviewedBoost=true;apply->click();}
+                    else{errorDialog=true;dlg->reject();}
+                }else if(dlg->objectName()=="adaptiveBoostResults"){finishedBoost=true;dlg->accept();}
+                else if(auto* msg=qobject_cast<QMessageBox*>(dlg)){errorDialog=true;msg->accept();}
+            });
+            driver.start();analyze->click();
+            auto* boost=window.findChild<QPushButton*>("quickBoost");
+            require(analyzed&&!errorDialog&&boost->isEnabled(),"actual read-only analysis unlocks Boost");
+            boost->click();driver.stop();watchdog.stop();
+            require(reviewedBoost&&finishedBoost&&!errorDialog&&!boost->isEnabled(),"actual GUI selected own-process memory action and consumed analysis");
+            require(window.findChild<QPushButton*>("lastBoostResults")->isEnabled(),"actual Boost receipt persisted");
+            qputenv("HOME",oldHome);
+            std::cout<<"Actual installed GUI Analyze -> Boost (own-process memory only) -> receipt passed\n";
+        }
         syspulse::PerformancePage performance;performance.setSamplingEnabled(false);performance.setPaused(true);performance.refresh();
         require(performance.isPaused(),"manual refresh does not silently resume paused monitoring");
         performance.setPaused(false);performance.setSamplingEnabled(true);performance.refresh();events(150);performance.refresh();
