@@ -1,0 +1,16 @@
+FROM ubuntu:24.04 AS tests
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 git gnupg dpkg-dev ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 tester && mkdir -p /src/tools/release /etc/deb-release /out && chown tester:tester /out
+COPY tools/release/source_signer.py tools/release/fleet_policy.py tools/release/fleet_signer.py tools/release/test_fleet_signer.py /src/tools/release/
+COPY tools/release/policies/syspulse-alpha-amd64.example.json /etc/deb-release/syspulse.json
+COPY assets/update-trust/alpha-public.gpg.b64 /tmp/public.b64
+RUN base64 -d /tmp/public.b64 > /etc/deb-release/syspulse.gpg && chmod 0644 /etc/deb-release/syspulse.gpg /etc/deb-release/syspulse.json && rm /tmp/public.b64
+USER tester
+RUN python3 /src/tools/release/source_signer.py self-test > /out/LEGACY-TESTS.txt 2>&1 && cat /out/LEGACY-TESTS.txt
+RUN python3 /src/tools/release/test_fleet_signer.py > /out/FLEET-TESTS.txt 2>&1 || { cat /out/FLEET-TESTS.txt; exit 1; }
+RUN cat /out/FLEET-TESTS.txt
+FROM python:3.11-slim-bookworm
+COPY --from=tests /out/ /srv/results/
+USER 10001:10001
+EXPOSE 10000
+CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/results/"]
