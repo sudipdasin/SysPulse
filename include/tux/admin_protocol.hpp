@@ -35,6 +35,14 @@ inline QStringList typedCommand(const QStringList& fields){
         if(a!="swappiness"||!number.match(b).hasMatch()||!ok||value>200)return {};
         return {"sysctl","-w","vm.swappiness="+b};
     }
+    if(kind=="network"){
+        if(a!="wifi"||(b!="on"&&b!="off"))return {};
+        return {"nmcli","radio","wifi",b};
+    }
+    if(kind=="power"){
+        if(a!="profile"||(b!="balanced"&&b!="power-saver"&&b!="performance"))return {};
+        return {"powerprofilesctl","set",b};
+    }
     if(kind=="packages"){
         // Explicit fixed distribution package groups; no user-entered package names,
         // third-party repositories, removal, downgrade or unauthenticated packages.
