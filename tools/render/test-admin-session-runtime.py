@@ -25,7 +25,7 @@ try:
     assert response["code"]==0 and not response["truncated"],response["code"]
     payload=base64.b64decode(response["output"])
     assert isinstance(json.loads(payload),dict),"Protected scan response is not JSON"
-    parent.sendall(b'["update","alpha","3.0.0~alpha29~render1"]\n')
+    parent.sendall(b'["update","alpha","3.0.0~alpha30~render1"]\n')
     response=json.loads(stream.readline(6*1024*1024+2))
     assert response["code"]!=0 and b"not newer" in base64.b64decode(response["output"])
     stream.close();parent.close()
