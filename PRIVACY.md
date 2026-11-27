@@ -31,3 +31,6 @@ No automatic telemetry. Optional user-initiated sharing uses a new, separate all
 
 ## Application update checks
 Optional signed update checks contact the selected official repository; no diagnostic report or tracking identifier is sent. Network providers may observe connection metadata. Legacy cached-check opt-in does not silently authorize network checks. Installing a newer package requires explicit review and administrator authorization.
+
+## Session administrator authorization
+Optional per-process maintenance authorization uses the desktop's PolicyKit dialog. SysPulse never reads, stores, logs or transmits the password. The private helper accepts only seven fixed catalog actions. Closing the app or locking revokes the connection; an already authorized operation may finish. External tools and other privilege paths remain independently authorized.

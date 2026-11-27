@@ -1,4 +1,5 @@
 #include "tux/core.hpp"
+#include "tux/admin_session.hpp"
 #include "tux/trusted_command.hpp"
 #include "syspulse/system_memory.hpp"
 #include <QJsonArray>
@@ -109,6 +110,7 @@ Result execute(const QString& id, bool confirmed, int timeoutMs, Output output, 
     if ((tool.changes || tool.admin) && !confirmed) throw std::runtime_error("Review and confirm this system action first.");
     const auto problem=unavailable(tool);
     if (!problem.isEmpty()) throw std::runtime_error(problem.toStdString());
+    if(tool.admin){if(auto session=admin::execute(id)){if(output)output(session->output);return *session;}}
     auto command=tool.command;
     if (tool.admin||tool.changes||tool.id=="available-updates"||tool.id=="lutris") {
         const auto executable=trustedSystemExecutable(command.first());

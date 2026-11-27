@@ -54,3 +54,6 @@ Alpha.23 administrative scan candidate: PolicyKit-authorized fixed helper, exact
 
 ### Package-managed update trust checkpoint
 Automatic selection and validation of packaged channel-specific public key; offline build gate rejects malformed and secret keys, startup check only with saved opt-in. Production key and signed feed remain unavailable. No test key distributed.
+
+### Administrator session source checkpoint
+Optional in-memory authorization for seven fixed built-in administrator catalog actions through a private inherited socket and PolicyKit-launched root broker. No password handling, persistent credential or arbitrary command execution. Each action retains existing confirmation. Closing or locking closes transport; uncertain result never auto-replayed. Separate volume, updates, external tools and service-management paths not integrated in this checkpoint. Tests pending.

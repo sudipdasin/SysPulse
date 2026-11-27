@@ -1,4 +1,6 @@
 #include "syspulse/result_state.hpp"
+#include "tux/admin_session.hpp"
+#include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -791,6 +793,28 @@ struct Window::Impl {
         auto* about=panel();auto* al=new QVBoxLayout(about);al->setContentsMargins(22,20,22,20);al->addWidget(text(QString("SysPulse %1").arg(tux::Version),"sectionTitle"));
         al->addWidget(text("Developed by Sudip Das · GNU GPL version 3 or later\nXFCE-first Linux system tools, built on the Tux Steward foundation.","muted"));
         al->addWidget(text("Privacy: no automatic telemetry. Optional diagnostic sharing is off by default; each report requires preview and fresh consent.","muted"));al->addWidget(button("Review diagnostic sharing…",[this]{diagnostic::reviewSharing(w,results);},w));layout->addWidget(about);
+        auto* authorization=panel();auto* authLayout=new QVBoxLayout(authorization);authLayout->setContentsMargins(22,20,22,20);
+        authLayout->addWidget(text("Administrator session","sectionTitle"));
+        auto* remember=new QCheckBox("Remember administrator authorization for this SysPulse session");remember->setObjectName("rememberAdminSession");authLayout->addWidget(remember);
+        auto* authStatus=text("Locked · authenticate through the desktop when needed.","muted");authStatus->setObjectName("adminSessionStatus");authStatus->setTextFormat(Qt::PlainText);authLayout->addWidget(authStatus);
+        authLayout->addWidget(text("Only built-in maintenance catalog actions reuse this session: cache, journals, TRIM, memory compression and firewall status. Separate system tools, updates, service management and protected volume inspection still use their own authorization. Every action still requires review. No password is stored.","muted"));
+        auto* unlock=new QPushButton("Unlock administrator session…");unlock->setObjectName("unlockAdminSession");unlock->setEnabled(false);authLayout->addWidget(unlock);
+        auto* relock=new QPushButton("Lock now");relock->setObjectName("lockAdminSession");relock->setEnabled(false);authLayout->addWidget(relock);
+        QObject::connect(remember,&QCheckBox::toggled,authorization,[=](bool checked){
+            if(!checked){if(!tux::admin::lock()){remember->blockSignals(true);remember->setChecked(true);remember->blockSignals(false);authStatus->setText("Wait for the active administrator action to finish before locking.");return;}relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");}
+            unlock->setEnabled(checked&&!tux::admin::active());
+        });
+        QObject::connect(relock,&QPushButton::clicked,authorization,[=]{if(!tux::admin::lock()){authStatus->setText("Wait for the active administrator action to finish.");return;}remember->setChecked(false);relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");});
+        QObject::connect(unlock,&QPushButton::clicked,authorization,[=]{
+            if(!remember->isChecked()||tux::admin::busy())return;
+            remember->setEnabled(false);unlock->setEnabled(false);relock->setEnabled(false);authStatus->setText("Waiting for desktop administrator authentication…");
+            auto message=std::make_shared<QString>();auto success=std::make_shared<bool>(false);
+            auto* worker=QThread::create([message,success]{*success=tux::admin::unlock(*message);});
+            worker->setObjectName("adminSessionUnlockWorker");worker->setParent(authorization);
+            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);authStatus->setText(*success?"Unlocked · built-in maintenance actions can reuse authorization until locked or closed.":*message);});
+            QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();
+        });
+        layout->addWidget(authorization);
         layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));
         auto* artwork=new QCheckBox("Show translucent background artwork");artwork->setObjectName("appearanceArtwork");artwork->setAccessibleDescription("Disable decorative wallpaper for a simpler appearance.");
@@ -885,12 +909,14 @@ bool Window::navigate(const QString& id) {return d->navigate(id);}
 QString Window::currentPageId()const{return d->current;}
 int Window::navigationCount()const{return d->nav.size();}
 void Window::closeEvent(QCloseEvent* event) {
+    if(tux::admin::busy()||!findChildren<QThread*>("adminSessionUnlockWorker").isEmpty()){QMessageBox::information(this,"Administrator session busy","Finish or cancel the authentication or maintenance operation before closing.");event->ignore();return;}
     if(d->management->isBusy()) {QMessageBox::information(this,"System action in progress","Wait for the service action to finish or cancel the desktop authorization before closing SysPulse.");event->ignore();return;}
     for(auto* page:d->allToolboxes)if(page->isBusy()) {
         if(page->isCancellable()&&QMessageBox::question(this,"Diagnostic in progress","Stop the active diagnostic? Close SysPulse after it finishes.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)page->requestStop();
         else if(!page->isCancellable())QMessageBox::information(this,"Task in progress","Wait for the system action to finish before closing SysPulse.");
         event->ignore();return;
     }
+    if(!tux::admin::lock()){event->ignore();return;}
     event->accept();
 }
 }

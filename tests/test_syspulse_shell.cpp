@@ -250,6 +250,9 @@ int main(int argc,char** argv) {
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
+        auto* rememberAdmin=window.findChild<QCheckBox*>("rememberAdminSession");auto* unlockAdmin=window.findChild<QPushButton*>("unlockAdminSession");auto* lockAdmin=window.findChild<QPushButton*>("lockAdminSession");
+        require(rememberAdmin&&unlockAdmin&&lockAdmin&&!rememberAdmin->isChecked()&&!unlockAdmin->isEnabled()&&!lockAdmin->isEnabled(),"administrator session locked and opt-in only");
+        rememberAdmin->setChecked(true);require(unlockAdmin->isEnabled(),"explicit opt-in enables desktop authentication");rememberAdmin->setChecked(false);require(!unlockAdmin->isEnabled(),"opt-out locks session");
         auto* autoCheck=window.findChild<QCheckBox*>("automaticCachedUpdateCheck");
         auto* updateTimer=window.findChild<QTimer*>("cachedUpdateTimer");
         require(autoCheck&&updateTimer&&!autoCheck->isChecked()&&!updateTimer->isActive(),"cached update checks off by default");
