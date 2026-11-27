@@ -4,7 +4,7 @@ set -e
 case "$1" in
   remove|deconfigure)
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-      systemctl disable --now syspulse-weekly-clean.timer
+      systemctl disable --now syspulse-daily-clean.timer syspulse-weekly-clean.timer syspulse-monthly-clean.timer
       if systemctl is-active --quiet syspulse-weekly-clean.service; then
         echo 'SysPulse weekly package cleanup is active; allow it to finish before removing SysPulse.' >&2
         exit 1
