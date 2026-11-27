@@ -102,6 +102,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* form=new QGridLayout;form->addWidget(label("Scan mode"),0,0);form->addWidget(modes,0,1,1,3);
     form->addWidget(label("Folder"),1,0);form->addWidget(root,1,1,1,2);form->addWidget(browse,1,3);
     form->addWidget(label("Minimum listed size"),2,0);form->addWidget(minimum,2,1);form->addWidget(label("Cache minimum age"),2,2);form->addWidget(age,2,3);
+    auto* extended=new QCheckBox("Extended non-volume scan · up to 300,000 entries / 90 seconds");extended->setObjectName("cleanerExtendedScan");form->addWidget(extended,8,0,1,4);
     auto* duplicateOpt=new QCheckBox("Compare file contents for duplicates (at least 1 MiB; up to 256 MiB read)");duplicateOpt->setObjectName("cleanerDuplicateOpt");form->addWidget(duplicateOpt,3,0,1,4);
     auto* diskLabel=label("Mounted volume");form->addWidget(diskLabel,4,0);form->addWidget(volumes,4,1,1,2);form->addWidget(reloadVolumes,4,3);
     auto* budgetLabel=label("Volume scan budget");form->addWidget(budgetLabel,5,0);form->addWidget(budget,5,1,1,3);
@@ -117,9 +118,9 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* largest=table({"Size","File","Location"},"cleanerLargest");auto* leftovers=table({"Size","File","Location"},"cleanerLeftovers");
     auto current=std::make_shared<c::Result>();auto token=std::make_shared<std::atomic_bool>(false);auto busy=std::make_shared<bool>(false);auto scannedAge=std::make_shared<unsigned>(7);
     auto* filesPage=new QWidget;auto* fl=new QVBoxLayout(filesPage);fl->addWidget(label("Largest 250 regular files in scanned scope. Chart compares the top five only; location column shows each parent folder. Logical sizes may include hard links.","muted"));auto* bigChart=new Donut;bigChart->setObjectName("cleanerLargestChart");fl->addWidget(bigChart);fl->addWidget(largest,1);
-    auto* openLargest=push("Open containing folder");auto* copyLargest=push("Copy exact path");auto* largestActions=new QHBoxLayout;largestActions->addWidget(openLargest);largestActions->addWidget(copyLargest);fl->addLayout(largestActions);tabs->addTab(filesPage,"Largest files");
+    auto* openLargest=push("Open containing folder");auto* copyLargest=push("Copy exact path");auto* trashLargest=push("Move selected file to Trash…","cleanerTrashLargest");auto* largestActions=new QHBoxLayout;largestActions->addWidget(openLargest);largestActions->addWidget(copyLargest);largestActions->addWidget(trashLargest);fl->addLayout(largestActions);tabs->addTab(filesPage,"Largest files");
     auto* reviewPage=new QWidget;auto* rl=new QVBoxLayout(reviewPage);rl->addWidget(label("Possible temporary files, old backups, logs and partial downloads. Names alone cannot establish that a file is orphaned or safe to delete.","muted"));rl->addWidget(leftovers,1);
-    auto* openReview=push("Open containing folder");auto* ownership=push("Check package ownership","cleanerOwnership");auto* ownershipStatus=label("Select a possible leftover for an optional package ownership lookup.","cleanerOwnershipStatus");auto* reviewActions=new QHBoxLayout;reviewActions->addWidget(openReview);reviewActions->addWidget(ownership);rl->addLayout(reviewActions);rl->addWidget(ownershipStatus);tabs->addTab(reviewPage,"Leftovers review");
+    auto* openReview=push("Open containing folder");auto* trashReview=push("Move selected file to Trash…","cleanerTrashReview");auto* ownership=push("Check package ownership","cleanerOwnership");auto* ownershipStatus=label("Select a possible leftover for an optional package ownership lookup.","cleanerOwnershipStatus");auto* reviewActions=new QHBoxLayout;reviewActions->addWidget(openReview);reviewActions->addWidget(ownership);reviewActions->addWidget(trashReview);rl->addLayout(reviewActions);rl->addWidget(ownershipStatus);tabs->addTab(reviewPage,"Leftovers review");
     auto* cachePage=new QWidget;auto* cl=new QVBoxLayout(cachePage);cl->addWidget(label("Only old, single-link regular files owned by you inside your account's ~/.cache qualify. Close affected applications first. Select individual files; deletion is permanent.","muted"));
     auto* candidates=table({"Select","Size","File","Location"},"cleanerCandidates");cl->addWidget(candidates,1);
     auto* remove=push("Review and delete selected cache files…","cleanerDelete");remove->setEnabled(false);remove->setProperty("primary",true);
@@ -198,15 +199,20 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         const int index=volumes->findData(previous);if(index>=0)volumes->setCurrentIndex(index);
     };
     auto generation=std::make_shared<unsigned long long>(0);
-    auto hasResults=std::make_shared<bool>(false);
+    auto hasResults=std::make_shared<bool>(false);auto scannedAsAdmin=std::make_shared<bool>(false);
+    trashLargest->setEnabled(false);trashReview->setEnabled(false);
     const auto selectionChanged=[=]{
         const bool eligible=*hasResults&&!*busy&&!current->readOnly&&!current->cancelled&&!duplicateResult->cancelled&&current->error.empty()&&!current->candidates.empty()&&candidates->rowCount()==static_cast<int>(current->candidates.size());
         unsigned count=0;std::uint64_t bytes=0;
         if(eligible)for(int i=0;i<candidates->rowCount();++i){const auto* item=candidates->item(i,0);if(item&&item->checkState()==Qt::Checked){++count;const auto size=current->candidates[i].bytes;bytes=size>std::numeric_limits<std::uint64_t>::max()-bytes?std::numeric_limits<std::uint64_t>::max():bytes+size;}}
         selectBatch->setEnabled(eligible);clearBatch->setEnabled(eligible&&count>0);remove->setEnabled(eligible&&count>0&&count<=100);
+        const bool mayTrash=*hasResults&&!*busy&&!*scannedAsAdmin&&!current->cancelled&&current->error.empty();
+        trashLargest->setEnabled(mayTrash&&largest->currentRow()>=0&&largest->currentRow()<static_cast<int>(current->largest.size()));
+        trashReview->setEnabled(mayTrash&&leftovers->currentRow()>=0&&leftovers->currentRow()<static_cast<int>(current->review.size()));
         selection->setText(eligible?QString("%1 selected · %2 logical bytes · %3 eligible files. Maximum 100 per reviewed batch.").arg(count).arg(sizeText(bytes)).arg(candidates->rowCount()):QString("No eligible deletion batch. Redirected cache locations, protected data and personal files remain inspection-only."));
     };
     QObject::connect(candidates,&QTableWidget::itemChanged,page,[selectionChanged](QTableWidgetItem*){selectionChanged();});
+    QObject::connect(largest,&QTableWidget::itemSelectionChanged,page,selectionChanged);QObject::connect(leftovers,&QTableWidget::itemSelectionChanged,page,selectionChanged);
     QObject::connect(selectBatch,&QPushButton::clicked,page,[=]{if(!selectBatch->isEnabled())return;{const QSignalBlocker block(candidates);for(int i=0;i<candidates->rowCount();++i)if(auto* item=candidates->item(i,0))item->setCheckState(i<100?Qt::Checked:Qt::Unchecked);}selectionChanged();});
     QObject::connect(clearBatch,&QPushButton::clicked,page,[=]{{const QSignalBlocker block(candidates);for(int i=0;i<candidates->rowCount();++i)if(auto* item=candidates->item(i,0))item->setCheckState(Qt::Unchecked);}selectionChanged();});
     const auto resetResults=[=]{
@@ -217,6 +223,19 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         dupStatus->setText("Start a new scan for current duplicate results.");selectionChanged();
         totals->setText("No current scan data.");
     };
+    const auto trashSelected=[=](bool review){
+        if(*busy||!*hasResults||*scannedAsAdmin||current->cancelled||!current->error.empty())return;
+        const auto& entries=review?current->review:current->largest;const int row=(review?leftovers:largest)->currentRow();
+        if(row<0||row>=static_cast<int>(entries.size()))return;
+        const auto entry=entries[row];const auto path=pathText(entry.path);const auto raw=entry.path.native();
+        if(QFile::encodeName(path)!=QByteArray(raw.data(),static_cast<int>(raw.size()))||!c::reviewedTrashEligible(entry)){QMessageBox::warning(page,"Move to Trash","File is not an unchanged, user-owned, single-link regular file. No change made.");return;}
+        const auto reviewed=*generation;QMessageBox dialog(QMessageBox::Question,"Move selected file to Trash?","Move only the following file to the desktop Trash? It is not permanently deleted here and may be recoverable through the file manager. Space may not be reclaimed until Trash is emptied.",QMessageBox::Yes|QMessageBox::Cancel,page);dialog.setTextFormat(Qt::PlainText);dialog.setInformativeText(path+"\n"+sizeText(entry.bytes));dialog.setDefaultButton(QMessageBox::Cancel);
+        if(dialog.exec()!=QMessageBox::Yes)return;
+        if(*busy||!*hasResults||*generation!=reviewed||*scannedAsAdmin||!c::reviewedTrashEligible(entry)){QMessageBox::warning(page,"Move to Trash","File or scan changed during review. No change made.");return;}
+        if(!QFile::moveToTrash(path)){QMessageBox::warning(page,"Move to Trash","Trash is unavailable or the operation failed. No permanent-delete fallback will be attempted. Review the file manager and rescan.");return;}
+        resetResults();status->setText("Moved one reviewed file to Trash. Rescan before further actions. Empty Trash separately only after reviewing its contents.");
+    };
+    QObject::connect(trashLargest,&QPushButton::clicked,page,[trashSelected]{trashSelected(false);});QObject::connect(trashReview,&QPushButton::clicked,page,[trashSelected]{trashSelected(true);});
     const auto invalidate=[=]{
         if(*busy)return;
         if(*hasResults){resetResults();status->setText("Scan settings changed. Start a new scan before using results.");}
@@ -229,6 +248,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         volumes->setEnabled(i==2);reloadVolumes->setEnabled(i==2);budget->setEnabled(i==2);
         privileged->setVisible(i==2);privileged->setEnabled(i==2&&!tux::trustedSystemExecutable("pkexec").isEmpty()&&!tux::trustedSystemExecutable("syspulse-volume-scan").isEmpty());
         duplicateOpt->setEnabled(i!=2||!privileged->isChecked());
+        extended->setVisible(i!=2);extended->setEnabled(i!=2);
         root->setToolTip(i==0?"Actual user cache location, including XDG configuration.":i==1?"Actual desktop user home directory.":i==2?"Mounted filesystem root; choose a disk above or use Custom for a folder.":"Choose an absolute folder to scan.");
     };
     QObject::connect(root,&QLineEdit::textChanged,page,[=](const QString& value){if(modes->currentIndex()==3)*customPath=value;});
@@ -240,7 +260,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     QObject::connect(root,&QLineEdit::textChanged,page,[invalidate]{invalidate();});
     QObject::connect(minimum,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
     QObject::connect(age,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
-    QObject::connect(duplicateOpt,&QCheckBox::toggled,page,[invalidate](bool){invalidate();});
+    QObject::connect(duplicateOpt,&QCheckBox::toggled,page,[invalidate](bool){invalidate();});QObject::connect(extended,&QCheckBox::toggled,page,[invalidate](bool){invalidate();});
     QObject::connect(browse,&QPushButton::clicked,page,[page,root]{const auto folder=QFileDialog::getExistingDirectory(page,"Select scan folder",root->text());if(!folder.isEmpty())root->setText(folder);});
     QObject::connect(cancel,&QPushButton::clicked,page,[token,status]{token->store(true);status->setText("Cancellation requested…");});
     QObject::connect(page,&QObject::destroyed,[token]{token->store(true);});
@@ -257,10 +277,11 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(admin){if(helper.isEmpty()||auth.isEmpty()){status->setText("Administrative scan is unavailable; use normal-user inspection.");return;}
             if(QMessageBox::question(page,"Administrator scan","Inspect protected directory metadata on this mounted filesystem? The scan may show private filenames of other accounts locally. No file contents or deletions. It runs until completion or its bounded deadline.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;}
         c::Limits limits;limits.entries=mode==0?25000:mode==1?150000:mode==2?(budget->currentIndex()==1?3000000:1000000):300000;limits.seconds=mode==0?10:mode==1?45:mode==2?(budget->currentIndex()==1?600:180):60;
+        if(mode!=2&&extended->isChecked()){limits.entries=300000;limits.seconds=90;}
         if(mode==3){limits.minBytes=static_cast<std::uint64_t>(minimum->value())*1048576;limits.ageDays=age->value();}
         limits.collectDuplicates=!admin&&duplicateOpt->isChecked();
-        *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(!admin);remove->setEnabled(false);
-        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);volumes->setEnabled(false);reloadVolumes->setEnabled(false);budget->setEnabled(false);privileged->setEnabled(false);
+        *scannedAsAdmin=admin;*scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(!admin);remove->setEnabled(false);
+        duplicateOpt->setEnabled(false);extended->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);volumes->setEnabled(false);reloadVolumes->setEnabled(false);budget->setEnabled(false);privileged->setEnabled(false);
         resetResults();dupStatus->setText(limits.collectDuplicates?"Scanning and comparing selected file scope…":"Duplicate comparison not requested.");totals->setText("Scan running…");
         status->setText("Scanning "+pathText(path)+(admin?" · awaiting administrator authorization; read-only metadata…":" · bounded, same filesystem, no symlink traversal…"));
         auto result=std::make_shared<c::Result>();
@@ -271,7 +292,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             duplicateOpt->setEnabled(true);scan->setEnabled(true);cancel->setEnabled(false);modes->setEnabled(true);modeChanged();*busy=false;
             *hasResults=true;
             if(QFile::encodeName(root->text())!=QByteArray(path.native().c_str())){resetResults();status->setText("Scan location changed during execution. Start a new scan.");return;}
-            fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);
+            {const QSignalBlocker a(largest),b(leftovers),d(candidates);fill(largest,current->largest,false);fill(leftovers,current->review,false);fill(candidates,current->candidates,true);}
             if(current->volume.known)disk->setValues({{"Used",current->volume.used},{"Available",current->volume.available},{"Reserved/free unavailable",current->volume.reserved}});
             if(!current->error.empty()){
                 status->setText(QString::fromStdString(current->error));
