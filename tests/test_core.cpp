@@ -42,7 +42,7 @@ int main(int argc,char** argv) {
         return tux::runCommand({self,"--child",mode},ms,std::move(cb));
     };
     try {
-        require(tux::actions().size()==61,"58 existing tools plus three reviewed package and journal actions");
+        require(tux::actions().size()==63,"61 existing tools plus reviewed weekly cleanup timer controls");
         const QStringList added={"cpu-topology","kernel-version","uptime-summary","systemd-state","boot-history","discard-support","disk-transport","package-holds","package-origins","native-architecture","pci-inventory","usb-inventory","display-modes","compositor-state","graphics-renderer","link-counters","socket-summary","network-manager-state","system-timer-files","user-timer-files"};
         for(const auto& id:added) {
             const auto& a=tux::action(id);
@@ -77,6 +77,7 @@ int main(int argc,char** argv) {
         require(tux::action("apt-refresh").command==QStringList{"apt-get","update"}&&tux::action("apt-refresh").admin&&tux::action("apt-refresh").changes,"fixed package-list refresh");
         require(tux::action("apt-autoclean").command==QStringList{"apt-get","autoclean"}&&tux::action("apt-autoclean").admin&&tux::action("apt-autoclean").changes,"fixed obsolete archive cleanup");
         require(tux::action("journal-cap").command==QStringList{"journalctl","--vacuum-size=100M"}&&tux::action("journal-cap").admin&&tux::action("journal-cap").changes,"fixed archived journal size policy");
+        require(tux::action("weekly-clean-enable").command==QStringList{"systemctl","enable","--now","syspulse-weekly-clean.timer"}&&tux::action("weekly-clean-disable").command==QStringList{"systemctl","disable","--now","syspulse-weekly-clean.timer"},"fixed opt-in weekly cleanup timer controls");
         QSet<QString> ids;
         for (const auto& a:tux::actions()) {
             ids.insert(a.id);
