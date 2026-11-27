@@ -28,7 +28,7 @@ COPY --chown=builder:builder assets/ /src/assets/
 COPY --chown=builder:builder docs/SYSPULSE_MILESTONE.md docs/BETA_READINESS.md /src/docs/
 COPY --chown=builder:builder tools/ /src/tools/
 USER builder
-RUN test "${#SOURCE_COMMIT}" = 40 && bash /src/tools/render/build-alpha39.sh /src /work /out && printf '%s\n' "$SOURCE_COMMIT" > /out/SOURCE-CHECKOUT.txt
+RUN SOURCE_COMMIT="$SOURCE_COMMIT" bash /src/tools/render/build-alpha39.sh /src /work /out
 RUN bash /src/tools/render/make-alpha39-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.39-x86_64-ubuntu-22.04-render-eval.deb /upgrade
 FROM ubuntu:24.04 AS installcheck39
 COPY --from=prior39 /check/syspulse-3.0.0-alpha.32_amd64.deb /previous/previous.deb
