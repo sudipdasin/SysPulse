@@ -451,7 +451,16 @@ def show_history(c):
     for ident,utc,state,context,assessment in c.execute("SELECT id,utc,state,context,assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 30"):
         a=json.loads(assessment);rows.append({"id":ident,"utc":utc,"state":state,"context":context,"findings":len(a["findings"]),"coverage":a["coverage"],"research":bool(research_record(c,ident))})
     evidence=[json.loads(raw) for (raw,) in c.execute("SELECT data FROM research ORDER BY utc DESC LIMIT 10")]
-    return {"schema":1,"analyses":rows,"research":evidence,"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
+    assisted={}
+    for context,data,outcome in c.execute("SELECT analysis.context,research.data,boost.outcome FROM boost JOIN analysis USING(id) JOIN research USING(id) WHERE boost.outcome IS NOT NULL ORDER BY boost.utc DESC LIMIT 180"):
+        rec=json.loads(data)
+        if rec["status"]!="complete" or not any(r["status"]=="ok" for r in rec["results"]):continue
+        for a,r in json.loads(outcome).items():
+            row=assisted.setdefault((context,a),{"attempts":0,"successes":0,"failures":0,"no_effect":0})
+            if r["status"]!="skipped":
+                row["attempts"]+=1
+                row[{"success":"successes","failure":"failures","no_effect":"no_effect"}[r["status"]]]+=1
+    return {"schema":1,"analyses":rows,"research":evidence,"assisted_outcomes":[{"context":k[0],"action":k[1],**v} for k,v in assisted.items()],"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
     if a.mode=="self-test":return run_tests()
@@ -577,6 +586,75 @@ def run_tests():
             with tempfile.TemporaryDirectory() as t:
                 p=P(t)/"log";p.write_text("secret-old\n"+"x"*50+"\nnew\n")
                 data,truncated=bounded_file(p,True,10);self.assertTrue(truncated);self.assertEqual(data,"new\n")
-    suite=unittest.defaultTestLoader.loadTestsFromTestCase(Tests)
+    class ResearchDB(unittest.TestCase):
+        def setUp(self):
+            self.c=connect(":memory:");self.now=1000;self.t=100.0;self.boot="boot-test"
+            self.m={"memory_total_kib":1000,"memory_available_kib":100,"root_total_bytes":1000,"root_free_bytes":100,"root_readonly":False,"home_total_bytes":1000,"home_free_bytes":500,"home_readonly":False,"apt_total_bytes":1000,"apt_free_bytes":100,"apt_readonly":False}
+            self.s=[source("kernel-ring","ok",{},5),source("dpkg-audit","empty")]
+            self.calls=0
+        def tearDown(self):self.c.close()
+        def make(self):return record_analysis(self.c,self.m,self.s,self.boot,self.t,self.now)
+        def run_fake(self,p,providers,lookup):
+            self.calls+=1
+            return [{"provider":x,"status":"ok","advice":{"investigate":[],"caution":["thumbnails"],"prioritize":[]}} if x!="web" else {"provider":"web","status":"ok","references":[],"backoff":0} for x in providers]
+        def investigate(self,r,providers):
+            return investigate(self.c,r["id"],providers,self.boot,self.t,self.now,runner=self.run_fake,clock_fn=lambda:self.t,now_fn=lambda:self.now)
+        def test_consensus_suppresses_only(self):
+            r=self.make();self.assertTrue(r["recommendations"]["thumbnails"]["recommended"])
+            self.investigate(r,["groq","gemini"])
+            r2=read_analysis(self.c,r["id"],self.boot,self.t,self.now)
+            self.assertTrue(r2["recommendations"]["thumbnails"]["allowed"]);self.assertFalse(r2["recommendations"]["thumbnails"]["recommended"])
+            self.assertTrue(r2["recommendations"]["archives"]["recommended"])
+        def test_one_provider_no_policy_change(self):
+            r=self.make();self.investigate(r,["groq"]);self.assertTrue(read_analysis(self.c,r["id"],self.boot,self.t,self.now)["recommendations"]["thumbnails"]["recommended"])
+        def test_cache_and_single_use(self):
+            r=self.make();self.investigate(r,["web"]);self.investigate(r,["web"]);self.assertEqual(self.calls,1)
+            r=self.make();self.assertTrue(self.investigate(r,["web"])["cached"]);self.assertEqual(self.calls,1)
+        def test_invalid_consent(self):
+            r=self.make()
+            for p in ([],["shell"],["web","web"],[{}]):
+                with self.assertRaises(ValueError):self.investigate(r,p)
+            self.assertEqual(self.calls,0)
+        def test_healthy_no_network(self):
+            self.m["memory_available_kib"]=900;self.m["root_free_bytes"]=self.m["apt_free_bytes"]=900
+            r=self.make();self.assertEqual(self.investigate(r,["web"])["status"],"not_needed");self.assertEqual(self.calls,0)
+        def test_quota_persists(self):
+            with self.c:
+                self.assertTrue(reserve_budget(self.c,1000,True))
+            for now in (1060,1120,1180):
+                with self.c:reserve_budget(self.c,now,False)
+            with self.assertRaises(ValueError),self.c:reserve_budget(self.c,1240,True)
+            with self.c:self.c.execute("DELETE FROM analysis")
+            with self.assertRaises(ValueError),self.c:reserve_budget(self.c,1240,True)
+            with self.c:self.assertTrue(reserve_budget(self.c,87400,True))
+        def test_cooldown_and_clock(self):
+            with self.c:reserve_budget(self.c,1000,True)
+            with self.assertRaises(ValueError),self.c:reserve_budget(self.c,999,True)
+            with self.assertRaises(ValueError),self.c:reserve_budget(self.c,1059,True)
+            with self.c:self.c.execute("UPDATE research_budget SET web_until=2000")
+            with self.c:self.assertFalse(reserve_budget(self.c,1060,True))
+        def test_expired_after_network(self):
+            r=self.make()
+            def slow(p,providers,lookup):return [{"provider":"web","status":"ok","references":[],"backoff":300}]
+            with self.assertRaises(ValueError):investigate(self.c,r["id"],["web"],self.boot,self.t,self.now,runner=slow,clock_fn=lambda:2000,now_fn=lambda:2000)
+            self.assertEqual(research_record(self.c,r["id"])["status"],"pending")
+            self.assertEqual(self.c.execute("SELECT web_until FROM research_budget").fetchone()[0],2300)
+        def test_assisted_outcome_history(self):
+            r=self.make();self.investigate(r,["web"]);reserve(self.c,r["id"],["own_memory"],self.boot,self.t,self.now,self.m)
+            finish(self.c,r["id"],{"own_memory":{"status":"no_effect","bytes":0}},self.m)
+            h=show_history(self.c)
+            self.assertEqual(h["assisted_outcomes"][0]["no_effect"],1);self.assertEqual(len(h["research"]),1)
+            with self.c:self.c.execute("DELETE FROM analysis")
+            self.assertEqual(show_history(self.c)["research"],[])
+        def test_migration_v1(self):
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                path=P(tmp)/"old.sqlite3"
+                c=connect(path);r=record_analysis(c,self.m,self.s,self.boot,self.t,self.now)
+                with c:c.execute("DROP TABLE research");c.execute("DROP TABLE research_budget");c.execute("PRAGMA user_version=1")
+                c.close();c=connect(path)
+                self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0],2)
+                self.assertEqual(read_analysis(c,r["id"],self.boot,self.t,self.now)["id"],r["id"]);c.close()
+    suite=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(Tests),unittest.defaultTestLoader.loadTestsFromTestCase(ResearchDB)])
     return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
 if __name__=="__main__":raise SystemExit(main())
