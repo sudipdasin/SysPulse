@@ -9,7 +9,7 @@
 #include <QRegularExpression>
 namespace tux::admin {
 inline bool supported(const QString& id){
-    static const QSet<QString> ids={"trim","apt-clean","apt-refresh","apt-autoclean","journal-cap","journal-prune","trim-enable","trim-disable","zswap-enable","zswap-disable","firewall-status"};
+    static const QSet<QString> ids={"trim","apt-clean","apt-refresh","apt-autoclean","journal-cap","journal-prune","trim-enable","trim-disable","weekly-clean-enable","weekly-clean-disable","zswap-enable","zswap-disable","firewall-status"};
     return ids.contains(id);
 }
 inline constexpr int MaxScanOutput=4*1024*1024;
@@ -48,7 +48,7 @@ inline QStringList typedCommand(const QStringList& fields){
             {"disk",{"gnome-disk-utility","gparted","smartmontools"}},
             {"backup",{"timeshift","deja-dup"}}
         };
-        QStringList command={"apt-get","--no-remove","--assume-yes","-o","Dpkg::Options::=--force-confdef","-o","Dpkg::Options::=--force-confold"};
+        QStringList command={"apt-get","--no-remove","--assume-yes","-o","Acquire::AllowInsecureRepositories=false","-o","APT::Get::AllowUnauthenticated=false","-o","Dpkg::Options::=--force-confdef","-o","Dpkg::Options::=--force-confold"};
         if(a=="repair"){command<<"--fix-broken"<<"install";return command;}
         if(!groups.contains(a))return {};
         command<<"install";command.append(groups.value(a));return command;
