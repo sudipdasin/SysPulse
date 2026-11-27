@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """One project per isolated signer process; no build/package execution."""
-import argparse, datetime as dt, email.utils, hashlib, io, json, os, pathlib, re, resource, shutil, stat, subprocess, tarfile, tempfile, urllib.request
+import argparse, datetime as dt, email.utils, hashlib, io, json, os, pathlib, re, resource, shutil, signal, stat, subprocess, tarfile, tempfile, urllib.request
 from fleet_policy import *
 from source_signer import private_dir, read_protected, secret_fd, locked, plain, syncdir, journal, reconcile, fields, digest, hashfile, env
 P=pathlib.Path
@@ -19,7 +19,12 @@ def run(home,*args,cwd=None,limit=1048576,timeout=120,pass_fds=(),extra=None):
         resource.setrlimit(resource.RLIMIT_FSIZE,(MAX*2,MAX*2))
     e=env(home);e.update(extra or {})
     with tempfile.TemporaryFile(dir=home) as out,tempfile.TemporaryFile(dir=home) as err:
-        p=subprocess.run([str(x) for x in args],cwd=cwd,env=e,stdin=subprocess.DEVNULL,stdout=out,stderr=err,timeout=timeout,pass_fds=pass_fds,preexec_fn=cap)
+        p=subprocess.Popen([str(x) for x in args],cwd=cwd,env=e,stdin=subprocess.DEVNULL,stdout=out,stderr=err,pass_fds=pass_fds,preexec_fn=cap,start_new_session=True)
+        try:p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:os.killpg(p.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            p.wait();raise ValueError(P(args[0]).name+" timed out; verify transaction state")
         require(p.returncode==0,P(args[0]).name+" failed")
         require(out.tell()<=limit,"Command output exceeds policy")
         out.seek(0);return out.read(limit+1)
@@ -142,6 +147,8 @@ def direct_child(home,root,parent):
 def transaction(a,p):
     require(os.geteuid()!=0,"Dedicated non-root signer required")
     state=private_dir(a.state)
+    for parent in state.parents:
+        s=parent.stat();require(s.st_uid==0 and not s.st_mode&0o022,"Signer state ancestor must be root-protected")
     require(state.name==p["architecture"] and state.parent.name==p["channel"] and state.parent.parent.name==p["project"],"State path must end in project/channel/architecture")
     with locked(state),tempfile.TemporaryDirectory(dir=state,prefix="job-") as tmp:
         home=P(tmp);key=anchor(home,p);root=home/"feed";parent=clone(home,p,p["feed_branch"],root)
@@ -161,6 +168,7 @@ def transaction(a,p):
             shutil.copyfile(deb,root/name);(root/"Packages").write_bytes(run(home,"dpkg-scanpackages",name,"/dev/null",cwd=root))
         if not a.apply:print("Dry run; no signing or push");return
         require(a.gpg_home and a.git_token,"Protected signing credentials required")
+        require(a.gpg_home==state/"gnupg","GPG home must be dedicated to this project state")
         fd=secret_fd(a.git_token);os.close(fd)
         if c:
             # Read fresh protected approval and re-check expiration immediately before signing.
