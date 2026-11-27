@@ -12,3 +12,5 @@ The public export (including its public OpenPGP identity) is stored as base64 to
 No private key, passphrase, local path, user report, raw bundle or credential was committed. Only the release owner can sign with the private key. No production feed has been created; no package has yet been signed with this key. The update and session acceptance hold remains in force. Do not publish an incomplete installer as satisfying it.
 
 Alpha.26 Render build explicitly enables owner trust. Fixture upgrade uses disposable metadata only; after install the real pinned public anchor must match. This does not activate the production repository.
+
+CMake compatibility correction: initialize channel cache entries before applying the owner-key normal-variable override. The build now extracts the resulting DEB and verifies the actual key and digest files before it can be served. This avoids older CMake cache shadowing.

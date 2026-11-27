@@ -31,6 +31,14 @@ shopt -s nullglob
 packages=("$work/build/packages/"*.deb)
 [[ ${#packages[@]} == 1 && -f ${packages[0]} && ! -L ${packages[0]} ]] || { echo 'Exactly one regular DEB required' >&2; exit 1; }
 deb=${packages[0]}
+# Confirm the public anchor is present in the actual DEB, not merely in CMake configuration.
+trust_dir="$work/trust-package-check"
+mkdir "$trust_dir"
+dpkg-deb -x "$deb" "$trust_dir"
+test "$(sha256sum "$trust_dir/usr/share/syspulse/update-keys/alpha.gpg" | cut -d' ' -f1)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6'
+test "$(cat "$trust_dir/usr/share/syspulse/update-keys/alpha.sha256")" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6'
+rm -rf -- "$trust_dir"
+echo 'Owner Alpha public key embedded and exact digest verified in DEB'
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]] || { echo 'Wrong DEB metadata' >&2; exit 1; }
 # All checks precede export. Never export raw build logs or credentials.
 name=syspulse-3.0.0-alpha.26-x86_64-ubuntu-22.04-render-eval.deb
