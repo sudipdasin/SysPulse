@@ -241,6 +241,7 @@ struct Window::Impl {
             const auto advice=r.value("advice").toObject();for(auto it=advice.begin();it!=advice.end();++it){QStringList ids;for(const auto& item:it.value().toArray())ids<<item.toString();lines<<it.key()+": "+ids.join(", ");}
             lines<<"";
         }
+        if(record.contains("followup_state")){lines<<"Local read-only follow-up: "+record.value("followup_state").toString();for(const auto& v:record.value("followup").toArray()){const auto a=v.toObject(),s=a.value("source").toObject();lines<<QString("  %1 · %2 · %3 lines").arg(a.value("route").toString(),s.value("status").toString()).arg(s.value("lines").toInt());}}
         const auto g=record.value("guidance").toObject();
         lines<<QString("Independent model responses: %1. Only agreement can suppress a default action; no permission is added.").arg(g.value("model_count").toInt());
         QStringList corroborated;for(const auto& a:g.value("corroborated_routes").toArray())corroborated<<a.toString();if(!corroborated.isEmpty())lines<<"Model and public-answer concept overlap (not verified repair): "+corroborated.join(", ");
@@ -291,7 +292,7 @@ struct Window::Impl {
         auto* webResearch=new QCheckBox("Search public Linux troubleshooting discussions (no key)");webResearch->setObjectName("researchWebConsent");layout->addWidget(webResearch);
         auto* groqResearch=new QCheckBox("Ask Groq free-tier AI (requires configured free-only key)");groqResearch->setObjectName("researchGroqConsent");layout->addWidget(groqResearch);
         auto* geminiResearch=new QCheckBox("Ask Gemini free-tier AI (requires configured free-only key)");geminiResearch->setObjectName("researchGeminiConsent");layout->addWidget(geminiResearch);
-        layout->addWidget(text("Only fixed Linux Mint issue categories and broad resource context are sent. Providers may see your IP address and process inputs under their terms. No raw logs, hostnames, file paths, identifiers or measurements are sent. No automatic paid fallback. All choices are off by default.","muted"));
+        layout->addWidget(text("Only fixed Linux Mint issue categories and broad resource context are sent. Providers may see your IP and process inputs under their terms. No raw logs, hostnames, paths, identifiers or measurements are sent. Selected research may trigger up to four additional read-only local checks. No paid fallback. All choices are off by default.","muted"));
         auto* setup=button("Configure optional AI accounts…",[this]{researchSetup();},&review);layout->addWidget(setup);
         auto* row=new QHBoxLayout;auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);auto* start=new QPushButton("Run analysis");start->setObjectName("runDeepAnalysis");row->addStretch();row->addWidget(cancel);row->addWidget(start);layout->addLayout(row);
         QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(start,&QPushButton::clicked,&review,&QDialog::accept);
@@ -304,6 +305,7 @@ struct Window::Impl {
         if(!providers.isEmpty()){
             const auto evidence=diagnosticCall({"research",analysisId,QString::fromUtf8(QJsonDocument(providers).toJson(QJsonDocument::Compact))},"Investigating categorized findings with selected web and AI services in parallel…",55000);
             if(evidence.value("id").toString()==analysisId){
+                if(evidence.value("status").toString()=="complete")diagnosticCall({"refine",analysisId},"Running bounded read-only follow-up diagnostics from ranked evidence…",35000);
                 const auto revised=diagnosticCall({"plan",analysisId},"Reading locally safety-checked research and updated recommendations…");
                 if(validAnalysis(revised)&&revised.value("id").toString()==analysisId)result=revised;
                 if(!result.contains("research"))result.insert("research",evidence);
