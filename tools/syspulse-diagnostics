@@ -7,6 +7,7 @@ import argparse, concurrent.futures, datetime, gzip, json, os
 import pathlib, re, secrets, selectors, signal, sqlite3, stat, subprocess, time, unittest
 import syspulse_research as research
 import syspulse_hybrid as hybrid
+import syspulse_outcomes as outcomes
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -341,7 +342,7 @@ def connect(path):
     c.execute("PRAGMA secure_delete=ON")
     c.execute("PRAGMA busy_timeout=4000")
     ver=c.execute("PRAGMA user_version").fetchone()[0]
-    require(ver in (0,1,2),"Unsupported diagnostics database version")
+    require(ver in (0,1,2,3),"Unsupported diagnostics database version")
     if not ver:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS analysis(id TEXT PRIMARY KEY, utc INTEGER NOT NULL, boot TEXT NOT NULL, tick REAL NOT NULL, state TEXT NOT NULL CHECK(state IN ('ready','reserved','finished','invalid')), context TEXT NOT NULL, metrics TEXT NOT NULL, sources TEXT NOT NULL, assessment TEXT NOT NULL);
@@ -354,6 +355,13 @@ def connect(path):
         CREATE TABLE IF NOT EXISTS research(id TEXT PRIMARY KEY REFERENCES analysis(id) ON DELETE CASCADE, utc INTEGER NOT NULL, fingerprint TEXT NOT NULL, providers TEXT NOT NULL, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS research_budget(id INTEGER PRIMARY KEY CHECK(id=1), window_start INTEGER NOT NULL, calls INTEGER NOT NULL, last_call INTEGER NOT NULL, web_until INTEGER NOT NULL);
         PRAGMA user_version=2;
+        COMMIT;
+        """)
+    if ver<3:
+        c.executescript("""
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS verification(id TEXT PRIMARY KEY REFERENCES boost(id) ON DELETE CASCADE, utc INTEGER NOT NULL, data TEXT NOT NULL);
+        PRAGMA user_version=3;
         COMMIT;
         """)
     return c
@@ -549,6 +557,27 @@ def finish(c,ident,outcome,metrics,owner=None):
         c.execute("UPDATE boost SET outcome=?,after_metrics=? WHERE id=?",(json.dumps(outcome),json.dumps(metrics),ident))
         c.execute("UPDATE analysis SET state='finished' WHERE id=?",(ident,))
     return {"schema":1,"id":ident,"state":"finished"}
+def verify_boost(c,ident,boot,now,owner=None,snapshot=numeric_snapshot,probe=collect_job,smart=smart_source):
+    owner=owner or (os.getpid(),process_start(os.getpid()))
+    require(isinstance(ident,str) and re.fullmatch(r"[0-9a-f]{32}",ident),"Invalid verification identifier")
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("SELECT analysis.state,analysis.boot,boost.utc,boost.owner_pid,boost.owner_start,boost.before_metrics,boost.outcome,analysis.sources FROM boost JOIN analysis USING(id) WHERE id=?",(ident,)).fetchone()
+        require(row and row[0]=="finished" and row[1]==boot and 0<=now-row[2]<=1800 and tuple(row[3:5])==owner and row[6],"Verification requires a completed recent same-caller Boost")
+        previous=c.execute("SELECT data FROM verification WHERE id=?",(ident,)).fetchone()
+        if previous:return json.loads(previous[0])
+        c.execute("INSERT INTO verification VALUES(?,?,?)",(ident,now,json.dumps({"schema":1,"id":ident,"status":"pending"})))
+    before=json.loads(row[5]);receipt=json.loads(row[6]);prior_sources=json.loads(row[7])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        sources=list(pool.map(probe,[x for x in specs() if x[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
+    if outcomes.STORAGE_ACTIONS.intersection(receipt) or any(x.get("smart",{}).get("status")=="ok" for x in prior_sources):sources.append(smart())
+    after=snapshot();result=outcomes.verification(before,after,sources,receipt,prior_sources)
+    result.update(id=ident,utc=now)
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        require(c.execute("SELECT state FROM analysis WHERE id=?",(ident,)).fetchone()==("finished",),"Verification history changed")
+        c.execute("UPDATE verification SET data=? WHERE id=?",(json.dumps(result),ident))
+    return result
 def show_history(c):
     rows=[]
     for ident,utc,state,context,assessment in c.execute("SELECT id,utc,state,context,assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 30"):
@@ -563,9 +592,12 @@ def show_history(c):
             if r["status"]!="skipped":
                 row["attempts"]+=1
                 row[{"success":"successes","failure":"failures","no_effect":"no_effect"}[r["status"]]]+=1
-    return {"schema":1,"analyses":rows,"research":evidence,"assisted_outcomes":[{"context":k[0],"action":k[1],**v} for k,v in assisted.items()],"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
+    checks=[]
+    for (raw,) in c.execute("SELECT data FROM verification ORDER BY utc DESC LIMIT 10"):
+        v=json.loads(raw);checks.append({"id":v["id"],"status":v["status"],"risks":v.get("risks",[]),"coverage":v.get("coverage",{}),"utc":v.get("utc")})
+    return {"schema":1,"analyses":rows,"research":evidence,"verification":checks,"assisted_outcomes":[{"context":k[0],"action":k[1],**v} for k,v in assisted.items()],"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
 def main():
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","refine","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","refine","verify-boost","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
     if a.mode=="self-test":return run_tests()
     os.umask(0o077)
     try:
@@ -587,6 +619,7 @@ def main():
             elif a.mode=="plan":result=read_analysis(c,a.id,boot_id(),clock(),int(time.time()))
             elif a.mode=="research":result=investigate(c,a.id,json.loads(a.payload),boot_id(),clock(),int(time.time()))
             elif a.mode=="refine":result=refine(c,a.id,boot_id(),clock(),int(time.time()))
+            elif a.mode=="verify-boost":result=verify_boost(c,a.id,boot_id(),int(time.time()),caller())
             elif a.mode=="reserve":
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
@@ -781,6 +814,25 @@ def run_tests():
             r=self.make();self.investigate(r,["web"])
             refine(self.c,r["id"],self.boot,self.t,self.now,probe=lambda spec:source(spec[0],"empty"),clock_fn=lambda:self.t,now_fn=lambda:self.now)
             self.assertFalse(read_analysis(self.c,r["id"],self.boot,self.t,self.now)["recommendations"]["archives"]["allowed"])
+        def test_post_boost_verification(self):
+            r=self.make();reserve(self.c,r["id"],["own_memory"],self.boot,self.t,self.now,self.m)
+            finish(self.c,r["id"],{"own_memory":{"status":"no_effect","bytes":0}},self.m)
+            calls=[]
+            def probe(spec):
+                calls.append(spec[0]);return source(spec[0],"ok",{"storage_io":1} if spec[0]=="kernel-ring" else {},1)
+            v=verify_boost(self.c,r["id"],self.boot,self.now,snapshot=lambda:self.m,probe=probe)
+            self.assertEqual(v["status"],"review");self.assertIn("storage_io",v["risks"]);self.assertEqual(len(calls),3)
+            self.assertEqual(verify_boost(self.c,r["id"],self.boot,self.now,snapshot=lambda:self.m,probe=probe),v);self.assertEqual(len(calls),3)
+            self.assertEqual(show_history(self.c)["verification"][0]["status"],"review")
+            with self.c:self.c.execute("DELETE FROM analysis")
+            self.assertEqual(show_history(self.c)["verification"],[])
+        def test_verification_requires_finished_owner(self):
+            r=self.make()
+            with self.assertRaises(ValueError):verify_boost(self.c,r["id"],self.boot,self.now)
+            reserve(self.c,r["id"],["own_memory"],self.boot,self.t,self.now,self.m)
+            finish(self.c,r["id"],{"own_memory":{"status":"success","bytes":0}},self.m)
+            for boot,now,owner in (("other",self.now,None),(self.boot,self.now+1801,None),(self.boot,self.now,(999,"wrong"))):
+                with self.assertRaises(ValueError):verify_boost(self.c,r["id"],boot,now,owner)
         def test_migration_v1(self):
             import tempfile
             with tempfile.TemporaryDirectory() as tmp:
@@ -788,7 +840,7 @@ def run_tests():
                 c=connect(path);r=record_analysis(c,self.m,self.s,self.boot,self.t,self.now)
                 with c:c.execute("DROP TABLE research");c.execute("DROP TABLE research_budget");c.execute("PRAGMA user_version=1")
                 c.close();c=connect(path)
-                self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0],2)
+                self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0],3)
                 self.assertEqual(read_analysis(c,r["id"],self.boot,self.t,self.now)["id"],r["id"]);c.close()
     suite=unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(Tests),unittest.defaultTestLoader.loadTestsFromTestCase(ResearchDB)])
     return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
