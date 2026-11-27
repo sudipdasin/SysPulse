@@ -8,6 +8,10 @@ readonly deb_version=3.0.0~alpha39~local1
 readonly repository=https://github.com/sudipdasin/SysPulse.git
 mode=${1:---check}
 source_repo=
+readonly build_jobs=${SYSPULSE_BUILD_JOBS:-2}
+if [[ $build_jobs != 1 && $build_jobs != 2 ]]; then
+    echo 'SYSPULSE_BUILD_JOBS must be 1 or 2.' >&2; exit 2
+fi
 if [[ $mode == --check && $# -le 1 ]]; then
     readonly revision=not-selected
 elif [[ ( $mode == --build || $mode == --diagnostics ) && ( $# == 2 || $# == 3 ) && $2 =~ ^[0-9a-f]{40}$ ]]; then
@@ -24,7 +28,7 @@ if [[ $EUID == 0 ]]; then echo 'Run as a normal desktop user, not root.' >&2; ex
 export PATH=/usr/bin:/bin
 missing=0
 target=diagnostics-only
-required=(git g++ python3 dpkg-deb timeout tar sha256sum)
+required=(git g++ python3 dpkg-deb timeout tar sha256sum apt-get apt-cache dpkg dpkg-scanpackages gpg gpgconf realpath tee)
 if [[ $mode != --diagnostics ]]; then
     . /etc/os-release
     case "${ID:-}:${VERSION_ID:-}:${UBUNTU_CODENAME:-}" in
@@ -33,7 +37,7 @@ if [[ $mode != --diagnostics ]]; then
         ubuntu:22.04:*) target=ubuntu-22.04;;
         *) echo 'Unsupported build distribution; use Linux Mint 22.x or Ubuntu 22.04/24.04.'; missing=1; target=unsupported;;
     esac
-    required+=(cmake ctest cpack pkg-config dpkg dpkg-shlibdeps openssl gpg file desktop-file-validate)
+    required+=(cmake ctest cpack make pkg-config dpkg-shlibdeps openssl file desktop-file-validate)
     if command -v dpkg >/dev/null && [[ $(dpkg --print-architecture) != amd64 ]]; then echo 'amd64 required.'; missing=1; fi
     if ! command -v pkg-config >/dev/null || ! pkg-config --exists 'Qt5Core >= 5.15' Qt5Widgets Qt5Network; then echo 'Missing Qt5 development files (qtbase5-dev).'; missing=1; fi
 fi
@@ -45,7 +49,7 @@ if [[ $missing == 1 ]]; then
     echo 'Typical build prerequisites: build-essential cmake pkg-config qtbase5-dev dpkg-dev desktop-file-utils python3 openssl gnupg file git ca-certificates.'
     exit 1
 fi
-printf 'Preflight passed: %s, source %s\n' "$target" "$revision"
+printf 'Preflight passed: %s, source %s, build jobs %s\n' "$target" "$revision" "$build_jobs"
 [[ $mode != --check ]] || exit 0
 work=$(mktemp -d "$HOME/SysPulse-alpha39-local.XXXXXXXX")
 mkdir -m 700 "$work/source" "$work/results" "$work/home" "$work/git"
@@ -67,31 +71,32 @@ fi
 git -C "$work/git" archive --format=tar "$revision" | tar -xf - -C "$work/source"
 grep -Fx 'set(SYSPULSE_ALPHA_NUMBER 39)' "$work/source/CMakeLists.txt" >/dev/null
 printf '%s\n' "$revision" > "$work/results/SOURCE-CHECKOUT.txt"
+run_logged() { local log=$1; shift; "$@" 2>&1 | tee "$work/results/$log"; }
 phase=offline-diagnostics
-bash "$work/source/tools/test-offline-alpha39.sh" --full 2>&1 | tee "$work/results/OFFLINE-DIAGNOSTICS.txt"
+run_logged OFFLINE-DIAGNOSTICS.txt bash "$work/source/tools/test-offline-alpha39.sh" --full
 printf 'Source: %s\nSelected offline diagnostic suites completed; review individual skip reports. No native GUI, application package, installed upgrade or physical hardware validation claimed.\n' "$revision" > "$work/results/DIAGNOSTIC-STATUS.txt"
 if [[ $mode == --diagnostics ]]; then
     printf 'Diagnostic evidence: %s/results\nNo compilation of the GUI or installation performed.\n' "$work"
     exit 0
 fi
 phase=configure
-cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET="$target" -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
+run_logged CONFIGURE.txt cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET="$target" -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
 phase=compile
-cmake --build "$work/build" --parallel 2
+run_logged COMPILE.txt cmake --build "$work/build" --parallel "$build_jobs"
 phase=ctest
-ctest --test-dir "$work/build" --output-on-failure --no-tests=error | tee "$work/results/CTEST.txt"
+run_logged CTEST.txt ctest --test-dir "$work/build" --output-on-failure --no-tests=error
 phase=benchmark
-python3 "$work/source/tests/benchmark_diagnostic_detection.py" > "$work/results/DETECTION-TUNED.json"
-python3 "$work/source/tests/benchmark_diagnostic_holdout.py" > "$work/results/DETECTION-REPLAY.json"
+python3 "$work/source/tests/benchmark_diagnostic_detection.py" > "$work/results/DETECTION-TUNED.json" 2> "$work/results/DETECTION-TUNED.stderr.txt"
+python3 "$work/source/tests/benchmark_diagnostic_holdout.py" > "$work/results/DETECTION-REPLAY.json" 2> "$work/results/DETECTION-REPLAY.stderr.txt"
 phase=package
-(umask 022; cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version")
+(umask 022; cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version") 2>&1 | tee "$work/results/CPACK.txt"
 shopt -s nullglob
 packages=("$work/build/packages/"*.deb)
 [[ ${#packages[@]} == 1 && -f ${packages[0]} && ! -L ${packages[0]} ]]
 deb=${packages[0]}
 phase=payload
-python3 "$work/source/tools/verify-alpha39-payload.py" "$deb" "$deb_version" | tee "$work/results/PAYLOAD-STATUS.txt"
-cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$version" -P "$work/source/tests/verify_packages.cmake"
+run_logged PAYLOAD-STATUS.txt python3 "$work/source/tools/verify-alpha39-payload.py" "$deb" "$deb_version"
+run_logged PACKAGE-VERIFY.txt cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$version" -P "$work/source/tests/verify_packages.cmake"
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]]
 mkdir "$work/anchor-check"
 dpkg-deb -x "$deb" "$work/anchor-check"
