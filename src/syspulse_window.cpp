@@ -273,6 +273,22 @@ struct Window::Impl {
         for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();if(a.value("name").toString()!="smart-disk-health")continue;hardware<<"SMART coverage: "+a.value("status").toString();hardware<<a.value("note").toString();const auto data=a.value("smart").toObject();int n=0;for(const auto& v:data.value("disks").toArray()){const auto d=v.toObject();hardware<<QString("Disk sample %1 · %2 · %3").arg(++n).arg(d.value("status").toString(),d.value("health").toString());for(auto i=d.begin();i!=d.end();++i)if(i.key()!="status"&&i.key()!="health")hardware<<"    "+i.key()+": "+i.value().toVariant().toString();}hardware<<QString("Excluded or unprobed disks: %1").arg(data.value("excluded").toInt());}
         const auto catalog=result.value("cleaner_catalog").toObject();cleaners<<"Optional BleachBit discovery: "+catalog.value("status").toString();for(const auto& v:catalog.value("options").toArray())cleaners<<v.toString();
         cleaners<<"Metadata only. No external cleaner definitions, scripts or deletion commands are executed. Existing native review and cache mount protections remain.";
+        QStringList solver,interval;
+        for(const auto& v:result.value("sources").toArray()){
+            const auto a=v.toObject();
+            if(a.value("name").toString()=="apt-repair-simulation"){
+                const auto plan=a.value("apt_simulation").toObject();
+                solver<<QString("APT dependency solver simulation: %1").arg(plan.value("status").toString());
+                solver<<QString("Proposed installations/upgrades: %1; configurations: %2; removals: %3; held back: %4").arg(plan.value("install_or_upgrade").toInt()).arg(plan.value("configure").toInt()).arg(plan.value("remove").toInt()).arg(plan.value("held_back").toInt());
+                solver<<"No repair execution authorized. No package names retained. APT archive cleanup requires a fresh clear solver result.";
+            }else if(a.value("name").toString()=="procps-interval-sampling"){
+                const auto m=a.value("interval_metrics").toObject();
+                interval<<QString("procps vmstat: %1; %2 recent one-second samples").arg(m.value("status").toString()).arg(m.value("samples").toInt());
+                for(auto i=m.begin();i!=m.end();++i)if(i.key().endsWith("_mean"))interval<<i.key()+": "+i.value().toVariant().toString();
+                interval<<"Short observational sample, not a long-term benchmark or causal performance claim.";
+            }
+        }
+        make("APT repair preview",solver);make("Live interval metrics",interval);
         make("Learned patterns",patterns);make("Repair knowledge",recipes);make("Disk health",hardware);make("Cleaner discovery",cleaners);const auto external=result.value("research").toObject();make("AI & web evidence",researchLines(external));layout->addWidget(tabs,1);
         layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
         auto* routes=new QComboBox;routes->setObjectName("researchDiagnosticRoutes");
@@ -1211,7 +1227,7 @@ struct Window::Impl {
         if(ownMemory->isChecked()&&ownMemory->isEnabled())selectedActions.append("own_memory");
         if(pause->isChecked()&&pause->isEnabled())selectedActions.append("pause_monitoring");
         const QString usedAnalysis=analysisId;
-        const auto reserved=diagnosticCall({"reserve",usedAnalysis,QString::fromUtf8(QJsonDocument(selectedActions).toJson(QJsonDocument::Compact))},"Rechecking current health and reserving the one-use maintenance plan…",30000);
+        const auto reserved=diagnosticCall({"reserve",usedAnalysis,QString::fromUtf8(QJsonDocument(selectedActions).toJson(QJsonDocument::Compact))},"Rechecking current health and reserving the one-use maintenance plan…",45000);
         analysisId.clear();
         if(reserved.value("state").toString()!="reserved"||reserved.value("id").toString()!=usedAnalysis){analysisStatus->setText("Boost not authorized. Run a new analysis.");return;}
         QJsonObject learnedOutcome;
