@@ -1,0 +1,20 @@
+# Owner acceptance hold — 2026-11-27
+
+The owner will not install another SysPulse candidate until both signed in-app updates and session-only administrator authorization are fully functional. This overrides routine requests to supply intermediate installers for local testing; keep internal evaluation artifacts available for engineering, but do not recommend or request installation of another candidate before these gates pass.
+
+## Gate A — real online application update
+- Release operator provisions a protected production signing key, package-managed verified public trust anchor, canonical immutable release and live signed channel metadata.
+- On an ordinary user session, actual application detects a newer real online release automatically after opt-in, authenticates signed metadata, downloads and validates the full DEB, obtains explicit approval, installs via the authorized session and verifies the installed version after relaunch. No manual key handling or repeated DEB download for provisioned installations.
+- Reject tampered or expired metadata, wrong signatures, modified package, downgrade, wrong channel, unavailable feed and interrupted transfers; retain preferences and verify recovery. Never use disposable signing keys as production trust or bypass signatures.
+- Verify an authenticated one-time migration route from legacy builds, accurately disclosing if the installed version cannot bootstrap itself. No claim that a cached-only updater can install new code.
+
+## Gate B — session administrator authorization
+- Normal-user GUI, optional native PolicyKit authentication once, no password stored or read by SysPulse; reuse restricted authorization for all supported internal privileged operations, including updater, protected volume scan and service management in addition to the maintenance catalog. Preserve explicit operation review.
+- Verify real desktop authentication, multiple distinct authorized operations and an approved update without a second authentication prompt; explicit lock and app closure revoke access, a new session starts locked. Test denied authentication, interrupted transport, invalid arguments and unsupported commands, no replay of uncertain mutations, and fail closed.
+- Third-party tools retain their independent OS authorization policies; do not imply SysPulse can suppress their prompts.
+- No unrestricted root GUI, shell, global sudo caching or relaxed system permissions.
+
+Both gates must pass together on Linux Mint 22.3 XFCE or a demonstrably equivalent target desktop with the actual production feed and authentication agent. Fixture-only test results are not completion. Continue reliability work internally; no new feature expansion until these gates pass. No GitHub Actions, CircleCI or paid infrastructure. Stable publication still requires owner approval.
+
+## Evidence at hold
+Alpha.25 commit 6496b06c0cf69692ccdf5f3cbaa226c64196a03f is live as an evaluation deployment. 45/45 native suites passed; disposable runtime verified two real catalog operations over one broker, EOF revocation and invalid request rejection. No canonical releases or update channel branches were found. Production online update and complete authorization reuse remain unverified. Do not recommend alpha.25 installation as satisfying the hold.
