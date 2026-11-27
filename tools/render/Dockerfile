@@ -19,7 +19,7 @@ COPY --chown=builder:builder docs/SYSPULSE_MILESTONE.md docs/BETA_READINESS.md /
 COPY --chown=builder:builder tools/ /src/tools/
 USER builder
 RUN bash /src/tools/render/build-candidate.sh /src /work /out
-RUN bash /src/tools/render/make-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.28-x86_64-ubuntu-22.04-render-eval.deb /upgrade
+RUN bash /src/tools/render/make-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.29-x86_64-ubuntu-22.04-render-eval.deb /upgrade
 FROM ubuntu:24.04 AS installcheck
 COPY --from=previous /oldout/ /previous/
 COPY --from=build /out/ /candidate/
@@ -47,15 +47,15 @@ USER root
 ENV HOME=/root
 RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo ./\n' > /tmp/syspulse-upgrade.list \
     && apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Languages=none update \
-    && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha28~render1' \
-    && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha28~render1_amd64.deb \
-    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha28~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
+    && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha29~render1' \
+    && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha29~render1_amd64.deb \
+    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha29~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
     && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha27~render1' \
-    && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha28~render1_amd64.deb \
+    && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha29~render1_amd64.deb \
     && dpkg-deb -x /candidate/*.deb /tmp/updater-test \
     && python3 /usr/local/bin/syspulse-apt-updater-runtime-test.py /tmp/updater-test/usr/bin/syspulse-apt-update \
     && rm -rf /tmp/updater-test \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha28~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha29~render1' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-volume-scan)" = '0:0:755' \
     && python3 /usr/local/bin/syspulse-volume-runtime-test.py \
@@ -64,7 +64,7 @@ RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo
 USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.28' \
+    && syspulse --version | grep -F '3.0.0-alpha.29' \
     && (rc=0; timeout 4s syspulse >/tmp/upgraded-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
     && sha256sum -c "$HOME/preference.sha256"
 USER root
@@ -80,34 +80,36 @@ RUN sha256sum -c "$HOME/preference.sha256" \
     && (rc=0; timeout 4s syspulse >/tmp/recovered-launch.log 2>&1 || rc=$?; test "$rc" = 124)
 USER root
 ENV HOME=/root
-RUN DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha28~render1 \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha28~render1'
+RUN DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha29~render1 \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha29~render1'
 RUN DEBIAN_FRONTEND=noninteractive apt-get remove -y syspulse \
     && test ! -e /usr/bin/syspulse && test ! -e /usr/bin/syspulse-memory-control \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /candidate/*.deb \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha28~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha29~render1' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
     && rm -rf /var/lib/apt/lists/*
 USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.28' \
-    && tux-steward --version | grep -F '3.0.0-alpha.28' \
-    && tux-task-manager --version | grep -F '3.0.0-alpha.28' \
-    && tux-setup --version | grep -F '3.0.0-alpha.28' \
+    && syspulse --version | grep -F '3.0.0-alpha.29' \
+    && tux-steward --version | grep -F '3.0.0-alpha.29' \
+    && tux-task-manager --version | grep -F '3.0.0-alpha.29' \
+    && tux-setup --version | grep -F '3.0.0-alpha.29' \
     && syspulse --help >/dev/null \
     && test "$(sha256sum /usr/share/syspulse/update-keys/alpha.gpg | cut -d' ' -f1)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
     && test "$(cat /usr/share/syspulse/update-keys/alpha.sha256)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
     && python3 -c 'import runpy; u=runpy.run_path("/usr/bin/syspulse-apt-update"); assert u["secure_key"](u["resolve_key"]("alpha"))' \
     && (rc=0; syspulse-admin-session </dev/null >/dev/null 2>&1 || rc=$?; test "$rc" = 1) \
-    && syspulse-apt-update check alpha | grep -Fx 'CURRENT 3.0.0~alpha28~render1' \
+    && syspulse-apt-update check alpha | grep -Fx 'CURRENT 3.0.0~alpha29~render1' \
+    && /usr/bin/syspulse-input-control --self-test \
+    && test -f /usr/lib/systemd/system/syspulse-weekly-clean.timer \
     && timeout 20s /usr/local/bin/syspulse-cleaner-core-runtime-test \
     && timeout 40s /usr/local/bin/syspulse-cleaner-runtime-test \
     && (rc=0; syspulse-volume-scan / standard >/tmp/volume-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/volume-guard.log) \
     && timeout 90s bash /usr/local/bin/syspulse-x11-runtime-test.sh \
     && (rc=0; syspulse-memory-control enable >/tmp/helper-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/helper-guard.log) \
     && (rc=0; timeout 4s syspulse >/tmp/reinstalled-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
-    && printf 'Ubuntu 24.04 amd64: exact canonical signed prior alpha.27 package verified by SHA-256; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.28 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Disposable signing fixture for Alpha.28 upgrade; owner public key packaged and real Alpha.27 online discovery checked with no downgrade. Prior Alpha.27 owner publication verified; Alpha.28 owner publication, physical Mint XFCE authorization and successive online upgrade remain pending.\n' > /home/tester/INSTALL-STATUS.txt
+    && printf 'Ubuntu 24.04 amd64: exact canonical signed prior alpha.27 package verified by SHA-256; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.29 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Disposable signing fixture for Alpha.29 upgrade; owner public key packaged and real Alpha.27 online discovery checked with no downgrade. Prior Alpha.27 owner publication verified; Alpha.29 owner publication, physical Mint XFCE authorization and successive online upgrade remain pending.\n' > /home/tester/INSTALL-STATUS.txt
 FROM python:3.11-slim-bookworm AS evaluation
 COPY --from=installcheck /home/tester/INSTALL-STATUS.txt /srv/artifacts/INSTALL-STATUS.txt
 COPY --from=build /out/ /srv/artifacts/
