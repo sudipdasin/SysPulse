@@ -29,15 +29,158 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-cert
 RUN useradd --create-home --uid 10001 tester && mkdir -p /out /src/tools /src/tests && chown tester:tester /out
 COPY tools/syspulse-diagnostics tools/syspulse_research.py /src/tools/
 COPY tests/test_research_adapters.py /src/tests/
+COPY tools/render/test-research-runtime.py /src/tools/test-research-runtime.py
 USER tester
 RUN python3 /src/tools/syspulse-diagnostics self-test > /out/AI35-DB-TESTS.txt 2>&1 || { cat /out/AI35-DB-TESTS.txt; exit 1; }
 RUN python3 /src/tests/test_research_adapters.py > /out/AI35-ADAPTER-TESTS.txt 2>&1 || { cat /out/AI35-ADAPTER-TESTS.txt; exit 1; }
 RUN cat /out/AI35-DB-TESTS.txt /out/AI35-ADAPTER-TESTS.txt
 RUN PYTHONPATH=/src/tools python3 -c 'import json,syspulse_research as r; p=r.profile({"findings":[{"code":"package_failure"}],"context":"normal"}); result=r.run(p,["web","groq","gemini"],lambda _:None); print(json.dumps(result,ensure_ascii=True)); assert result[1]["status"]==result[2]["status"]=="not_configured"' > /out/AI35-LIVE-SEARCH.txt && cat /out/AI35-LIVE-SEARCH.txt
 
+RUN python3 /src/tools/test-research-runtime.py /src/tools/syspulse-diagnostics > /out/AI35-RUNTIME.txt && cat /out/AI35-RUNTIME.txt
+
+FROM ubuntu:24.04 AS prior35
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates gnupg dpkg-dev && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 tester && mkdir -p /check /upgrade && chown tester:tester /check /upgrade
+COPY assets/update-trust/alpha-public.gpg.b64 /tmp/owner.b64
+USER tester
+WORKDIR /check
+RUN base64 -d /tmp/owner.b64 > owner.gpg && echo '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6  owner.gpg' | sha256sum -c -
+RUN python3 -c 'import urllib.request,pathlib,hashlib; base="https://raw.githubusercontent.com/sudipdasin/SysPulse/edd83a288c17e66a484c8ecd3674b694e5314a9b/"; files={"Release":8192,"InRelease":16384,"Release.gpg":8192,"Packages":65536,"pool/syspulse-3.0.0-alpha.32_amd64.deb":1274144}; exec("for name,limit in files.items():\n r=urllib.request.urlopen(base+name,timeout=45); assert r.geturl()==base+name; b=r.read(limit+1); assert len(b)<=limit; pathlib.Path(name.split(\"/\")[-1]).write_bytes(b)")' \
+    && gpgv --keyring /check/owner.gpg --output /check/clear /check/InRelease && cmp /check/Release /check/clear \
+    && gpgv --keyring /check/owner.gpg /check/Release.gpg /check/Release \
+    && python3 -c 'import pathlib,re,hashlib; r=pathlib.Path("Release").read_text(); b=pathlib.Path("Packages").read_bytes(); m=re.search(r"SHA256:\n ([0-9a-f]{64}) ([0-9]+) Packages",r); assert m and m[1]==hashlib.sha256(b).hexdigest() and int(m[2])==len(b); assert b"Version: 3.0.0~alpha32~render1" in b and b"SHA256: 4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc" in b' \
+    && echo '4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc  syspulse-3.0.0-alpha.32_amd64.deb' | sha256sum -c - \
+    && test "$(dpkg-deb -f syspulse-3.0.0-alpha.32_amd64.deb Version)" = '3.0.0~alpha32~render1'
+
+FROM ubuntu:22.04 AS dependencies35
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential cmake qtbase5-dev dpkg-dev desktop-file-utils python3 openssl gnupg file git \
+    fonts-dejavu-core ca-certificates xdg-utils procps iproute2 util-linux dbus-x11 \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 builder && mkdir -p /src /work /out /upgrade /oldsrc /oldwork /oldout && chown builder:builder /src /work /out /upgrade /oldsrc /oldwork /oldout
+FROM dependencies35 AS build35
+COPY --chown=builder:builder CMakeLists.txt LICENSE PRIVACY.md /src/
+COPY --chown=builder:builder include/ /src/include/
+COPY --chown=builder:builder src/ /src/src/
+COPY --chown=builder:builder tests/ /src/tests/
+COPY --chown=builder:builder assets/ /src/assets/
+COPY --chown=builder:builder docs/SYSPULSE_MILESTONE.md docs/BETA_READINESS.md /src/docs/
+COPY --chown=builder:builder tools/ /src/tools/
+USER builder
+RUN bash /src/tools/render/build-alpha35.sh /src /work /out
+RUN bash /src/tools/render/make-alpha35-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.35-x86_64-ubuntu-22.04-render-eval.deb /upgrade
+FROM ubuntu:24.04 AS installcheck35
+COPY --from=prior35 /check/syspulse-3.0.0-alpha.32_amd64.deb /previous/previous.deb
+COPY --from=build35 /out/ /candidate/
+COPY --from=build35 --chown=0:0 /upgrade/ /upgrade/
+COPY --from=build35 /work/build/syspulse-cleaner-ui-tests /usr/local/bin/syspulse-cleaner-runtime-test
+COPY --from=build35 /work/build/syspulse-cleaner-tests /usr/local/bin/syspulse-cleaner-core-runtime-test
+COPY tools/render/test-volume-runtime.py /usr/local/bin/syspulse-volume-runtime-test.py
+COPY tools/render/test-alpha35-admin-session-runtime.py /usr/local/bin/syspulse-admin-session-runtime-test.py
+COPY --from=build35 /work/build/tux-tests /usr/local/bin/syspulse-core-runtime-test
+COPY --from=build35 /work/build/syspulse-shell-tests /usr/local/bin/syspulse-shell-runtime-test
+COPY tools/render/x11-runtime-test.sh /usr/local/bin/syspulse-x11-runtime-test.sh
+COPY tools/render/test-alpha35-apt-updater-runtime.py /usr/local/bin/syspulse-apt-updater-runtime-test.py
+COPY tools/render/test-research-runtime.py /usr/local/bin/syspulse-research-runtime-test.py
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /previous/previous.deb python3 ca-certificates pkexec fonts-dejavu-core xvfb xauth dbus-x11 xinput x11-xserver-utils xfconf xfce4-settings procps iproute2 util-linux \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha32~render1' \
+    && useradd --create-home --uid 10001 tester
+USER tester
+ENV HOME=/home/tester QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/home/tester/runtime
+RUN mkdir -m 700 "$XDG_RUNTIME_DIR" \
+    && mkdir -p "$HOME/.config/SysPulse" \
+    && printf '[updates]\nautomaticCachedCheck=true\n[General]\nupgradeFixture=preserve-user-settings\n' > "$HOME/.config/SysPulse/SysPulse.ini" \
+    && sha256sum "$HOME/.config/SysPulse/SysPulse.ini" > "$HOME/preference.sha256" \
+    && syspulse --version | grep -F '3.0.0-alpha.32' \
+    && (rc=0; timeout 4s syspulse >/tmp/prior-launch.log 2>&1 || rc=$?; test "$rc" = 124)
+USER root
+ENV HOME=/root
+RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo ./\n' > /tmp/syspulse-upgrade.list \
+    && apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Languages=none update \
+    && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha35~render1' \
+    && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha35~render1_amd64.deb \
+    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha35~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha32~render1' \
+    && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha35~render1_amd64.deb \
+    && dpkg-deb -x /candidate/*.deb /tmp/updater-test \
+    && python3 /usr/local/bin/syspulse-apt-updater-runtime-test.py /tmp/updater-test/usr/bin/syspulse-apt-update \
+    && rm -rf /tmp/updater-test \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha35~render1' \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-volume-scan)" = '0:0:755' \
+    && python3 /usr/local/bin/syspulse-volume-runtime-test.py \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-admin-session)" = '0:0:755' \
+    && python3 /usr/local/bin/syspulse-admin-session-runtime-test.py
+USER tester
+ENV HOME=/home/tester
+RUN sha256sum -c "$HOME/preference.sha256" \
+    && syspulse --version | grep -F '3.0.0-alpha.35' \
+    && (rc=0; timeout 4s syspulse >/tmp/upgraded-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
+    && sha256sum -c "$HOME/preference.sha256"
+USER root
+ENV HOME=/root
+# Explicit downgrade only in the disposable test container, to the pinned prior package.
+# This is a recovery test, not a production automatic rollback policy.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --allow-downgrades --no-install-recommends /previous/previous.deb \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha32~render1'
+USER tester
+ENV HOME=/home/tester
+RUN sha256sum -c "$HOME/preference.sha256" \
+    && syspulse --version | grep -F '3.0.0-alpha.32' \
+    && (rc=0; timeout 4s syspulse >/tmp/recovered-launch.log 2>&1 || rc=$?; test "$rc" = 124)
+USER root
+ENV HOME=/root
+RUN DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha35~render1 \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha35~render1'
+RUN DEBIAN_FRONTEND=noninteractive apt-get remove -y syspulse \
+    && test ! -e /usr/bin/syspulse && test ! -e /usr/bin/syspulse-memory-control \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /candidate/*.deb \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha35~render1' \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
+    && rm -rf /var/lib/apt/lists/*
+USER tester
+ENV HOME=/home/tester
+RUN sha256sum -c "$HOME/preference.sha256" \
+    && syspulse --version | grep -F '3.0.0-alpha.35' \
+    && tux-steward --version | grep -F '3.0.0-alpha.35' \
+    && tux-task-manager --version | grep -F '3.0.0-alpha.35' \
+    && tux-setup --version | grep -F '3.0.0-alpha.35' \
+    && syspulse --help >/dev/null \
+    && test "$(sha256sum /usr/share/syspulse/update-keys/alpha.gpg | cut -d' ' -f1)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
+    && test "$(cat /usr/share/syspulse/update-keys/alpha.sha256)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
+    && python3 -c 'import runpy; u=runpy.run_path("/usr/bin/syspulse-apt-update"); assert u["secure_key"](u["resolve_key"]("alpha"))' \
+    && (rc=0; syspulse-admin-session </dev/null >/dev/null 2>&1 || rc=$?; test "$rc" = 1) \
+    && syspulse-apt-update check alpha | grep -Fx 'CURRENT 3.0.0~alpha35~render1' \
+    && /usr/bin/syspulse-input-control --self-test \
+    && /usr/bin/syspulse-brave-profile --self-test \
+    && /usr/bin/syspulse-desktop-recovery --self-test \
+    && /usr/bin/syspulse-schedule-profile --self-test \
+    && /usr/bin/syspulse-hdd-profile --self-test \
+    && /usr/bin/syspulse-desktop-profile --self-test \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-diagnostics)" = '0:0:755' \
+    && /usr/bin/syspulse-diagnostics self-test \
+    && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse_research.py)" = '0:0:644' \
+    && python3 /usr/local/bin/syspulse-research-runtime-test.py /usr/bin/syspulse-diagnostics > /home/tester/AI35-INSTALLED-RESEARCH.txt \
+    && cat /home/tester/AI35-INSTALLED-RESEARCH.txt \
+    && timeout 200s env SYSPULSE_DIAGNOSTICS_RUNTIME=1 /usr/local/bin/syspulse-shell-runtime-test \
+    && test -f /usr/lib/systemd/system/syspulse-daily-clean.timer \
+    && test -f /usr/lib/systemd/system/syspulse-monthly-clean.timer \
+    && test -f /usr/lib/systemd/system/syspulse-weekly-clean.timer \
+    && timeout 20s /usr/local/bin/syspulse-cleaner-core-runtime-test \
+    && timeout 40s /usr/local/bin/syspulse-cleaner-runtime-test \
+    && (rc=0; syspulse-volume-scan / standard >/tmp/volume-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/volume-guard.log) \
+    && timeout 90s bash /usr/local/bin/syspulse-x11-runtime-test.sh \
+    && (rc=0; syspulse-memory-control enable >/tmp/helper-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/helper-guard.log) \
+    && (rc=0; timeout 4s syspulse >/tmp/reinstalled-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
+    && printf 'Ubuntu 24.04 amd64: exact canonical signed prior alpha.32 package verified by SHA-256; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.35 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Actual installed Analyze-to-Boost GUI workflow with own-process memory only and receipt passed; installed research module, live keyless research/local follow-up/SQLite smoke (synthetic category; provider status in AI35-INSTALLED-RESEARCH.txt), no-key refusal and consent-off GUI checks passed. Disposable signing fixture for Alpha.33 upgrade; owner public key packaged and real Alpha.27 online discovery checked with no downgrade. Prior Alpha.27 owner publication verified; Alpha.33 owner publication, physical Mint XFCE authorization and successive online upgrade remain pending.\n' > /home/tester/INSTALL-STATUS.txt
+
+
 FROM python:3.11-slim-bookworm
 COPY --from=tests /out/ /srv/results/
 COPY --from=research35 /out/ /srv/results/
+COPY --from=build35 /out/ /srv/results/alpha35/
+COPY --from=installcheck35 /home/tester/INSTALL-STATUS.txt /srv/results/alpha35/INSTALL-STATUS.txt
+COPY --from=installcheck35 /home/tester/AI35-INSTALLED-RESEARCH.txt /srv/results/alpha35/AI35-INSTALLED-RESEARCH.txt
 USER 10001:10001
 EXPOSE 10000
 CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/results/"]
