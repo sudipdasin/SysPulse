@@ -39,6 +39,12 @@ inline QStringList typedCommand(const QStringList& fields){
         if(a!="wifi"||(b!="on"&&b!="off"))return {};
         return {"nmcli","radio","wifi",b};
     }
+    if(kind=="hdd"){
+        static const QRegularExpression disk(R"(\A(?:sd|hd)[a-z]{1,8}\z)"),identity(R"(\A[0-9]+:[0-9]+:[0-9]+\z)"),number(R"(\A(?:0|[1-9][0-9]{0,3})\z)");
+        const auto values=b.split(',');
+        if(!disk.match(a).hasMatch()||values.size()!=3||!identity.match(values[0]).hasMatch()||!number.match(values[1]).hasMatch()||!number.match(values[2]).hasMatch()||values[1].toInt()>4096||values[2].toInt()>4096)return {};
+        return {"syspulse-hdd-profile","apply",a,values[0],values[1],values[2]};
+    }
     if(kind=="schedule"){
         static const QSet<QString> profiles={"off","daily","weekly","monthly"};
         static const QRegularExpression token(R"(\A[01]{6}\z)");
