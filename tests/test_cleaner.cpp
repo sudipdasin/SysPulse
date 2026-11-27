@@ -43,6 +43,25 @@ int main(){
     if(!custom.complete||!custom.readOnly||custom.categories[Cache]!=3||!custom.candidates.empty())return 30;
     if(scanRequested(root/"not-created",cache,cache,limits,cancel,false).error.empty())return 31;
     if(scanRequested(root/"notes.log",cache,cache,limits,cancel,false).error.empty())return 32;
+    // Exercise the actual Trash eligibility guard without touching desktop Trash.
+    {
+        const auto file=root/"docs"/"big.iso";
+        if(::lstat(file.c_str(),&st))return 34;
+        Entry entry{file,100,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,Archives,false};
+        if(reviewedTrashEligible(entry)!=(::geteuid()!=0))return 35;
+        auto changed=entry;changed.bytes=101;if(reviewedTrashEligible(changed))return 36;
+        changed=entry;changed.uid=::getuid()+1;if(reviewedTrashEligible(changed))return 37;
+        changed=entry;changed.path=root/"linkdir"/"big.iso";if(reviewedTrashEligible(changed))return 38;
+        changed=entry;changed.path=cache/"link";if(reviewedTrashEligible(changed))return 39;
+        fs::create_hard_link(file,root/"hard.iso");if(reviewedTrashEligible(entry))return 40;
+        fs::remove(root/"hard.iso");
+        if(::lstat(file.c_str(),&st))return 41;
+        entry.ctime=st.st_ctim;entry.mtime=st.st_mtim;
+        if(reviewedTrashEligible(entry)!=(::geteuid()!=0))return 42;
+        std::ofstream(file,std::ios::app)<<"changed";
+        if(reviewedTrashEligible(entry))return 43;
+        if(!fs::exists(file))return 44;
+    }
     if(::geteuid()!=0){
         if(::stat((cache/"small").c_str(),&st))return 21;
         Entry valid{cache/"small",3,st.st_dev,st.st_ino,st.st_uid,st.st_mtim,st.st_ctim,Cache,true};
@@ -61,5 +80,5 @@ int main(){
         fs::permissions(root/"protected",fs::perms::owner_all);
         if(denied.complete||denied.permissionDenied!=1||denied.otherSkipped||denied.mountExcluded)return 33;
     }
-    std::cout<<"Cleaner scan, rejection, permission classification and actual fixture unlink checks passed\n";
+    std::cout<<"Cleaner scan, rejection, permission classification and actual fixture unlink and reviewed Trash identity checks passed\n";
 }
