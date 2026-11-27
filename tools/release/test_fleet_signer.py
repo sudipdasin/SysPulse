@@ -27,6 +27,12 @@ class PolicyTests(unittest.TestCase):
     def test_feed_branch(self):
         for v in ("main","master","release-candidates","../../main","--all"):
             with self.subTest(v=v),self.assertRaises(ValueError):policy(dict(self.p,feed_branch=v))
+    def test_stable_physical_required(self):
+        with self.assertRaises(ValueError):policy(dict(self.p,channel="stable"))
+        self.assertEqual(policy(dict(self.p,channel="stable",require_physical=True))["channel"],"stable")
+    def test_process_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError,"timed out"):f.run(P(tmp),"/usr/bin/python3","-c","import time;time.sleep(5)",timeout=0.05)
     def test_wrong_repository(self):
         for v in ("http://github.com/a/b.git","https://github.com@evil.example/a/b.git","https://github.com/a/b.git?x=y"):
             with self.assertRaises(ValueError):policy(dict(self.p,repository=v))
