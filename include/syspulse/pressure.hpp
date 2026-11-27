@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "syspulse/bounded_line.hpp"
 #include <array>
 #include <charconv>
 #include <cstdint>
@@ -25,8 +26,10 @@ inline std::optional<double> percentage(const std::string& value) {
 }
 inline Snapshot parse(std::istream& input) {
     Snapshot result; std::array<bool,2> seen{}; std::string line; unsigned lines=0;
-    while(std::getline(input,line)) {
-        if(++lines>16 || line.size()>512)return {};
+    for(;;) {
+        const auto state=boundedLine<512>(input,line);
+        if(state==LineState::End)break;
+        if(state!=LineState::Line || ++lines>16)return {};
         std::istringstream row(line);std::string kind,a,b,c,d,extra;
         if(!(row>>kind))continue;
         if(kind!="some"&&kind!="full")continue;
