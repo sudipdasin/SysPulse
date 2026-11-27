@@ -25,7 +25,8 @@ def apt_result(status,raw,bounded):
         if line.startswith(("E:","W:","N:")):warning=True
         if "remove is disabled" in line.lower():removal_disabled=True
     result.update(install_or_upgrade=actions["Inst"],configure=actions["Conf"],remove=actions["Remv"]+actions["Purg"])
-    if removal_disabled or result["remove"] or any(x[2] for x in summaries):result["status"]="removal_blocked";return result
+    result["remove"]=max([result["remove"]]+[x[2] for x in summaries])
+    if removal_disabled or result["remove"]:result["status"]="removal_blocked";return result
     if status!="ok":result["status"]="solver_failed";return result
     if len(summaries)!=1 or warning or malformed:return result
     upgraded,new,_,held=summaries[0]
