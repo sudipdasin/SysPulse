@@ -5,6 +5,21 @@ COPY tools/release/source_signer.py tools/release/fleet_policy.py tools/release/
 COPY tools/release/policies/syspulse-alpha-amd64.example.json /etc/deb-release/syspulse.json
 COPY assets/update-trust/alpha-public.gpg.b64 /tmp/public.b64
 RUN base64 -d /tmp/public.b64 > /etc/deb-release/syspulse.gpg && chmod 0644 /etc/deb-release/syspulse.gpg /etc/deb-release/syspulse.json && rm /tmp/public.b64
+RUN groupadd release-readers && usermod -aG release-readers tester && useradd --uid 10002 --no-create-home --gid release-readers validator \
+    && install -d -o validator -g release-readers -m 0750 /var/lib/deb-release-test/validator \
+    && printf 'fixture approval\n' > /var/lib/deb-release-test/validator/approval.json \
+    && printf 'fixture only\n' > /var/lib/deb-release-test/validator/private-token \
+    && cp /var/lib/deb-release-test/validator/approval.json /var/lib/deb-release-test/validator/writable.json \
+    && cp /var/lib/deb-release-test/validator/approval.json /var/lib/deb-release-test/validator/link-source.json \
+    && ln /var/lib/deb-release-test/validator/link-source.json /var/lib/deb-release-test/validator/hardlink.json \
+    && ln -s approval.json /var/lib/deb-release-test/validator/symlink.json \
+    && install -d -o validator -g release-readers -m 0770 /var/lib/deb-release-test/validator/unsafe \
+    && cp /var/lib/deb-release-test/validator/approval.json /var/lib/deb-release-test/validator/unsafe/approval.json \
+    && cp /var/lib/deb-release-test/validator/approval.json /var/lib/deb-release-test/validator/foreign.json \
+    && chown validator:release-readers /var/lib/deb-release-test/validator/approval.json /var/lib/deb-release-test/validator/private-token /var/lib/deb-release-test/validator/writable.json /var/lib/deb-release-test/validator/link-source.json /var/lib/deb-release-test/validator/hardlink.json /var/lib/deb-release-test/validator/unsafe/approval.json \
+    && chgrp release-readers /var/lib/deb-release-test/validator/foreign.json \
+    && chmod 0640 /var/lib/deb-release-test/validator/*.json /var/lib/deb-release-test/validator/unsafe/approval.json \
+    && chmod 0660 /var/lib/deb-release-test/validator/writable.json && chmod 0600 /var/lib/deb-release-test/validator/private-token
 USER tester
 RUN python3 /src/tools/release/source_signer.py self-test > /out/LEGACY-TESTS.txt 2>&1 && cat /out/LEGACY-TESTS.txt
 RUN python3 /src/tools/release/test_fleet_signer.py > /out/FLEET-TESTS.txt 2>&1 || { cat /out/FLEET-TESTS.txt; exit 1; }
