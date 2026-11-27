@@ -98,7 +98,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* root=new QLineEdit;root->setObjectName("cleanerRoot");root->setPlaceholderText("Absolute folder path");root->setText(QDir::homePath());
     auto* browse=push("Browse…","cleanerBrowse");auto* minimum=new QSpinBox;minimum->setObjectName("cleanerMinimum");minimum->setRange(0,1048576);minimum->setSuffix(" MiB");minimum->setValue(0);
     auto* age=new QSpinBox;age->setObjectName("cleanerAge");age->setRange(7,3650);age->setSuffix(" days");age->setValue(7);
-    auto* scan=push("Start scan","cleanerScan");scan->setProperty("primary",true);auto* cancel=push("Cancel scan","cleanerCancel");cancel->setEnabled(false);
+    auto* scan=push("Start scan","cleanerScan");auto* cleanNow=push("Clean / review files…","cleanerQuickReview");cleanNow->setProperty("primary",true);scan->setProperty("primary",true);auto* cancel=push("Cancel scan","cleanerCancel");cancel->setEnabled(false);
     auto* form=new QGridLayout;form->addWidget(label("Scan mode"),0,0);form->addWidget(modes,0,1,1,3);
     form->addWidget(label("Folder"),1,0);form->addWidget(root,1,1,1,2);form->addWidget(browse,1,3);
     form->addWidget(label("Minimum listed size"),2,0);form->addWidget(minimum,2,1);form->addWidget(label("Cache minimum age"),2,2);form->addWidget(age,2,3);
@@ -107,7 +107,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* budgetLabel=label("Volume scan budget");form->addWidget(budgetLabel,5,0);form->addWidget(budget,5,1,1,3);
     auto* privileged=new QCheckBox("Include protected directories (administrator · read-only metadata)");privileged->setObjectName("cleanerAdminScan");form->addWidget(privileged,6,0,1,4);
     auto* scopeHint=label("Each mounted filesystem is scanned separately. Administrator scanning reads metadata only and cannot delete files. System cleanup requires separate authorization.","muted");form->addWidget(scopeHint,7,0,1,4);
-    layout->addLayout(form);auto* actions=new QHBoxLayout;actions->addWidget(scan);actions->addWidget(cancel);actions->addStretch();layout->addLayout(actions);
+    layout->addLayout(form);auto* actions=new QHBoxLayout;actions->addWidget(scan);actions->addWidget(cleanNow);actions->addWidget(cancel);actions->addStretch();layout->addLayout(actions);
     auto* status=label("Ready · no scan performed.","cleanerStatus");layout->addWidget(status);
     auto* tabs=new QTabWidget;tabs->setObjectName("cleanerTabs");layout->addWidget(tabs,1);
     auto* summary=new QWidget;auto* sl=new QVBoxLayout(summary);
@@ -122,9 +122,14 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* openReview=push("Open containing folder");auto* ownership=push("Check package ownership","cleanerOwnership");auto* ownershipStatus=label("Select a possible leftover for an optional package ownership lookup.","cleanerOwnershipStatus");auto* reviewActions=new QHBoxLayout;reviewActions->addWidget(openReview);reviewActions->addWidget(ownership);rl->addLayout(reviewActions);rl->addWidget(ownershipStatus);tabs->addTab(reviewPage,"Leftovers review");
     auto* cachePage=new QWidget;auto* cl=new QVBoxLayout(cachePage);cl->addWidget(label("Only old, single-link regular files owned by you inside your account's ~/.cache qualify. Close affected applications first. Select individual files; deletion is permanent.","muted"));
     auto* candidates=table({"Select","Size","File","Location"},"cleanerCandidates");cl->addWidget(candidates,1);
-    auto* remove=push("Review and delete selected cache files…","cleanerDelete");remove->setEnabled(false);cl->addWidget(remove);
+    auto* remove=push("Review and delete selected cache files…","cleanerDelete");remove->setEnabled(false);remove->setProperty("primary",true);
+    auto* selection=label("No eligible files selected.","cleanerSelectionStatus");cl->addWidget(selection);
+    auto* selectBatch=push("Select next batch (up to 100)","cleanerSelectBatch");auto* clearBatch=push("Clear selection","cleanerClearBatch");selectBatch->setEnabled(false);clearBatch->setEnabled(false);
+    auto* selectionRow=new QHBoxLayout;selectionRow->addWidget(selectBatch);selectionRow->addWidget(clearBatch);selectionRow->addWidget(remove);cl->addLayout(selectionRow);
     auto* apt=push("System APT cache · administrator approval");auto* journal=push("Archived journals · administrator approval");auto* links=new QHBoxLayout;links->addWidget(apt);links->addWidget(journal);cl->addLayout(links);tabs->addTab(cachePage,"Cleanup candidates");
     QObject::connect(apt,&QPushButton::clicked,page,[route]{route("apt-clean");});QObject::connect(journal,&QPushButton::clicked,page,[route]{route("journal-prune");});
+    auto* trim=push("SSD TRIM · administrator approval","cleanerTrim");cl->addWidget(trim);QObject::connect(trim,&QPushButton::clicked,page,[route]{route("trim");});
+    QObject::connect(cleanNow,&QPushButton::clicked,page,[=]{tabs->setCurrentWidget(cachePage);});
     auto* packagesPage=new QWidget;auto* pl=new QVBoxLayout(packagesPage);pl->addWidget(label("Installed Debian packages by reported installed size. Includes dependencies and system components; size is not proof of obsolescence.","muted"));
     auto* packageStatus=label("Inventory not loaded.","cleanerPackageStatus");pl->addWidget(packageStatus);
     auto* packageFilter=new QLineEdit;packageFilter->setPlaceholderText("Filter package name");pl->addWidget(packageFilter);
@@ -194,12 +199,22 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     };
     auto generation=std::make_shared<unsigned long long>(0);
     auto hasResults=std::make_shared<bool>(false);
+    const auto selectionChanged=[=]{
+        const bool eligible=*hasResults&&!*busy&&!current->readOnly&&!current->cancelled&&!duplicateResult->cancelled&&current->error.empty()&&!current->candidates.empty()&&candidates->rowCount()==static_cast<int>(current->candidates.size());
+        unsigned count=0;std::uint64_t bytes=0;
+        if(eligible)for(int i=0;i<candidates->rowCount();++i){const auto* item=candidates->item(i,0);if(item&&item->checkState()==Qt::Checked){++count;const auto size=current->candidates[i].bytes;bytes=size>std::numeric_limits<std::uint64_t>::max()-bytes?std::numeric_limits<std::uint64_t>::max():bytes+size;}}
+        selectBatch->setEnabled(eligible);clearBatch->setEnabled(eligible&&count>0);remove->setEnabled(eligible&&count>0&&count<=100);
+        selection->setText(eligible?QString("%1 selected · %2 logical bytes · %3 eligible files. Maximum 100 per reviewed batch.").arg(count).arg(sizeText(bytes)).arg(candidates->rowCount()):QString("No eligible deletion batch. Redirected cache locations, protected data and personal files remain inspection-only."));
+    };
+    QObject::connect(candidates,&QTableWidget::itemChanged,page,[selectionChanged](QTableWidgetItem*){selectionChanged();});
+    QObject::connect(selectBatch,&QPushButton::clicked,page,[=]{if(!selectBatch->isEnabled())return;{const QSignalBlocker block(candidates);for(int i=0;i<candidates->rowCount();++i)if(auto* item=candidates->item(i,0))item->setCheckState(i<100?Qt::Checked:Qt::Unchecked);}selectionChanged();});
+    QObject::connect(clearBatch,&QPushButton::clicked,page,[=]{{const QSignalBlocker block(candidates);for(int i=0;i<candidates->rowCount();++i)if(auto* item=candidates->item(i,0))item->setCheckState(Qt::Unchecked);}selectionChanged();});
     const auto resetResults=[=]{
         ++*generation;*hasResults=false;*current={};*duplicateResult={};
         remove->setEnabled(false);fill(largest,{},false);fill(leftovers,{},false);fill(candidates,{},true);
         dupTable->setRowCount(0);disk->setValues({});types->setValues({});bigChart->setValues({});
         ownershipStatus->setText("Select a possible leftover for ownership lookup.");
-        dupStatus->setText("Start a new scan for current duplicate results.");
+        dupStatus->setText("Start a new scan for current duplicate results.");selectionChanged();
         totals->setText("No current scan data.");
     };
     const auto invalidate=[=]{
@@ -279,10 +294,10 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             }
             if(current->permissionDenied)status->setText(status->text()+" · protected entries not scanned; use authorized system cleanup tools where applicable. Do not run SysPulse as root.");
             if(current->missingCache)status->setText("Cache directory does not exist yet · nothing to scan or clean. Deep scan remains available.");
-            else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · inspection only");
+            else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · inspection only: redirected cache may contain unrelated files. Use Cleanup candidates for system cache actions.");
             else if(current->readOnly)status->setText(status->text()+(admin?" · administrator metadata inspection only; no deletion":" · inspection only (nonstandard or unavailable cleanup cache)"));
             current->duplicateInput.clear();
-            remove->setEnabled(current->error.empty()&&!current->readOnly&&!current->cancelled&&!duplicateResult->cancelled&&!current->candidates.empty());
+            selectionChanged();
         };
         if(admin){
             tux::admin::runReviewed(page,{"volume",root->text(),budget->currentIndex()==1?"extended":"standard"},auth,{helper,root->text(),budget->currentIndex()==1?"extended":"standard"},4*1024*1024,[=](const AsyncCommandResult& response){
@@ -302,9 +317,12 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(selected.size()>100){QMessageBox::information(page,"Cleanup","Select at most 100 files per batch.");return;}
         if(QMessageBox::question(page,"Permanently remove selected cache files?",QString("Delete %1 selected cache files (%2 logical bytes)? Close affected applications first. Changed, linked or unsafe files will be refused. This is not reversible.").arg(selected.size()).arg(sizeText(logical)),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes)return;
         if(*busy||!*hasResults||*generation!=reviewedGeneration){QMessageBox::warning(page,"Cleanup","Scan results changed during review. Rescan and review again.");return;}
-        const auto cache=c::homeCache();unsigned removed=0,failed=0;std::uint64_t bytes=0;
+        const auto cache=c::homeCache();QStorageInfo before(QFile::decodeName(cache.native().c_str()));before.refresh();const auto freeBefore=before.isValid()&&before.isReady()?before.bytesAvailable():-1;unsigned removed=0,failed=0;std::uint64_t bytes=0;
         for(const auto& e:selected){if(c::removeCache(cache,e,reviewedAge)){++removed;bytes+=e.bytes;}else ++failed;}
-        resetResults();dupStatus->setText("Cleanup changed the filesystem; rescan for current duplicate results.");status->setText(QString("Removed %1 files · %2 refused/failed · %3 logical bytes removed. Start a new scan to measure actual volume availability.").arg(removed).arg(failed).arg(sizeText(bytes)));totals->setText("Previous scan results are stale after cleanup; rescan before further action.");
+        resetResults();dupStatus->setText("Cleanup changed the filesystem; rescan for current duplicate results.");status->setText(QString("Removed %1 files · %2 refused/failed · %3 logical bytes removed. Start a new scan to measure actual volume availability.").arg(removed).arg(failed).arg(sizeText(bytes)));QStorageInfo after(QFile::decodeName(cache.native().c_str()));after.refresh();
+        const auto freeAfter=after.isValid()&&after.isReady()?after.bytesAvailable():-1;
+        if(freeBefore>=0&&freeAfter>=0)status->setText(status->text()+QString(" · Available space before: %1; after: %2 (other activity may affect this).").arg(sizeText(freeBefore),sizeText(freeAfter)));
+        totals->setText("Previous scan results are stale after cleanup; rescan before further action.");
     });
     return page;
 }
