@@ -289,7 +289,7 @@ int main(int argc,char** argv) {
         require(window.currentPageId()=="experimental","search also navigates directly to module names");
         window.navigate("overview");
         auto* analyze=window.findChild<QPushButton*>("analyzeSystem");require(analyze,"analysis action exists");
-        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="deepAnalysisReview";if(dialog)dialog->reject();});
+        bool reviewed=false;QTimer::singleShot(30,[&]{auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());reviewed=dialog&&dialog->objectName()=="deepAnalysisReview";if(reviewed){for(const auto& name:{"researchWebConsent","researchGroqConsent","researchGeminiConsent"}){auto* check=dialog->findChild<QCheckBox*>(name);reviewed=reviewed&&check&&!check->isChecked();}}if(dialog)dialog->reject();});
         analyze->click();require(reviewed,"analysis opens the reviewed plan before executing");require(reportTable->rowCount()==0,"cancelling analysis leaves reports empty");require(!window.findChild<QPushButton*>("quickBoost")->isEnabled(),"cancelled analysis cannot authorize Boost");
         if(qEnvironmentVariableIntValue("SYSPULSE_DIAGNOSTICS_RUNTIME")==1){
             QTemporaryDir isolatedHome;require(isolatedHome.isValid(),"isolated diagnostics runtime home");
