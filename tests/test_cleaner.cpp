@@ -12,7 +12,7 @@ int main(){
     std::ofstream(root/"notes.log")<<"12345";fs::create_symlink(root/"docs"/"big.iso",cache/"link");fs::create_directory_symlink(root/"docs",root/"linkdir");
     std::atomic_bool cancel{false};Limits limits;limits.top=2;
     auto r=scan(root,cache,limits,cancel);
-    if(!r.complete||r.files!=3||r.largest.size()!=2||r.largest[0].bytes!=100||r.largest[1].bytes!=5)return 2;
+    if(!r.complete||r.files!=3||r.largest.size()!=2||r.largest[0].bytes!=100||r.largest[1].bytes!=5||r.permissionDenied||r.mountExcluded||r.otherSkipped)return 2;
     if(r.categories[Cache]!=3||r.categories[Archives]!=100||r.categories[Review]!=5||!r.volume.known)return 3;
     if(!r.candidates.empty())return 4;
     if(!inside(cache/"small",cache)||inside(root/".cache-other"/"x",cache)||inside(cache,cache))return 5;
@@ -54,5 +54,12 @@ int main(){
         if(!removeCache(cache,valid,7,future)||fs::exists(cache/"small")||!fs::exists(root/"docs"/"big.iso"))return 26;
     }
 
-    std::cout<<"Cleaner scan, rejection and actual fixture unlink checks passed\n";
+    if(::geteuid()!=0){
+        fs::create_directory(root/"protected");std::ofstream(root/"protected"/"secret")<<"secret";
+        fs::permissions(root/"protected",fs::perms::none);
+        auto denied=scan(root,cache,limits,cancel);
+        fs::permissions(root/"protected",fs::perms::owner_all);
+        if(denied.complete||denied.permissionDenied!=1||denied.otherSkipped||denied.mountExcluded)return 33;
+    }
+    std::cout<<"Cleaner scan, rejection, permission classification and actual fixture unlink checks passed\n";
 }

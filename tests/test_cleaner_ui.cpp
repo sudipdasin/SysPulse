@@ -29,6 +29,11 @@ int main(int argc,char** argv){
     if(!mode||!path||!scan||!cancel||!status||!largest||!leftovers||!candidates||!remove||!tabs||!minimum||mode->count()!=4||tabs->count()!=6||remove->isEnabled()||cancel->isEnabled())return 2;
     const auto await=[&](QPushButton* b){QElapsedTimer time;time.start();while(!b->isEnabled()&&time.elapsed()<18000){app.processEvents();QThread::msleep(5);}return b->isEnabled();};
     if(path->text()!=QString::fromStdString(cacheDir.string()))return 15;
+    auto* volumes=page->findChild<QComboBox*>("cleanerVolume");auto* budget=page->findChild<QComboBox*>("cleanerVolumeBudget");auto* browse=page->findChild<QPushButton*>("cleanerBrowse");
+    if(!volumes||!budget||!browse)return 27;
+    mode->setCurrentIndex(2);if(!volumes->isVisible()||!budget->isVisible()||path->isEnabled()||browse->isEnabled()||volumes->count()<1||path->text()!=volumes->currentData().toString()||!path->text().startsWith("/"))return 28;
+    mode->setCurrentIndex(3);if(!path->isEnabled()||!browse->isEnabled()||path->text().isEmpty()||volumes->isVisible())return 29;
+    mode->setCurrentIndex(0);
     scan->click();if(!await(scan)||!status->text().contains("Scan complete")||largest->rowCount()!=1||remove->isEnabled())return 16;
     std::filesystem::remove_all(cacheDir);scan->click();if(!await(scan)||!status->text().contains("does not exist")||largest->rowCount()!=0||remove->isEnabled())return 17;
     std::filesystem::create_directory_symlink(root/"missing-target",cacheDir);scan->click();if(!await(scan)||!status->text().contains("Cannot open"))return 18;

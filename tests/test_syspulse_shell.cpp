@@ -41,7 +41,19 @@ int main(int argc,char** argv) {
     if(!preferences.isValid())return 1;
     QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,preferences.path());
     try {
-        syspulse::Window window(false);window.resize(1366,768);window.show();events(50);
+        struct StartupWindows final:QObject {
+            int visibleTopLevels=0;
+            bool eventFilter(QObject* o,QEvent* e) override {
+                if(e->type()==QEvent::Show){if(auto* widget=qobject_cast<QWidget*>(o);widget&&widget->isWindow())++visibleTopLevels;}
+                return false;
+            }
+        } startup;
+        app.installEventFilter(&startup);
+        syspulse::Window window(false);
+        require(startup.visibleTopLevels==0,"no transient top-level widgets during construction");
+        window.resize(1366,768);window.show();events(50);
+        app.removeEventFilter(&startup);
+        require(startup.visibleTopLevels==1,"only the main window is shown at startup");
         require(window.navigationCount()==13,"existing navigation plus Control Panel");
         int iconCount=0;
         for(auto* button:window.findChildren<QPushButton*>())if(button->objectName()=="navButton"){

@@ -23,6 +23,8 @@
 #include <QProcess>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QStorageInfo>
+#include <QSet>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QThread>
@@ -86,15 +88,21 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* page=new QWidget;page->setObjectName("cleanerPage");auto* layout=new QVBoxLayout(page);
     layout->addWidget(label("Cleaner · Disk space intelligence","sectionTitle"));
     layout->addWidget(label("Scan first. Review exact paths and sizes. Personal files and suspected leftovers are never automatically deleted. Results stay on this device.","muted"));
-    auto* modes=new QComboBox;modes->setObjectName("cleanerMode");modes->addItems({"Quick · user cache","Deep · home folder","Advanced · selected filesystem","Custom · selected folder and thresholds"});
+    auto* modes=new QComboBox;modes->setObjectName("cleanerMode");modes->addItems({"Quick · user cache","Deep · home folder","Whole disk / mounted filesystem","Custom · selected folder and thresholds"});
+    auto* volumes=new QComboBox;volumes->setObjectName("cleanerVolume");
+    auto* reloadVolumes=push("Refresh disks","cleanerRefreshVolumes");
+    auto* budget=new QComboBox;budget->setObjectName("cleanerVolumeBudget");budget->addItems({"Standard · 3 min / 1 million entries","Extended · 10 min / 3 million entries"});
     auto* root=new QLineEdit;root->setObjectName("cleanerRoot");root->setPlaceholderText("Absolute folder path");root->setText(QDir::homePath());
-    auto* browse=push("Browse…");auto* minimum=new QSpinBox;minimum->setObjectName("cleanerMinimum");minimum->setRange(0,1048576);minimum->setSuffix(" MiB");minimum->setValue(0);
+    auto* browse=push("Browse…","cleanerBrowse");auto* minimum=new QSpinBox;minimum->setObjectName("cleanerMinimum");minimum->setRange(0,1048576);minimum->setSuffix(" MiB");minimum->setValue(0);
     auto* age=new QSpinBox;age->setObjectName("cleanerAge");age->setRange(7,3650);age->setSuffix(" days");age->setValue(7);
     auto* scan=push("Start scan","cleanerScan");scan->setProperty("primary",true);auto* cancel=push("Cancel scan","cleanerCancel");cancel->setEnabled(false);
     auto* form=new QGridLayout;form->addWidget(label("Scan mode"),0,0);form->addWidget(modes,0,1,1,3);
     form->addWidget(label("Folder"),1,0);form->addWidget(root,1,1,1,2);form->addWidget(browse,1,3);
     form->addWidget(label("Minimum listed size"),2,0);form->addWidget(minimum,2,1);form->addWidget(label("Cache minimum age"),2,2);form->addWidget(age,2,3);
     auto* duplicateOpt=new QCheckBox("Compare file contents for duplicates (at least 1 MiB; up to 256 MiB read)");duplicateOpt->setObjectName("cleanerDuplicateOpt");form->addWidget(duplicateOpt,3,0,1,4);
+    auto* diskLabel=label("Mounted volume");form->addWidget(diskLabel,4,0);form->addWidget(volumes,4,1,1,2);form->addWidget(reloadVolumes,4,3);
+    auto* budgetLabel=label("Volume scan budget");form->addWidget(budgetLabel,5,0);form->addWidget(budget,5,1,1,3);
+    auto* scopeHint=label("Normal-user scan; protected directories may be inaccessible. Each mounted filesystem is scanned separately. System cleanup requires separate authorization.","muted");form->addWidget(scopeHint,6,0,1,4);
     layout->addLayout(form);auto* actions=new QHBoxLayout;actions->addWidget(scan);actions->addWidget(cancel);actions->addStretch();layout->addLayout(actions);
     auto* status=label("Ready · no scan performed.","cleanerStatus");layout->addWidget(status);
     auto* tabs=new QTabWidget;tabs->setObjectName("cleanerTabs");layout->addWidget(tabs,1);
@@ -111,7 +119,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     auto* cachePage=new QWidget;auto* cl=new QVBoxLayout(cachePage);cl->addWidget(label("Only old, single-link regular files owned by you inside your account's ~/.cache qualify. Close affected applications first. Select individual files; deletion is permanent.","muted"));
     auto* candidates=table({"Select","Size","File","Location"},"cleanerCandidates");cl->addWidget(candidates,1);
     auto* remove=push("Review and delete selected cache files…","cleanerDelete");remove->setEnabled(false);cl->addWidget(remove);
-    auto* apt=push("Review system APT download cache");auto* journal=push("Review archived journal cleanup");auto* links=new QHBoxLayout;links->addWidget(apt);links->addWidget(journal);cl->addLayout(links);tabs->addTab(cachePage,"Cleanup candidates");
+    auto* apt=push("System APT cache · administrator approval");auto* journal=push("Archived journals · administrator approval");auto* links=new QHBoxLayout;links->addWidget(apt);links->addWidget(journal);cl->addLayout(links);tabs->addTab(cachePage,"Cleanup candidates");
     QObject::connect(apt,&QPushButton::clicked,page,[route]{route("apt-clean");});QObject::connect(journal,&QPushButton::clicked,page,[route]{route("journal-prune");});
     auto* packagesPage=new QWidget;auto* pl=new QVBoxLayout(packagesPage);pl->addWidget(label("Installed Debian packages by reported installed size. Includes dependencies and system components; size is not proof of obsolescence.","muted"));
     auto* packageStatus=label("Inventory not loaded.","cleanerPackageStatus");pl->addWidget(packageStatus);
@@ -168,6 +176,19 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
     });
     const auto cachePath=[] {return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);};
     auto customPath=std::make_shared<QString>(QDir::homePath());
+    const auto refreshVolumes=[=]{
+        const auto previous=volumes->currentData().toString();volumes->clear();
+        const QSet<QByteArray> local={"ext2","ext3","ext4","btrfs","xfs","f2fs","jfs","reiserfs","zfs","vfat","exfat","ntfs","ntfs3","fuseblk","overlay","udf","iso9660"};
+        QSet<QString> added;
+        const auto addVolume=[&](const QStorageInfo& v){
+            if(!v.isValid()||!v.isReady()||!local.contains(v.fileSystemType())||v.rootPath().isEmpty()||added.contains(v.rootPath()))return;
+            const auto path=v.rootPath();added.insert(path);
+            volumes->addItem(QString("%1 · %2 · %3%4").arg(path,QString::fromLatin1(v.fileSystemType()),sizeText(qMax<qint64>(0,v.bytesTotal())),v.isReadOnly()?" · read-only":""),path);
+        };
+        addVolume(QStorageInfo::root());for(const auto& v:QStorageInfo::mountedVolumes())addVolume(v);
+        const int index=volumes->findData(previous);if(index>=0)volumes->setCurrentIndex(index);
+    };
+    refreshVolumes();
     auto generation=std::make_shared<unsigned long long>(0);
     auto hasResults=std::make_shared<bool>(false);
     const auto resetResults=[=]{
@@ -183,12 +204,17 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         if(*hasResults){resetResults();status->setText("Scan settings changed. Start a new scan before using results.");}
     };
     const auto modeChanged=[=]{const int i=modes->currentIndex();
-        root->setText(i==0?cachePath():i==1?QDir::homePath():*customPath);
-        root->setEnabled(i>=2);browse->setEnabled(i>=2);minimum->setEnabled(i==3);age->setEnabled(i==3);
-        root->setToolTip(i==0?"Actual user cache location, including XDG configuration.":i==1?"Actual desktop user home directory.":"Choose an absolute folder to scan.");
+        root->setText(i==0?cachePath():i==1?QDir::homePath():i==2?volumes->currentData().toString():*customPath);
+        root->setEnabled(i==3);browse->setEnabled(i==3);minimum->setEnabled(i==3);age->setEnabled(i==3);
+        diskLabel->setVisible(i==2);volumes->setVisible(i==2);reloadVolumes->setVisible(i==2);budgetLabel->setVisible(i==2);budget->setVisible(i==2);
+        volumes->setEnabled(i==2);reloadVolumes->setEnabled(i==2);budget->setEnabled(i==2);
+        root->setToolTip(i==0?"Actual user cache location, including XDG configuration.":i==1?"Actual desktop user home directory.":i==2?"Mounted filesystem root; choose a disk above or use Custom for a folder.":"Choose an absolute folder to scan.");
     };
-    QObject::connect(root,&QLineEdit::textChanged,page,[=](const QString& value){if(modes->currentIndex()>=2)*customPath=value;});
+    QObject::connect(root,&QLineEdit::textChanged,page,[=](const QString& value){if(modes->currentIndex()==3)*customPath=value;});
     QObject::connect(modes,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[=](int){invalidate();modeChanged();});modeChanged();
+    QObject::connect(volumes,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[=](int){invalidate();if(modes->currentIndex()==2)modeChanged();});
+    QObject::connect(reloadVolumes,&QPushButton::clicked,page,[=]{invalidate();refreshVolumes();modeChanged();});
+    QObject::connect(budget,QOverload<int>::of(&QComboBox::currentIndexChanged),page,[invalidate](int){invalidate();});
     QObject::connect(root,&QLineEdit::textChanged,page,[invalidate]{invalidate();});
     QObject::connect(minimum,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
     QObject::connect(age,QOverload<int>::of(&QSpinBox::valueChanged),page,[invalidate](int){invalidate();});
@@ -203,11 +229,12 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
         const auto cleanupCache=c::homeCache();
         const c::fs::path path=QFile::encodeName(root->text()).constData();
         if(path.empty()||!path.is_absolute()){resetResults();status->setText("Choose an absolute folder path.");return;}
-        c::Limits limits;limits.entries=mode==0?25000:mode==1?150000:300000;limits.seconds=mode==0?10:mode==1?45:60;
+        if(mode==2){const QStorageInfo selected(root->text());if(!selected.isValid()||!selected.isReady()||selected.rootPath()!=root->text()){resetResults();status->setText("Selected disk is no longer mounted. Refresh disks.");return;}}
+        c::Limits limits;limits.entries=mode==0?25000:mode==1?150000:mode==2?(budget->currentIndex()==1?3000000:1000000):300000;limits.seconds=mode==0?10:mode==1?45:mode==2?(budget->currentIndex()==1?600:180):60;
         if(mode==3){limits.minBytes=static_cast<std::uint64_t>(minimum->value())*1048576;limits.ageDays=age->value();}
         limits.collectDuplicates=duplicateOpt->isChecked();
         *scannedAge=limits.ageDays;*busy=true;token->store(false);scan->setEnabled(false);cancel->setEnabled(true);remove->setEnabled(false);
-        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);
+        duplicateOpt->setEnabled(false);modes->setEnabled(false);root->setEnabled(false);browse->setEnabled(false);minimum->setEnabled(false);age->setEnabled(false);volumes->setEnabled(false);reloadVolumes->setEnabled(false);budget->setEnabled(false);
         resetResults();dupStatus->setText(limits.collectDuplicates?"Scanning and comparing selected file scope…":"Duplicate comparison not requested.");totals->setText("Scan running…");
         status->setText("Scanning "+pathText(path)+" · bounded, same filesystem, no symlink traversal…");
         auto result=std::make_shared<c::Result>();
@@ -229,7 +256,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
             }
             QVector<QPair<QString,qulonglong>> series;for(int i=0;i<c::Count;++i)series.append({categories[i],current->categories[i]});types->setValues(series);
             QVector<QPair<QString,qulonglong>> big;for(unsigned i=0;i<current->largest.size()&&i<5;++i)big.append({pathText(current->largest[i].path.filename()),current->largest[i].bytes});bigChart->setValues(big);
-            status->setText(!current->error.empty()?QString::fromStdString(current->error):QString("%1 · %2 entries · %3 regular files · %4 skipped").arg(current->cancelled?"Cancelled — partial results":current->limited?"Limit reached — partial results":current->complete?"Scan complete":"Partial scan — inaccessible or excluded entries").arg(current->visited).arg(current->files).arg(current->skipped));
+            status->setText(!current->error.empty()?QString::fromStdString(current->error):QString("%1 · %2 entries · %3 regular files · %4 permission-denied · %5 other skipped · %6 mount/alias exclusions").arg(current->cancelled?"Cancelled — partial results":current->limited?"Limit reached — partial results":current->complete?"Scan complete":"Partial scan — inaccessible or changed entries").arg(current->visited).arg(current->files).arg(current->permissionDenied).arg(current->otherSkipped).arg(current->mountExcluded));
             totals->setText(QString("%1 largest files shown · %2 possible leftovers · %3 old cache candidates. Scan totals are logical bytes and may include hard links or sparse files.").arg(current->largest.size()).arg(current->review.size()).arg(current->candidates.size()));
             if(!current->accountingOverflow)totals->setText(totals->text()+QString("\nUnique-inode logical size: %1 · reported allocated blocks: %2 · %3 hard-link aliases excluded. Shared extents/compression can affect actual reclaimable space.").arg(sizeText(current->logical),sizeText(current->allocated)).arg(current->hardlinkAliases));
             else totals->setText(totals->text()+"\nUnique-inode accounting overflow; totals unavailable.");
@@ -240,6 +267,7 @@ QWidget* cleanerPage(std::function<void(const QString&)> route){
                 const bool partial=!current->complete||current->duplicateInputLimited||duplicateResult->limited||duplicateResult->cancelled||duplicateResult->unverified;
                 dupStatus->setText(QString("%1 · %2 byte-matched groups · %3 logical extra copies · %4 read · %5 comparisons · %6 unverified. Results are scan-time evidence only; never delete automatically.").arg(partial?"Partial results":"Comparison complete").arg(duplicateResult->groups.size()).arg(sizeText(duplicateResult->logicalExtra),sizeText(duplicateResult->bytesRead)).arg(duplicateResult->compared).arg(duplicateResult->unverified));
             }
+            if(current->permissionDenied)status->setText(status->text()+" · protected entries not scanned; use authorized system cleanup tools where applicable. Do not run SysPulse as root.");
             if(current->missingCache)status->setText("Cache directory does not exist yet · nothing to scan or clean. Deep scan remains available.");
             else if(current->redirected)status->setText(status->text()+" · resolved folder: "+pathText(current->resolvedRoot)+" · inspection only");
             else if(current->readOnly)status->setText(status->text()+" · inspection only (nonstandard or unavailable cleanup cache)");

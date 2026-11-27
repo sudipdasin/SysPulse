@@ -370,7 +370,7 @@ struct Window::Impl {
         tl->addWidget(b);auto* desc=text(summary,"toolDescription");desc->setToolTip(tip);tl->addWidget(desc);
         auto* state=text(available?"Installed · native utility":"Not installed or not trusted","toolAvailability");state->setProperty("available",available);state->setToolTip(tip);tl->addWidget(state);
         auto* dependency=button("Review missing dependency…",[this,name]{reviewDependency(w,name);},w);dependency->setObjectName("toolDependency");
-        dependency->setToolTip(dependencyHint(name));dependency->setVisible(!available&&!dependencyPackage(name).isEmpty());tl->addWidget(dependency);tl->addStretch();
+        dependency->setToolTip(dependencyHint(name));tl->addWidget(dependency);dependency->setVisible(!available&&!dependencyPackage(name).isEmpty());tl->addStretch();
         return tile;
     }
     QWidget* installedTools(const QString& description,const QVector<QPair<QString,QString>>& entries) {

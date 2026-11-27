@@ -46,3 +46,6 @@ Synthetic regression for configured relay, actual issue receipt contract, modern
 Native scoped APT updater, explicit channel preference and per-update PolicyKit authorization. No signing key generated or enrolled without owner trust. Production feed publication and physical target validation pending. No intake IDs promoted.
 
 Alpha.22 build gate exercises the actual updater helper against the previous installed package and signed disposable repository, not merely raw APT commands. Signed production feed remains separate.
+
+### Alpha.23 startup and Cleaner checkpoint
+Fix pre-parent visibility of dependency buttons causing transient top-level windows. Add mounted local filesystem selector with explicit whole-volume budgets, default custom folder, permission vs mount exclusion counters and same-device directory alias detection. Normal-user inspection only; no elevated arbitrary deletion. Existing APT and archived-journal cleanup routes retain explicit administrator approval. Full regression and Mint desktop validation required. No intake IDs promoted.

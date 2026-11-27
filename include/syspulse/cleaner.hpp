@@ -57,7 +57,7 @@ inline Category category(const fs::path& path,const fs::path& cache){
 struct Entry { fs::path path; std::uint64_t bytes=0; dev_t dev=0; ino_t ino=0; uid_t uid=0; timespec mtime{},ctime{}; Category kind=Other; bool removable=false; std::uint64_t allocated=0; };
 struct Volume {std::uint64_t used=0,available=0,reserved=0;bool known=false;};
 struct Limits {unsigned entries=150000, seconds=45, top=250;std::uint64_t minBytes=0;unsigned ageDays=7;bool collectDuplicates=false,allowRemoval=true;};
-struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review,duplicateInput;std::uint64_t allocated=0,logical=0;unsigned hardlinkAliases=0;bool accountingOverflow=false,duplicateInputLimited=false;Volume volume;unsigned visited=0,files=0,skipped=0;bool complete=false,cancelled=false,limited=false;std::string error;fs::path resolvedRoot;bool redirected=false,missingCache=false,readOnly=false;};
+struct Result {std::array<std::uint64_t,Count> categories{};std::vector<Entry> largest,candidates,review,duplicateInput;std::uint64_t allocated=0,logical=0;unsigned hardlinkAliases=0;bool accountingOverflow=false,duplicateInputLimited=false;Volume volume;unsigned visited=0,files=0,skipped=0,permissionDenied=0,mountExcluded=0,otherSkipped=0;bool complete=false,cancelled=false,limited=false;std::string error;fs::path resolvedRoot;bool redirected=false,missingCache=false,readOnly=false;};
 inline bool sameTime(timespec a,timespec b){return a.tv_sec==b.tv_sec&&a.tv_nsec==b.tv_nsec;}
 inline bool oldEnough(const struct stat& st,unsigned days,std::time_t now){
     return now>0&&days>=7&&days<=3650&&std::difftime(now,st.st_mtime)>=days*86400.0&&std::difftime(now,st.st_ctime)>=days*86400.0;
@@ -81,25 +81,32 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
     out.volume=volume(fd.n);
     const auto start=std::chrono::steady_clock::now();const auto now=std::time(nullptr);
     const auto stop=[&]{if(cancel.load()){out.cancelled=true;return true;}if(out.visited>=limits.entries||std::chrono::steady_clock::now()-start>=std::chrono::seconds(limits.seconds)){out.limited=true;return true;}return false;};
-    std::set<std::pair<dev_t,ino_t>> seen;
+    std::set<std::pair<dev_t,ino_t>> seen,seenDirectories;
+    const auto skip=[&](int error){++out.skipped;if(error==EACCES||error==EPERM)++out.permissionDenied;else ++out.otherSkipped;};
+    const auto exclude=[&]{++out.skipped;++out.mountExcluded;};
+    seenDirectories.emplace(rootStat.st_dev,rootStat.st_ino);
     const auto add=[&](std::uint64_t& sum,std::uint64_t n){if(n>std::numeric_limits<std::uint64_t>::max()-sum)out.accountingOverflow=true;else sum+=n;};
     const auto visit=[&](auto&& self,int dir,const fs::path& path,unsigned depth)->void{
         if(stop())return;
-        if(depth>64){++out.skipped;return;}
-        const int copy=::fcntl(dir,F_DUPFD_CLOEXEC,3);if(copy<0){++out.skipped;return;}
-        DIR* stream=::fdopendir(copy);if(!stream){::close(copy);++out.skipped;return;}
+        if(depth>128){skip(ELOOP);return;}
+        const int copy=::fcntl(dir,F_DUPFD_CLOEXEC,3);if(copy<0){skip(errno);return;}
+        DIR* stream=::fdopendir(copy);if(!stream){const int reason=errno;::close(copy);skip(reason);return;}
         struct Close{DIR* d;~Close(){::closedir(d);}} guard{stream};
         while(!stop()){
             errno=0;const auto* ent=::readdir(stream);
-            if(!ent){if(errno)++out.skipped;return;}
+            if(!ent){if(errno)skip(errno);return;}
             std::string name(ent->d_name);if(name=="."||name=="..")continue;
             ++out.visited;struct stat st{};
-            if(::fstatat(dir,name.c_str(),&st,AT_SYMLINK_NOFOLLOW)){++out.skipped;continue;}
-            if(st.st_dev!=rootStat.st_dev){++out.skipped;continue;}
+            if(::fstatat(dir,name.c_str(),&st,AT_SYMLINK_NOFOLLOW)){skip(errno);continue;}
+            if(st.st_dev!=rootStat.st_dev){exclude();continue;}
             const auto full=path/name;
             if(S_ISDIR(st.st_mode)){
                 Fd child(::openat(dir,name.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));struct stat actual{};
-                if(child.n<0||::fstat(child.n,&actual)||actual.st_dev!=st.st_dev||actual.st_ino!=st.st_ino){++out.skipped;continue;}
+                if(child.n<0){skip(errno);continue;}
+                if(::fstat(child.n,&actual)){skip(errno);continue;}
+                if(actual.st_dev!=st.st_dev||actual.st_ino!=st.st_ino){skip(ESTALE);continue;}
+                // Same-device bind aliases or directory cycles are not rescanned.
+                if(!seenDirectories.emplace(actual.st_dev,actual.st_ino).second){exclude();continue;}
                 self(self,child.n,full,depth+1);continue;
             }
             if(!S_ISREG(st.st_mode)||st.st_size<0)continue;
@@ -124,7 +131,7 @@ inline Result scan(const fs::path& root,const fs::path& cache,const Limits& limi
     visit(visit,fd.n,root,0);
     const auto descending=[](const Entry& a,const Entry& b){return a.bytes>b.bytes;};
     std::sort(out.largest.begin(),out.largest.end(),descending);std::sort(out.candidates.begin(),out.candidates.end(),descending);std::sort(out.review.begin(),out.review.end(),descending);
-    out.complete=!out.cancelled&&!out.limited&&!out.skipped;return out;
+    out.complete=!out.cancelled&&!out.limited&&!out.permissionDenied&&!out.otherSkipped&&!out.accountingOverflow;return out;
 }
 // Resolve the explicitly requested scan root once. Traversal and deletion still use
 // no-follow descriptor walks. A redirected root or nonstandard cache is inspection-only.
