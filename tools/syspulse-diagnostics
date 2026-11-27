@@ -136,7 +136,15 @@ def collect_job(spec):
                 status="partial" if lines else "permission"
             if bad and status=="ok":status="partial"
             if more:limited=True;status="bounded"
-            if name!="journal-user-7days" and not lines and status=="ok":status="partial"
+            if name!="journal-user-7days" and not lines and status=="ok":
+                # A quiet warning view is not necessarily unreadable: prove a current
+                # kernel journal record is readable without the severity filter.
+                if name=="kernel-journal-current-boot":
+                    probe,raw_probe,_=command(["journalctl","-k","-b","-n","1","--no-pager","-o","json"],timeout=4,limit=32768)
+                    try:visible=probe=="ok" and isinstance(json.loads(raw_probe.strip()),dict)
+                    except (ValueError,TypeError):visible=False
+                    status="empty" if visible else "partial"
+                else:status="partial"
         elif kind=="services":
             lines=sum(1 for x in raw.splitlines() if x.strip())
             counts={"service_failure":lines} if lines and status=="ok" else {}
@@ -163,6 +171,8 @@ def specs():
       ("journal-system-current-boot","journal",["journalctl","--system","-b","-p","warning","-n","2500","--no-pager","-o","json"]),
       ("journal-system-7days","journal",["journalctl","--system","--since","7 days ago","-p","warning","-n","3000","--no-pager","-o","json"]),
       ("journal-user-7days","journal",["journalctl","--user","--since","7 days ago","-p","warning","-n","2000","--no-pager","-o","json"]),
+      ("journal-system-recent-all-priorities","journal",["journalctl","--system","-b","-n","1500","--no-pager","-o","json"]),
+      ("journal-user-recent-all-priorities","journal",["journalctl","--user","-b","-n","1000","--no-pager","-o","json"]),
       ("kernel-journal-current-boot","journal",["journalctl","-k","-b","-p","warning","-n","2000","--no-pager","-o","json"]),
       ("kernel-ring","log",["dmesg","--level=err,warn,crit,alert,emerg"]),
       ("failed-system-services","services",["systemctl","--failed","--plain","--no-legend","--no-pager"]),
@@ -224,6 +234,16 @@ def numeric_snapshot():
             if 0<n<150000:temps.append(n/1000)
         except (OSError,ValueError):pass
     if temps:data["max_temperature_c"]=max(temps)
+    # Aggregate inventory; no serials, MACs, network addresses or process names.
+    for area,path in (("block_device_count","/sys/class/block"),("network_interface_count","/sys/class/net"),("power_supply_count","/sys/class/power_supply")):
+        try:data[area]=min(4096,len(list(P(path).iterdir())))
+        except OSError:pass
+    try:
+        raw,_=bounded_file("/proc/stat",limit=65536)
+        for line in raw.splitlines():
+            m=re.match(r"^(procs_running|procs_blocked|processes) ([0-9]+)$",line)
+            if m:data[m[1]]=int(m[2])
+    except (OSError,ValueError):pass
     return data
 def assess(metrics,sources,history):
     events={k:sum(s["events"].get(k,0) for s in sources) for k in CATEGORIES}
@@ -314,6 +334,12 @@ def record_analysis(c,metrics,sources,boot,tick,now):
     with c:
         c.execute("BEGIN IMMEDIATE")
         assessment=assess(metrics,sources,history(c));ident=secrets.token_hex(16)
+        previous=list(c.execute("SELECT assessment FROM analysis ORDER BY utc DESC,rowid DESC LIMIT 9"))
+        recurrence={}
+        for (raw,) in previous:
+            for f in json.loads(raw).get("findings",[]):recurrence[f["code"]]=recurrence.get(f["code"],0)+1
+        for finding in assessment["findings"]:finding["observed_in_recent_analyses"]=1+recurrence.get(finding["code"],0)
+        assessment["trend_window"]=len(previous)+1
         require(not pending(c,boot),"Previous Boost is still pending; review history before retry")
         c.execute("UPDATE analysis SET state='invalid' WHERE state IN ('ready','reserved')")
         c.execute("INSERT INTO analysis VALUES(?,?,?,?,?,?,?,?,?)",(ident,now,boot,tick,"ready",assessment["context"],json.dumps(metrics),json.dumps(sources),json.dumps(assessment)))
@@ -463,6 +489,10 @@ def run_tests():
             r2=record_analysis(self.c,self.m,self.s,"new-boot",self.t+901,self.n+901)
             self.assertEqual(r2["state"],"ready")
             self.assertEqual(self.c.execute("SELECT state FROM analysis WHERE id=?",(r["id"],)).fetchone()[0],"invalid")
+        def test_recurrence(self):
+            self.s.append(source("syslog","ok",{"oom":1},1));self.make();r=self.make()
+            self.assertEqual(next(f for f in r["findings"] if f["code"]=="oom")["observed_in_recent_analyses"],2)
+            self.assertEqual(r["trend_window"],2)
         def test_retention(self):
             for _ in range(RETENTION+2):self.make()
             self.assertEqual(self.c.execute("SELECT count(*) FROM analysis").fetchone()[0],RETENTION)
