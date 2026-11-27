@@ -588,8 +588,15 @@ struct Window::Impl {
         add(2,1,"Review compositor on (restore effect)","compositor-on","maintenanceCompositorOn");
         add(3,0,"Inspect compressed swap","zram","maintenanceZram");
         auto* memory=button("Review largest memory consumers",[this]{navigate("performance");performance->detailTabs()->setCurrentIndex(5);processes->reviewMemoryConsumers();},w);
-        tools->addWidget(memory,3,1);layout->addLayout(tools);
-        layout->addWidget(text("Actions open existing reviewed tools only. Package cleanup removes downloaded archives, not installed programs. Compositor changes can cause tearing; the opposite reviewed action is available. Do not disable swap or drop useful kernel caches.","muted"));
+        tools->addWidget(memory,3,1);
+        add(4,0,"Refresh installed software sources","apt-refresh","maintenanceAptRefresh");
+        add(4,1,"Remove obsolete APT downloads","apt-autoclean","maintenanceAptAutoclean");
+        add(5,0,"Cap archived journal size (100 MiB)","journal-cap","maintenanceJournalCap");
+        add(5,1,"Prune archived journals (7 days)","journal-prune","maintenanceJournalPrune");
+        add(6,0,"Enable weekly SSD maintenance","trim-enable","maintenanceTrimEnable");
+        add(6,1,"Disable weekly SSD maintenance","trim-disable","maintenanceTrimDisable");
+        layout->addLayout(tools);
+        layout->addWidget(text("Actions execute after explicit review. Package cleanup removes downloaded archives, not installed programs; log pruning permanently removes archived logs. Compositor changes can cause tearing; the opposite reviewed action is available. Do not disable swap or drop useful kernel caches.","muted"));
         return content;
     }
     QWidget* systemCarePage() {
