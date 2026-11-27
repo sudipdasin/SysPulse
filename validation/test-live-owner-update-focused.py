@@ -20,26 +20,28 @@ def version():
     return run("/usr/bin/dpkg-query", "-W", "-f=${Version}", "syspulse")
 
 def discover(expected):
-    try:
-        observed = run("/usr/sbin/runuser", "-u", "tester", "--", "/usr/bin/syspulse-apt-update", "check", "alpha")
-    except subprocess.CalledProcessError as error:
-        print("Actual installed updater failed: "+error.stdout[:1000],flush=True)
-        # Repeat READ-ONLY discovery with diagnostic output enabled, no trust changes.
-        subprocess.run(["/usr/sbin/runuser","-u","tester","--","/usr/bin/python3","-I","-c", '''import runpy,subprocess
+    observed = subprocess.run(["/usr/sbin/runuser", "-u", "tester", "--", "/usr/bin/syspulse-apt-update", "check", "alpha"],capture_output=True,text=True,timeout=110)
+    if observed.returncode or observed.stdout.strip()!=expected:
+        print("Actual installed updater: "+observed.stdout[:1000],flush=True)
+        subprocess.run(["/usr/sbin/runuser","-u","tester","--","/usr/bin/python3","-I","-c", '''import runpy,subprocess,pathlib
 u=runpy.run_path("/usr/bin/syspulse-apt-update")
 g=u["check"].__globals__
 def diagnostic(args,timeout=90):
-    r=subprocess.run(args,env=g["ENV"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
-    if r.returncode:
-        print(r.stdout.decode("utf-8","replace")[-6000:],flush=True)
-        raise RuntimeError("diagnostic read-only operation failed")
+    env=g["ENV"].copy()
+    if args[0] in ("/usr/bin/apt-get","/usr/bin/apt-cache") and len(args)>2 and args[1]=="-c":env["APT_CONFIG"]=args[2]
+    r=subprocess.run(args,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
+    print(args[0],args[-1],r.returncode,r.stdout.decode("utf-8","replace")[-8000:],flush=True)
+    if "update"==args[-1]:
+        for opt in args:
+            if opt.startswith("Dir::State::lists="):
+                print("Acquired list files:",[(p.name,p.stat().st_size) for p in pathlib.Path(opt.split("=",1)[1]).iterdir()],flush=True)
+    if r.returncode:raise RuntimeError("diagnostic read-only operation failed")
     return r.stdout.decode("utf-8","replace")
 g["run"]=diagnostic
 print(u["check"]("alpha",u["resolve_key"]("alpha"),u["BASE"]+"alpha/"))
 '''],timeout=110)
-        raise
-    assert observed == expected, observed
-    print("Unprivileged live HTTPS discovery: " + observed, flush=True)
+        raise AssertionError("Live discovery mismatch")
+    print("Unprivileged live HTTPS discovery: "+observed.stdout.strip(),flush=True)
 
 def main():
     if os.geteuid() != 0 or sys.argv[1:] != ["--disposable-container"] or os.environ.get("SYSPULSE_DISPOSABLE_TEST") != "owner-feed-alpha26" or not pathlib.Path("/syspulse-disposable-marker").is_file():
