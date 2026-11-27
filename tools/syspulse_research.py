@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Bounded, opt-in external investigation. No arbitrary URLs, commands or model tools."""
-import concurrent.futures, gzip, hashlib, html, io, json, re, time, urllib.error, urllib.parse, urllib.request
+import concurrent.futures, gzip, hashlib, html, http.client, io, json, re, time, urllib.error, urllib.parse, urllib.request
 from html.parser import HTMLParser
 
 PROVIDERS=("web","groq","gemini")
@@ -131,7 +131,7 @@ def web(p,fetch=request):
                         owner=item.get("owner",{})
                         r["author"]=clean(owner.get("display_name"),80) if isinstance(owner,dict) else ""
                         r["license"]=clean(item.get("content_license"),40)
-        except (OSError,ValueError,TypeError,urllib.error.URLError):pass
+        except (OSError,ValueError,TypeError,RecursionError,http.client.HTTPException,urllib.error.URLError):pass
     return {"provider":"web","status":"ok" if refs else "no_results","topic":code,"references":refs,"backoff":min(backoff,86400*30)}
 def prompt(p):
     return ("You are a Linux maintenance triage classifier. This input contains ONLY public taxonomy labels. "
@@ -156,21 +156,27 @@ def ai(provider,p,key,fetch=request):
 def run(p,providers,key_lookup,fetch=request):
     def task(provider):
         try:return web(p,fetch) if provider=="web" else ai(provider,p,key_lookup(provider),fetch)
-        except (OSError,ValueError,KeyError,IndexError,TypeError,urllib.error.URLError) as e:return failure(provider,status(e))
+        except (OSError,ValueError,KeyError,IndexError,TypeError,AttributeError,RecursionError,http.client.HTTPException,urllib.error.URLError) as e:return failure(provider,status(e))
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         return list(pool.map(task,providers))
 def combine(p,results):
     models=[r["advice"] for r in results if r["provider"] in ("groq","gemini") and r["status"]=="ok"]
     caution=sorted(set.intersection(*(set(m["caution"]) for m in models))) if len(models)>=2 else []
     priorities=sorted(set.intersection(*(set(m["prioritize"]) for m in models))) if len(models)>=2 else []
-    investigation=sorted(set(routes(p))|{x for m in models for x in m["investigate"]})
-    return {"investigate":investigation,"consensus_caution":caution,"consensus_priority":priorities,"models_agree":len(models)>=2,"model_count":len(models)}
+    consensus=set.intersection(*(set(m["investigate"]) for m in models)) if len(models)>=2 else set()
+    concepts_seen={x for r in results if r["provider"]=="web" and r["status"]=="ok" for ref in r["references"] for x in ref["concepts"]}
+    concept_routes={"disk_health":{"devices","kernel"},"filesystem_review":{"filesystem-config","devices"},"memory_review":{"memory"},"package_review":{"package-audit","package-origins"},"service_review":{"failed","systemd-state","journal"},"network_review":{"network-links","network-routes","network-manager-state"},"kernel_review":{"kernel"},"backup":{"devices","storage"}}
+    web_routes={x for k in concepts_seen for x in concept_routes.get(k,set())}&set(routes(p))
+    # Independent evidence ranks known diagnostic routes only. It never invents a command.
+    investigation=sorted(routes(p),key=lambda x:(-(int(x in consensus)+int(x in web_routes)),x))
+    return {"investigate":investigation,"consensus_caution":caution,"consensus_priority":priorities,"corroborated_routes":sorted(consensus&web_routes),"models_agree":len(models)>=2,"model_count":len(models)}
 def apply_research(analysis,record):
     # May suppress default preselection, never grant an action, never override
     # local learned demotion or recommend an otherwise non-recommended action.
     if not record:return analysis
     analysis["research"]=record
     for a in record["guidance"]["consensus_caution"]:
+        if a not in ACTIONS:continue
         row=analysis["recommendations"].get(a)
         if row and row["recommended"]:
             row["recommended"]=False;row["reason"]+=" Independent AI providers advise caution; optional reviewed action only."
