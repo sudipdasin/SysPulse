@@ -18,7 +18,7 @@ try:
     pin=bundled/"alpha.sha256"
     pin.write_text(hashlib.sha256(shipped.read_bytes()).hexdigest()+"\n");pin.chmod(0o644)
     assert u["resolve_key"]("alpha")==shipped
-    assert u["check"]("alpha",u["resolve_key"]("alpha"),url)=="AVAILABLE 3.0.0~alpha25~render1"
+    assert u["check"]("alpha",u["resolve_key"]("alpha"),url)=="AVAILABLE 3.0.0~alpha26~render1"
     shipped.write_bytes(b"altered fixture")
     try:
         u["resolve_key"]("alpha")
@@ -29,16 +29,16 @@ finally:
     shutil.rmtree(bundled)
 print("Automatic package-managed trust discovery, signed metadata and tamper rejection passed")
 result=u["check"]("alpha",key,url)
-assert result=="AVAILABLE 3.0.0~alpha25~render1", result
+assert result=="AVAILABLE 3.0.0~alpha26~render1", result
 try:
-    u["install"]("stable","3.0.0~alpha25~render1",key,url)
+    u["install"]("stable","3.0.0~alpha26~render1",key,url)
     raise AssertionError("channel crossing accepted")
 except ValueError:
     pass
-assert u["install"]("alpha","3.0.0~alpha25~render1",key,url)=="INSTALLED 3.0.0~alpha25~render1"
-assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha25~render1"
+assert u["install"]("alpha","3.0.0~alpha26~render1",key,url)=="INSTALLED 3.0.0~alpha26~render1"
+assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha26~render1"
 try:
-    u["install"]("alpha","3.0.0~alpha24~render1",key,url)
+    u["install"]("alpha","3.0.0~alpha25~render1",key,url)
     raise AssertionError("downgrade accepted")
 except ValueError:
     pass

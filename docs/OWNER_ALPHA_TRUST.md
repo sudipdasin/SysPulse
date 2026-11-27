@@ -10,3 +10,5 @@ The release owner supplied a public-only OpenPGP export on 2026-11-27. Its binar
 The public export (including its public OpenPGP identity) is stored as base64 to keep the original binary bytes exact. Build with -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON to decode it, verify the fixed SHA-256, then apply the existing public-key-only GnuPG validation and package it under /usr/share/syspulse/update-keys. The opt-in is explicit because disposable build fixtures require unprovisioned keys; do not mistake a default evaluation build for an owner-trusted build. The initial package must be authenticated separately.
 
 No private key, passphrase, local path, user report, raw bundle or credential was committed. Only the release owner can sign with the private key. No production feed has been created; no package has yet been signed with this key. The update and session acceptance hold remains in force. Do not publish an incomplete installer as satisfying it.
+
+Alpha.26 Render build explicitly enables owner trust. Fixture upgrade uses disposable metadata only; after install the real pinned public anchor must match. This does not activate the production repository.

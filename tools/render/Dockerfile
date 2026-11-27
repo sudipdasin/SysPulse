@@ -11,15 +11,15 @@ ENV HOME=/home/builder QT_QPA_PLATFORM=offscreen GIT_TERMINAL_PROMPT=0
 # This is not a claim of byte-for-byte reproducibility.
 RUN git -C /oldsrc init -q \
     && git -C /oldsrc remote add origin https://github.com/sudipdasin/SysPulse.git \
-    && git -C /oldsrc fetch --no-tags --depth=1 origin 5032c78f73708c3f9c2b4fdfd0047db6a4c7e996 \
+    && git -C /oldsrc fetch --no-tags --depth=1 origin 6496b06c0cf69692ccdf5f3cbaa226c64196a03f \
     && git -C /oldsrc checkout --detach FETCH_HEAD \
-    && test "$(git -C /oldsrc rev-parse HEAD)" = 5032c78f73708c3f9c2b4fdfd0047db6a4c7e996 \
+    && test "$(git -C /oldsrc rev-parse HEAD)" = 6496b06c0cf69692ccdf5f3cbaa226c64196a03f \
     && cmake -S /oldsrc -B /oldwork -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DSYSPULSE_PACKAGE_TARGET=ubuntu-22.04 \
     && cmake --build /oldwork --parallel 2 \
-    && cpack --config /oldwork/CPackConfig.cmake -G DEB -D CPACK_DEBIAN_PACKAGE_VERSION=3.0.0~alpha24~render1 \
+    && cpack --config /oldwork/CPackConfig.cmake -G DEB -D CPACK_DEBIAN_PACKAGE_VERSION=3.0.0~alpha25~render1 \
     && test "$(dpkg-deb -f /oldwork/packages/*.deb Package)" = syspulse \
     && test "$(dpkg-deb -f /oldwork/packages/*.deb Architecture)" = amd64 \
-    && test "$(dpkg-deb -f /oldwork/packages/*.deb Version)" = '3.0.0~alpha24~render1' \
+    && test "$(dpkg-deb -f /oldwork/packages/*.deb Version)" = '3.0.0~alpha25~render1' \
     && cp /oldwork/packages/*.deb /oldout/previous.deb
 FROM dependencies AS build
 COPY --chown=builder:builder CMakeLists.txt LICENSE PRIVACY.md /src/
@@ -31,7 +31,7 @@ COPY --chown=builder:builder docs/SYSPULSE_MILESTONE.md docs/BETA_READINESS.md /
 COPY --chown=builder:builder tools/ /src/tools/
 USER builder
 RUN bash /src/tools/render/build-candidate.sh /src /work /out
-RUN bash /src/tools/render/make-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.25-x86_64-ubuntu-22.04-render-eval.deb /upgrade
+RUN bash /src/tools/render/make-upgrade-fixture.sh /out/syspulse-3.0.0-alpha.26-x86_64-ubuntu-22.04-render-eval.deb /upgrade
 FROM ubuntu:24.04 AS installcheck
 COPY --from=previous /oldout/ /previous/
 COPY --from=build /out/ /candidate/
@@ -45,7 +45,7 @@ COPY --from=build /work/build/syspulse-shell-tests /usr/local/bin/syspulse-shell
 COPY tools/render/x11-runtime-test.sh /usr/local/bin/syspulse-x11-runtime-test.sh
 COPY tools/render/test-apt-updater-runtime.py /usr/local/bin/syspulse-apt-updater-runtime-test.py
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /previous/previous.deb python3 ca-certificates pkexec fonts-dejavu-core xvfb xauth dbus-x11 xinput x11-xserver-utils xfconf xfce4-settings procps iproute2 util-linux \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha24~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1' \
     && useradd --create-home --uid 10001 tester
 USER tester
 ENV HOME=/home/tester QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/home/tester/runtime
@@ -53,21 +53,21 @@ RUN mkdir -m 700 "$XDG_RUNTIME_DIR" \
     && mkdir -p "$HOME/.config/SysPulse" \
     && printf '[updates]\nautomaticCachedCheck=true\n[General]\nupgradeFixture=preserve-user-settings\n' > "$HOME/.config/SysPulse/SysPulse.ini" \
     && sha256sum "$HOME/.config/SysPulse/SysPulse.ini" > "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.24' \
+    && syspulse --version | grep -F '3.0.0-alpha.25' \
     && (rc=0; timeout 4s syspulse >/tmp/prior-launch.log 2>&1 || rc=$?; test "$rc" = 124)
 USER root
 ENV HOME=/root
 RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo ./\n' > /tmp/syspulse-upgrade.list \
     && apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Languages=none update \
-    && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha25~render1' \
-    && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha25~render1_amd64.deb \
-    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha25~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha24~render1' \
-    && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha25~render1_amd64.deb \
+    && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha26~render1' \
+    && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha26~render1_amd64.deb \
+    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha26~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1' \
+    && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha26~render1_amd64.deb \
     && dpkg-deb -x /candidate/*.deb /tmp/updater-test \
     && python3 /usr/local/bin/syspulse-apt-updater-runtime-test.py /tmp/updater-test/usr/bin/syspulse-apt-update \
     && rm -rf /tmp/updater-test \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha26~render1' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-volume-scan)" = '0:0:755' \
     && python3 /usr/local/bin/syspulse-volume-runtime-test.py \
@@ -76,7 +76,7 @@ RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo
 USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.25' \
+    && syspulse --version | grep -F '3.0.0-alpha.26' \
     && (rc=0; timeout 4s syspulse >/tmp/upgraded-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
     && sha256sum -c "$HOME/preference.sha256"
 USER root
@@ -84,31 +84,33 @@ ENV HOME=/root
 # Explicit downgrade only in the disposable test container, to the pinned prior package.
 # This is a recovery test, not a production automatic rollback policy.
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --allow-downgrades --no-install-recommends /previous/previous.deb \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha24~render1'
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1'
 USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.24' \
+    && syspulse --version | grep -F '3.0.0-alpha.25' \
     && (rc=0; timeout 4s syspulse >/tmp/recovered-launch.log 2>&1 || rc=$?; test "$rc" = 124)
 USER root
 ENV HOME=/root
-RUN DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha25~render1 \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1'
+RUN DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha26~render1 \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha26~render1'
 RUN DEBIAN_FRONTEND=noninteractive apt-get remove -y syspulse \
     && test ! -e /usr/bin/syspulse && test ! -e /usr/bin/syspulse-memory-control \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /candidate/*.deb \
-    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha25~render1' \
+    && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha26~render1' \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse-memory-control)" = '0:0:755' \
     && rm -rf /var/lib/apt/lists/*
 USER tester
 ENV HOME=/home/tester
 RUN sha256sum -c "$HOME/preference.sha256" \
-    && syspulse --version | grep -F '3.0.0-alpha.25' \
-    && tux-steward --version | grep -F '3.0.0-alpha.25' \
-    && tux-task-manager --version | grep -F '3.0.0-alpha.25' \
-    && tux-setup --version | grep -F '3.0.0-alpha.25' \
+    && syspulse --version | grep -F '3.0.0-alpha.26' \
+    && tux-steward --version | grep -F '3.0.0-alpha.26' \
+    && tux-task-manager --version | grep -F '3.0.0-alpha.26' \
+    && tux-setup --version | grep -F '3.0.0-alpha.26' \
     && syspulse --help >/dev/null \
-    && syspulse-apt-update check alpha | grep -F 'UNCONFIGURED 3.0.0~alpha25~render1' \
+    && test "$(sha256sum /usr/share/syspulse/update-keys/alpha.gpg | cut -d' ' -f1)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
+    && test "$(cat /usr/share/syspulse/update-keys/alpha.sha256)" = '1d16b08d5bf50ba03cd8f294a94ef7f5259f9c5f4795a39134e9fde4b5968dc6' \
+    && python3 -c 'import runpy; u=runpy.run_path("/usr/bin/syspulse-apt-update"); assert u["secure_key"](u["resolve_key"]("alpha"))' \
     && (rc=0; syspulse-admin-session </dev/null >/dev/null 2>&1 || rc=$?; test "$rc" = 1) \
     && timeout 20s /usr/local/bin/syspulse-cleaner-core-runtime-test \
     && timeout 40s /usr/local/bin/syspulse-cleaner-runtime-test \
@@ -116,7 +118,7 @@ RUN sha256sum -c "$HOME/preference.sha256" \
     && timeout 90s bash /usr/local/bin/syspulse-x11-runtime-test.sh \
     && (rc=0; syspulse-memory-control enable >/tmp/helper-guard.log 2>&1 || rc=$?; test "$rc" = 1 && grep -F 'Administrator authorization required' /tmp/helper-guard.log) \
     && (rc=0; timeout 4s syspulse >/tmp/reinstalled-launch.log 2>&1 || rc=$?; test "$rc" = 124) \
-    && printf 'Ubuntu 24.04 amd64: prior alpha.24 rebuilt from pinned deployed source; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.25 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups on one administrator broker connection, EOF revocation and unknown request rejection, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Disposable test key only; no production update feed or real Mint XFCE VM.\n' > /home/tester/INSTALL-STATUS.txt
+    && printf 'Ubuntu 24.04 amd64: prior alpha.25 rebuilt from pinned deployed source; real APT installation, tampered package rejection with prior version retained, signed local repository upgrade to alpha.26 through the actual new updater helper, explicit pinned prior-package recovery and signed re-upgrade, preference checksum preservation, remove/reinstall, all four versions, helper ownership and non-root refusal, two actual cache cleanups and protected volume inspection on one administrator broker connection, current-version install refusal through broker, typed request rejection, EOF revocation and unknown request rejection, verified owner public anchor in the installed package, unprivileged offscreen startup, Cleaner GUI functional regression on Ubuntu 24.04 runtime, virtual X11 GUI shell including single startup-window check, actual root read-only volume metadata scan, non-root refusal and real X11 diagnostics, and isolated XFCE compositor setting readback passed. Disposable signing fixture for upgrade; owner public key packaged, but production feed and real Mint XFCE VM not tested.\n' > /home/tester/INSTALL-STATUS.txt
 FROM python:3.11-slim-bookworm AS evaluation
 COPY --from=installcheck /home/tester/INSTALL-STATUS.txt /srv/artifacts/INSTALL-STATUS.txt
 COPY --from=build /out/ /srv/artifacts/

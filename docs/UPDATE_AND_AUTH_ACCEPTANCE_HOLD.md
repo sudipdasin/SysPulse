@@ -21,3 +21,5 @@ Alpha.25 commit 6496b06c0cf69692ccdf5f3cbaa226c64196a03f is live as an evaluatio
 
 
 Owner supplied the verified Alpha public anchor. The key bootstrap input is complete; package integration, owner-side release signing, canonical feed publication and real desktop session acceptance remain required.
+
+Alpha.26 integrates the remaining typed internal routes and enables the owner Alpha public anchor in the evaluation build. The build is a signing candidate only, not a qualifying release. The actual private-key signature and real desktop acceptance remain independent requirements.

@@ -24,3 +24,5 @@ ctest --test-dir build --output-on-failure
 Only run the GUI as a normal user. Validate package dependencies and provenance on the actual target platform. Do not use the historical X11 installer or updater; the mature application does not yet have verified signed full-bundle updates. No GitHub Actions or CircleCI, no hosted CI release publication. See the current gates before merging or publishing.
 
 GNU GPL v3; see LICENSE and upstream source attribution.
+
+Alpha.26 engineering candidate: package-managed owner public trust and typed session authorization for internal maintenance, protected volume inspection, service operations and signed updates. Production feed and physical desktop acceptance are not established; do not recommend this installer before both gates pass.

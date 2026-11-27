@@ -4,8 +4,8 @@ set -euo pipefail
 umask 022
 [[ $# == 3 && $EUID != 0 ]] || { echo 'Usage (non-root): build-candidate.sh SOURCE WORK OUTPUT' >&2; exit 1; }
 readonly source_dir=$1 work=$2 output=$3
-readonly app_version=3.0.0-alpha.25 deb_version=3.0.0~alpha25~render1
-readonly baseline=341767bdd662497cd069d4f444f51e65c57be77e
+readonly app_version=3.0.0-alpha.26 deb_version=3.0.0~alpha26~render1
+readonly baseline=ca428a23645105e06b36b59038fa76dff8574a25
 [[ -d $source_dir && -d $work && -d $output && -z $(ls -A -- "$work") && -z $(ls -A -- "$output") ]] || { echo 'Fresh work and output directories required' >&2; exit 1; }
 [[ $(dpkg --print-architecture) == amd64 ]] || { echo 'amd64 required' >&2; exit 1; }
 . /etc/os-release
@@ -14,7 +14,7 @@ export HOME="$work/home" XDG_CONFIG_HOME="$work/home/config" XDG_DATA_HOME="$wor
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$HOME" "$XDG_RUNTIME_DIR"
 bash -n "$source_dir/tools/render/x11-runtime-test.sh"
-cmake -S "$source_dir" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET=ubuntu-22.04 -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
+cmake -S "$source_dir" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET=ubuntu-22.04 -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
 cmake --build "$work/build" --parallel 2
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error
 # Print actual baseline execution outcomes without private command output.
@@ -33,7 +33,7 @@ packages=("$work/build/packages/"*.deb)
 deb=${packages[0]}
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]] || { echo 'Wrong DEB metadata' >&2; exit 1; }
 # All checks precede export. Never export raw build logs or credentials.
-name=syspulse-3.0.0-alpha.25-x86_64-ubuntu-22.04-render-eval.deb
+name=syspulse-3.0.0-alpha.26-x86_64-ubuntu-22.04-render-eval.deb
 cp -- "$deb" "$output/$name"
 (cd "$output" && sha256sum "$name" > SHA256SUMS && sha256sum -c SHA256SUMS && cat SHA256SUMS)
 printf 'Source baseline: %s\nApplication version: %s\nDebian package version: %s\nBuild target: Ubuntu 22.04 amd64\nBuild, CTest, extra component tests and package verification: passed in build container\nSee INSTALL-STATUS.txt for separate container installation/upgrade evidence. Physical Mint XFCE and production signing/updates: NOT verified\nEvaluation candidate only; not an official release.\n' "$baseline" "$app_version" "$deb_version" > "$output/BUILD-STATUS.txt"
