@@ -265,7 +265,7 @@ def assess(metrics,sources,history):
     if critical_storage:findings.append({"code":"storage_review_required","level":"critical","observations":1})
     # Unknown coverage never becomes a clean bill of health.
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
-    package_ok=any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
+    package_ok=not events["package_failure"] and any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
@@ -360,6 +360,7 @@ def investigate(c,ident,providers,boot,tick,now,lookup=key_lookup,runner=researc
         if cached:
             previous=json.loads(cached[0])
             if previous.get("status")=="complete" and all(x["status"]=="ok" for x in previous["results"]):
+                previous.pop("followup",None);previous.pop("followup_state",None)
                 previous.update(id=ident,cached=True)
                 c.execute("INSERT INTO research VALUES(?,?,?,?,?)",(ident,previous["utc"],fp,provider_json,json.dumps(previous)))
                 return previous
@@ -383,6 +384,68 @@ def investigate(c,ident,providers,boot,tick,now,lookup=key_lookup,runner=researc
             read_analysis(c,ident,boot,clock_fn(),completed)
             c.execute("UPDATE research SET utc=?,data=? WHERE id=?",(completed,json.dumps(record),ident))
         else:raise ValueError("Analysis changed during research; no advice authorized")
+    return record
+# Static local read-only follow-up probes. Neither a URL nor a model-supplied
+# command can cross this dispatch boundary. At most four probes per analysis.
+FOLLOWUP={
+ "kernel":("research-kernel-previous-boot","journal",["journalctl","-k","-b","-1","-p","warning","-n","500","--no-pager","-o","json"]),
+ "devices":("research-device-transport","inventory",["lsblk","-b","-o","TYPE,SIZE,ROTA,RO,TRAN,FSTYPE"]),
+ "filesystem-config":("research-mount-verification","mount-verify",["findmnt","--verify","--verbose"]),
+ "memory":("research-memory-pressure","inventory",["vmstat","1","2"]),
+ "journal":("research-previous-boot-warnings","journal",["journalctl","-b","-1","-p","warning","-n","500","--no-pager","-o","json"]),
+ "failed":("research-failed-system-services","services",["systemctl","--failed","--plain","--no-legend","--no-pager"]),
+ "systemd-state":("research-systemd-state","manager-state",["systemctl","is-system-running"]),
+ "package-audit":("research-dpkg-audit","audit",["dpkg","--audit"]),
+ "package-origins":("research-apt-policy","inventory",["apt-cache","policy"]),
+ "network-links":("research-link-counters","inventory",["ip","-s","link"]),
+ "network-routes":("research-route-inventory","inventory",["ip","route","show"]),
+ "network-manager-state":("research-network-manager","inventory",["nmcli","general","status"]),
+ "storage":("research-inode-inventory","inventory",["df","-i","-P"]),
+ "journal-size":("research-journal-usage","inventory",["journalctl","--disk-usage"])
+}
+def followup_probe(spec):
+    name,kind,args=spec
+    if kind not in ("mount-verify","manager-state"):return collect_job(spec)
+    try:
+        status,raw,bounded=command(args,timeout=8)
+        counts={}
+        if not bounded and kind=="mount-verify" and status in ("ok","failed"):
+            # Recognize findmnt's explicit error counters, not generic words in paths.
+            match=re.search(r"\b([1-9][0-9]*)\s+(?:parse\s+)?errors?\b",raw,re.I)
+            if match:counts["filesystem"]=1;status="partial"
+        if not bounded and kind=="manager-state" and status in ("ok","failed") and raw.strip()=="degraded":
+            counts["service_failure"]=1;status="partial"
+        return source(name,status,counts,min(MAX_LINES,len(raw.splitlines())),bounded,"Read-only follow-up; only classified observations retained.")
+    except (OSError,ValueError,subprocess.SubprocessError):return source(name,"failed")
+def refine(c,ident,boot,tick,now,probe=followup_probe,clock_fn=clock,now_fn=lambda:int(time.time())):
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        a=read_analysis(c,ident,boot,tick,now);record=research_record(c,ident)
+        require(record and record["status"]=="complete","No completed research to refine")
+        if record.get("followup_state"):return record
+        local=set(research.routes(research.profile(a)))
+        candidates=[x for x in record["guidance"]["investigate"] if x in FOLLOWUP and x in local][:4]
+        record["followup_state"]="pending"
+        c.execute("UPDATE research SET data=? WHERE id=?",(json.dumps(record),ident))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        rows=list(pool.map(probe,[FOLLOWUP[x] for x in candidates]))
+    with c:
+        c.execute("BEGIN IMMEDIATE")
+        previous=read_analysis(c,ident,boot,clock_fn(),now_fn())
+        sources=previous["sources"]+rows
+        assessment=assess(previous["metrics"],sources,history(c))
+        # Re-evaluation can only restrict prior action permissions or defaults.
+        for key in ACTIONS:
+            old=previous["recommendations"][key];new=assessment["recommendations"][key]
+            new["allowed"]=new["allowed"] and old["allowed"]
+            new["recommended"]=new["recommended"] and old["recommended"] and new["allowed"]
+            if old["reason"]!=new["reason"] and not old["recommended"]:new["reason"]+=" Earlier safety/history/research restriction retained."
+        old_findings={f["code"]:f for f in previous["findings"]}
+        assessment["trend_window"]=previous.get("trend_window",1)
+        for f in assessment["findings"]:f["observed_in_recent_analyses"]=old_findings.get(f["code"],{}).get("observed_in_recent_analyses",1)
+        record["followup_state"]="complete";record["followup"]=[{"route":x,"source":row} for x,row in zip(candidates,rows)]
+        c.execute("UPDATE analysis SET sources=?,assessment=?,context=? WHERE id=?",(json.dumps(sources),json.dumps(assessment),assessment["context"],ident))
+        c.execute("UPDATE research SET data=? WHERE id=?",(json.dumps(record),ident))
     return record
 def history(c):
     out={}
@@ -462,7 +525,7 @@ def show_history(c):
                 row[{"success":"successes","failure":"failures","no_effect":"no_effect"}[r["status"]]]+=1
     return {"schema":1,"analyses":rows,"research":evidence,"assisted_outcomes":[{"context":k[0],"action":k[1],**v} for k,v in assisted.items()],"learning":[{"context":k[0],"action":k[1],**v} for k,v in history(c).items()]}
 def main():
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument("mode",choices=("analyze","plan","reserve","finish","history","clear","research","refine","self-test"));ap.add_argument("id",nargs="?");ap.add_argument("payload",nargs="?");a=ap.parse_args()
     if a.mode=="self-test":return run_tests()
     os.umask(0o077)
     try:
@@ -482,6 +545,7 @@ def main():
                 c.execute("VACUUM");result={"schema":1,"state":"cleared"}
             elif a.mode=="plan":result=read_analysis(c,a.id,boot_id(),clock(),int(time.time()))
             elif a.mode=="research":result=investigate(c,a.id,json.loads(a.payload),boot_id(),clock(),int(time.time()))
+            elif a.mode=="refine":result=refine(c,a.id,boot_id(),clock(),int(time.time()))
             elif a.mode=="reserve":
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails") for x in selected):
@@ -646,6 +710,24 @@ def run_tests():
             self.assertEqual(h["assisted_outcomes"][0]["no_effect"],1);self.assertEqual(len(h["research"]),1)
             with self.c:self.c.execute("DELETE FROM analysis")
             self.assertEqual(show_history(self.c)["research"],[])
+        def test_followup_restricts_and_caches_only_external(self):
+            r=self.make();self.investigate(r,["web"])
+            calls=[]
+            def probe(spec):
+                calls.append(spec);return source(spec[0],"ok",{"storage_io":1},1)
+            rec=refine(self.c,r["id"],self.boot,self.t,self.now,probe=probe,clock_fn=lambda:self.t,now_fn=lambda:self.now)
+            self.assertEqual(rec["followup_state"],"complete");self.assertLessEqual(len(calls),4)
+            self.assertTrue(all(spec in FOLLOWUP.values() for spec in calls))
+            revised=read_analysis(self.c,r["id"],self.boot,self.t,self.now)
+            self.assertFalse(revised["recommendations"]["thumbnails"]["allowed"])
+            self.assertFalse(revised["recommendations"]["archives"]["allowed"])
+            before=len(calls);refine(self.c,r["id"],self.boot,self.t,self.now,probe=probe,clock_fn=lambda:self.t,now_fn=lambda:self.now);self.assertEqual(len(calls),before)
+            r2=self.make();cached=self.investigate(r2,["web"]);self.assertTrue(cached["cached"]);self.assertNotIn("followup",cached)
+        def test_followup_never_grants(self):
+            self.s=[source("dpkg-audit","empty")]
+            r=self.make();self.investigate(r,["web"])
+            refine(self.c,r["id"],self.boot,self.t,self.now,probe=lambda spec:source(spec[0],"empty"),clock_fn=lambda:self.t,now_fn=lambda:self.now)
+            self.assertFalse(read_analysis(self.c,r["id"],self.boot,self.t,self.now)["recommendations"]["archives"]["allowed"])
         def test_migration_v1(self):
             import tempfile
             with tempfile.TemporaryDirectory() as tmp:
