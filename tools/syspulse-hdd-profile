@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+"""Guarded runtime read-ahead settings on rotational whole disks only."""
+import json, os, re, sys, tempfile, unittest
+from pathlib import Path
+
+NAME=re.compile(r'(?:sd|hd)[a-z]{1,8}\Z')
+IDENT=re.compile(r'[0-9]+:[0-9]+:[0-9]+\Z')
+
+def device(root,name):
+    if not NAME.fullmatch(name): raise ValueError('Unsupported whole disk name')
+    p=(root/'block'/name).resolve(strict=True)
+    if not p.is_relative_to((root/'devices').resolve()) or (p/'partition').exists(): raise ValueError('Not a whole physical disk')
+    if not (p/'device').exists() or (p/'queue/rotational').read_text().strip()!='1': raise ValueError('Not a rotational disk')
+    dev=(p/'dev').read_text().strip(); seq=(p/'diskseq').read_text().strip(); ident=dev+':'+seq
+    if not IDENT.fullmatch(ident): raise ValueError('Device identity unavailable')
+    value=int((p/'queue/read_ahead_kb').read_text().strip())
+    if not 0<=value<=4096: raise ValueError('Current setting outside supported range')
+    return p,ident,value
+
+def inventory(root):
+    out=[]
+    for entry in sorted((root/'block').iterdir()):
+        try:
+            p,ident,value=device(root,entry.name)
+            out.append({'name':entry.name,'identity':ident,'read_ahead_kb':value})
+        except (OSError,ValueError): pass
+    return out
+
+def apply(root,name,identity,before,target):
+    if not IDENT.fullmatch(identity) or not 0<=before<=4096 or not 0<=target<=4096: raise ValueError('Invalid reviewed setting')
+    p,actual,current=device(root,name)
+    if actual!=identity or current!=before: raise ValueError('Disk identity or setting changed; review again')
+    if current!=target:
+        with (p/'queue/read_ahead_kb').open('w') as f: f.write(str(target)+'\n')
+    after,verified,actualvalue=device(root,name)
+    if after!=p or verified!=identity or actualvalue!=target: raise RuntimeError('Readback not verified; inspect disk before retrying')
+    return actualvalue
+
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);(self.root/'block').mkdir();self.p=self.root/'devices/test/block/sda';(self.p/'queue').mkdir(parents=True);(self.p/'device').mkdir();(self.root/'block/sda').symlink_to(self.p)
+        for name,value in [('dev','8:0'),('diskseq','4'),('queue/rotational','1'),('queue/read_ahead_kb','128')]: (self.p/name).write_text(value+'\n')
+    def tearDown(self): self.tmp.cleanup()
+    def test_inventory(self): self.assertEqual(inventory(self.root),[{'name':'sda','identity':'8:0:4','read_ahead_kb':128}])
+    def test_apply_restore(self):
+        self.assertEqual(apply(self.root,'sda','8:0:4',128,512),512);self.assertEqual(apply(self.root,'sda','8:0:4',512,128),128)
+    def test_identity(self):
+        with self.assertRaises(ValueError): apply(self.root,'sda','8:0:5',128,512)
+    def test_stale(self):
+        with self.assertRaises(ValueError): apply(self.root,'sda','8:0:4',256,512)
+    def test_ssd(self):
+        (self.p/'queue/rotational').write_text('0');self.assertEqual(inventory(self.root),[])
+        with self.assertRaises(ValueError): apply(self.root,'sda','8:0:4',128,512)
+    def test_partition(self):
+        (self.p/'partition').touch();self.assertEqual(inventory(self.root),[])
+    def test_range(self):
+        for n in (-1,4097):
+            with self.assertRaises(ValueError): apply(self.root,'sda','8:0:4',128,n)
+    def test_traversal(self):
+        with self.assertRaises(ValueError): device(self.root,'../sda')
+    def test_missing_sequence(self):
+        (self.p/'diskseq').unlink();self.assertEqual(inventory(self.root),[])
+
+if __name__=='__main__':
+    if sys.argv[1:]==['--self-test']: unittest.main(argv=[sys.argv[0]])
+    try:
+        root=Path('/sys');args=sys.argv[1:]
+        if args==['list']: print(json.dumps(inventory(root)))
+        elif len(args)==5 and args[0]=='apply':
+            if os.geteuid()!=0: raise ValueError('Administrator authorization required')
+            if any(not re.fullmatch(r'0|[1-9][0-9]{0,3}',v) for v in args[3:]): raise ValueError('Invalid value')
+            print(apply(root,args[1],args[2],int(args[3]),int(args[4])))
+        else: raise ValueError('Use list or apply NAME ID BEFORE TARGET')
+    except (OSError,ValueError,RuntimeError) as e: print('ERROR: '+str(e),file=sys.stderr);sys.exit(1)
