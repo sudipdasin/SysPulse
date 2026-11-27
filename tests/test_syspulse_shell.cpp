@@ -147,7 +147,7 @@ int main(int argc,char** argv) {
         require(window.currentPageId()=="storage","global tool search routes a real catalog tool");
         auto* storageTabs=window.findChild<QTabWidget*>("storageWorkspaceTabs");
         auto* securityTabs=window.findChild<QTabWidget*>("securityWorkspaceTabs");
-        require(storageTabs&&storageTabs->count()==4&&storageTabs->tabText(3)=="Filesystem repair"&&storageTabs->tabText(1)=="Disk tools"&&storageTabs->tabText(2)=="Cleaner","storage tools extend the existing workspace");
+        require(storageTabs&&storageTabs->count()==5&&storageTabs->tabText(4)=="HDD optimization"&&storageTabs->tabText(3)=="Filesystem repair"&&storageTabs->tabText(1)=="Disk tools"&&storageTabs->tabText(2)=="Cleaner","storage tools extend the existing workspace");
         require(securityTabs&&securityTabs->count()==2,"security tools extend the existing workspace");
         storageTabs->setCurrentIndex(1);search->setText("Package health");QMetaObject::invokeMethod(search,"returnPressed");
         require(storageTabs->currentIndex()==0,"existing search restores the diagnostic tab");
@@ -258,6 +258,7 @@ int main(int argc,char** argv) {
         require(window.findChild<QComboBox*>("wifiRadioValue")&&window.findChild<QComboBox*>("powerProfileValue"),"native radio and power controls present");
         require(window.findChild<QPushButton*>("saveBraveProfile")&&window.findChild<QPushButton*>("captureDesktopSnapshot")&&window.findChild<QPushButton*>("restoreDesktopSnapshot"),"persistent Brave and scoped desktop recovery controls present");
         require(window.findChild<QComboBox*>("scheduleProfileChoice")&&window.findChild<QPushButton*>("scheduleProfileApply")&&!window.findChild<QPushButton*>("scheduleProfileApply")->isEnabled(),"schedule mutation gated by current timer state");
+        require(window.findChild<QComboBox*>("hddProfileDevices")&&window.findChild<QPushButton*>("hddProfileApply")&&!window.findChild<QPushButton*>("hddProfileApply")->isEnabled(),"HDD tuning gated by device inventory");
         auto* helpUpdate=window.findChild<QAction*>("helpUpdateApplication");require(helpUpdate,"Help menu exposes update application action");helpUpdate->trigger();require(window.currentPageId()=="settings","Help update action opens settings");
         require(window.findChild<QPushButton*>("checkApplicationUpdate")&&window.findChild<QLabel*>("applicationUpdateStatus"),"update controls and honest initial state present");
         require(window.findChild<QComboBox*>("applicationUpdateChannel")->currentData()=="alpha"&&!window.findChild<QPushButton*>("installApplicationUpdate")->isEnabled(),"alpha build defaults to alpha channel and no unreviewed install");
