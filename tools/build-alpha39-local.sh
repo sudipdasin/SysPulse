@@ -54,12 +54,13 @@ cmake --build "$work/build" --parallel 2
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error | tee "$work/results/CTEST.txt"
 python3 "$work/source/tests/benchmark_diagnostic_detection.py" > "$work/results/DETECTION-TUNED.json"
 python3 "$work/source/tests/benchmark_diagnostic_holdout.py" > "$work/results/DETECTION-REPLAY.json"
-(cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version")
-cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$version" -P "$work/source/tests/verify_packages.cmake"
+(umask 022; cd "$work/build" && cpack --config CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version")
 shopt -s nullglob
 packages=("$work/build/packages/"*.deb)
 [[ ${#packages[@]} == 1 && -f ${packages[0]} && ! -L ${packages[0]} ]]
 deb=${packages[0]}
+python3 "$work/source/tools/verify-alpha39-payload.py" "$deb" "$deb_version" | tee "$work/results/PAYLOAD-STATUS.txt"
+cmake -DPACKAGE_DIR="$work/build/packages" -DRELEASE_VERSION="$version" -P "$work/source/tests/verify_packages.cmake"
 [[ $(dpkg-deb -f "$deb" Package) == syspulse && $(dpkg-deb -f "$deb" Architecture) == amd64 && $(dpkg-deb -f "$deb" Version) == "$deb_version" ]]
 mkdir "$work/anchor-check"
 dpkg-deb -x "$deb" "$work/anchor-check"
