@@ -1,0 +1,6 @@
+SysPulse Alpha.26 engineering signing candidate - not an accepted release for the owner desktop.
+Source commit: ff216acf7481f2d1e79e4dc9cdfd4dcb9ea9ff36
+DEB: 3.0.0~alpha26~render1
+SHA-256: 1ed875f39d95531a79a8685019d6409505c8cff05bed98186a37e8611037d70f
+Signer: DA269C59E903F28BD46DA217F88380E446488691
+Physical desktop session and subsequent real online upgrade acceptance remain required.
