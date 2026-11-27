@@ -1,18 +1,18 @@
 Package: syspulse
-Version: 3.0.0~alpha27~render1
+Version: 3.0.0~alpha32~render1
 Architecture: amd64
 Maintainer: SysPulse Community
-Installed-Size: 2812
+Installed-Size: 3096
 Depends: python3, apt, ca-certificates, libc6 (>= 2.34), libgcc-s1 (>= 3.0), libqt5core5a (>= 5.15.1), libqt5gui5 (>= 5.14.1) | libqt5gui5-gles (>= 5.14.1), libqt5network5 (>= 5.0.2), libqt5widgets5 (>= 5.14.1), libstdc++6 (>= 11)
 Recommends: pkexec, xdg-utils, procps, iproute2, util-linux
-Suggests: xfce4-settings, xfce4-power-manager, xfconf, xinput, x11-xserver-utils, apturl
+Suggests: xfce4-settings, xfce4-power-manager, xfconf, xinput, x11-xserver-utils, apturl, udisks2, libglib2.0-bin
 Conflicts: tux-steward
 Replaces: tux-steward
-Filename: pool/syspulse-3.0.0-alpha.27_amd64.deb
-Size: 1152752
-MD5sum: d2a4cc6b1c0f0039958531391d890853
-SHA1: 1f1acadeb027cd0738635a866ffbbe8559b16298
-SHA256: fc2a4bda1e27e269c99fabb9fbfb4e7a9c736d1c7a03b546dc24e04b5ff41139
+Filename: pool/syspulse-3.0.0-alpha.32_amd64.deb
+Size: 1274144
+MD5sum: f91105ae599e124a4a46f89430061db1
+SHA1: 1cc3ef413bc1a61f7b8878a9e3a5d8980d1f2d62
+SHA256: 4ad1349a6c369aa211d80b873074082f5d50bd29934e07f1c55221e34d54babc
 Section: admin
 Priority: optional
 Description: SysPulse XFCE-first Linux system tools experimental milestone
