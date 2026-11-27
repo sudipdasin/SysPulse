@@ -5,7 +5,8 @@ umask 022
 [[ $# == 3 && $EUID != 0 ]] || { echo 'Usage (non-root): build-candidate.sh SOURCE WORK OUTPUT' >&2; exit 1; }
 readonly source_dir=$1 work=$2 output=$3
 readonly app_version=3.0.0-alpha.39 deb_version=3.0.0~alpha39~render1
-readonly baseline=e2800b09ab587c55ba4e1267b4a38619d89f31f0
+readonly source_commit=${SOURCE_COMMIT:-}
+[[ $source_commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Exact SOURCE_COMMIT required' >&2; exit 1; }
 [[ -d $source_dir && -d $work && -d $output && -z $(ls -A -- "$work") && -z $(ls -A -- "$output") ]] || { echo 'Fresh work and output directories required' >&2; exit 1; }
 [[ $(dpkg --print-architecture) == amd64 ]] || { echo 'amd64 required' >&2; exit 1; }
 . /etc/os-release
@@ -47,4 +48,5 @@ echo 'Owner Alpha public key embedded and exact digest verified in DEB'
 name=syspulse-3.0.0-alpha.39-x86_64-ubuntu-22.04-render-eval.deb
 cp -- "$deb" "$output/$name"
 (cd "$output" && sha256sum "$name" > SHA256SUMS && sha256sum -c SHA256SUMS && cat SHA256SUMS)
-printf 'Source baseline: %s\nApplication version: %s\nDebian package version: %s\nBuild target: Ubuntu 22.04 amd64\nBuild, CTest, extra component tests and package verification: passed in build container\nSee INSTALL-STATUS.txt for separate container installation/upgrade evidence. Physical Mint XFCE and production signing/updates: NOT verified\nEvaluation candidate only; not an official release.\n' "$baseline" "$app_version" "$deb_version" > "$output/BUILD-STATUS.txt"
+printf '%s\n' "$source_commit" > "$output/SOURCE-CHECKOUT.txt"
+printf 'Source commit: %s\nApplication version: %s\nDebian package version: %s\nBuild target: Ubuntu 22.04 amd64\nBuild, CTest, extra component tests and package verification: passed in build container\nSee INSTALL-STATUS.txt for separate container installation/upgrade evidence. Physical Mint XFCE and production signing/updates: NOT verified\nEvaluation candidate only; not an official release.\n' "$source_commit" "$app_version" "$deb_version" > "$output/BUILD-STATUS.txt"
