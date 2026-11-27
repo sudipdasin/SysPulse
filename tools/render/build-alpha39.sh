@@ -15,6 +15,7 @@ export HOME="$work/home" XDG_CONFIG_HOME="$work/home/config" XDG_DATA_HOME="$wor
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$HOME" "$XDG_RUNTIME_DIR"
 bash -n "$source_dir/tools/render/x11-runtime-test.sh"
+bash "$source_dir/tests/test_alpha39_build_provenance.sh"
 cmake -S "$source_dir" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DSYSPULSE_PACKAGE_TARGET=ubuntu-22.04 -DSYSPULSE_USE_OWNER_ALPHA_TRUST=ON -DSYSPULSE_REPORT_ENDPOINT=https://syspulse-diagnostic-relay.onrender.com/diagnostics/v1/report
 cmake --build "$work/build" --parallel 2
 ctest --test-dir "$work/build" --output-on-failure --no-tests=error
