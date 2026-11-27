@@ -26,3 +26,5 @@ Only run the GUI as a normal user. Validate package dependencies and provenance 
 GNU GPL v3; see LICENSE and upstream source attribution.
 
 Alpha.26 engineering candidate: package-managed owner public trust and typed session authorization for internal maintenance, protected volume inspection, service operations and signed updates. Production feed and physical desktop acceptance are not established; do not recommend this installer before both gates pass.
+
+Alpha.27 acceptance candidate: canonical raw HTTPS feed URL, isolated early APT config and 30-day metadata cap. Live corrected-helper Alpha.26 diagnostic passed; Alpha.27 build tests exact canonical prior package and real read-only feed check. Publication and physical desktop acceptance remain required.

@@ -9,36 +9,37 @@ url="file:/upgrade/repo"
 assert u["secure_key"](key), "Fixture key or ancestor not root-owned/readable/nonwritable"
 # Test-only local installation of a package-style public anchor, then remove it.
 import hashlib, shutil
-bundled=Path("/usr/share/syspulse/update-keys")
-assert not bundled.exists(),"Evaluation package must not contain a production or test key"
+bundled=Path("/upgrade/package-style-test-keys")
+assert not bundled.exists(),"Disposable test anchor already exists"
 bundled.mkdir(parents=True,mode=0o755)
 try:
     shipped=bundled/"alpha.gpg"
     shutil.copyfile(key,shipped);shipped.chmod(0o644)
     pin=bundled/"alpha.sha256"
     pin.write_text(hashlib.sha256(shipped.read_bytes()).hexdigest()+"\n");pin.chmod(0o644)
-    assert u["resolve_key"]("alpha")==shipped
-    assert u["check"]("alpha",u["resolve_key"]("alpha"),url)=="AVAILABLE 3.0.0~alpha26~render1"
+    assert u["resolve_key"]("alpha",bundled=bundled)==shipped
+    assert u["check"]("alpha",u["resolve_key"]("alpha",bundled=bundled),url)=="AVAILABLE 3.0.0~alpha27~render1"
     shipped.write_bytes(b"altered fixture")
     try:
-        u["resolve_key"]("alpha")
+        u["resolve_key"]("alpha",bundled=bundled)
         raise AssertionError("altered packaged key accepted")
     except ValueError:
         pass
 finally:
     shutil.rmtree(bundled)
+assert u["resolve_key"]("alpha")==Path("/usr/share/syspulse/update-keys/alpha.gpg"),"Canonical installed owner anchor must remain untouched"
 print("Automatic package-managed trust discovery, signed metadata and tamper rejection passed")
 result=u["check"]("alpha",key,url)
-assert result=="AVAILABLE 3.0.0~alpha26~render1", result
+assert result=="AVAILABLE 3.0.0~alpha27~render1", result
 try:
-    u["install"]("stable","3.0.0~alpha26~render1",key,url)
+    u["install"]("stable","3.0.0~alpha27~render1",key,url)
     raise AssertionError("channel crossing accepted")
 except ValueError:
     pass
-assert u["install"]("alpha","3.0.0~alpha26~render1",key,url)=="INSTALLED 3.0.0~alpha26~render1"
-assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha26~render1"
+assert u["install"]("alpha","3.0.0~alpha27~render1",key,url)=="INSTALLED 3.0.0~alpha27~render1"
+assert u["check"]("alpha",key,url)=="CURRENT 3.0.0~alpha27~render1"
 try:
-    u["install"]("alpha","3.0.0~alpha25~render1",key,url)
+    u["install"]("alpha","3.0.0~alpha26~render1",key,url)
     raise AssertionError("downgrade accepted")
 except ValueError:
     pass
