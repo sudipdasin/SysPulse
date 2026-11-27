@@ -801,8 +801,9 @@ struct Window::Impl {
         authLayout->addWidget(text("Built-in maintenance, signed updates, system service management and protected volume inspection reuse the session. External system tools retain their own authorization. Every action still requires review. No password is stored.","muted"));
         auto* unlock=new QPushButton("Unlock administrator session…");unlock->setObjectName("unlockAdminSession");unlock->setEnabled(false);authLayout->addWidget(unlock);
         auto* relock=new QPushButton("Lock now");relock->setObjectName("lockAdminSession");relock->setEnabled(false);authLayout->addWidget(relock);
+        auto* sessionTimer=new QTimer(authorization);sessionTimer->setInterval(1000);
         QObject::connect(remember,&QCheckBox::toggled,authorization,[=](bool checked){
-            if(!checked){if(!tux::admin::lock()){remember->blockSignals(true);remember->setChecked(true);remember->blockSignals(false);authStatus->setText("Wait for the active administrator action to finish before locking.");return;}relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");}
+            if(!checked){if(!tux::admin::lock()){remember->blockSignals(true);remember->setChecked(true);remember->blockSignals(false);authStatus->setText("Wait for the active administrator action to finish before locking.");return;}sessionTimer->stop();relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");}
             unlock->setEnabled(checked&&!tux::admin::active());
         });
         QObject::connect(relock,&QPushButton::clicked,authorization,[=]{if(!tux::admin::lock()){authStatus->setText("Wait for the active administrator action to finish.");return;}remember->setChecked(false);relock->setEnabled(false);authStatus->setText("Locked · session authorization cleared.");});
@@ -812,11 +813,10 @@ struct Window::Impl {
             auto message=std::make_shared<QString>();auto success=std::make_shared<bool>(false);
             auto* worker=QThread::create([message,success]{*success=tux::admin::unlock(*message);});
             worker->setObjectName("adminSessionUnlockWorker");worker->setParent(authorization);
-            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);authStatus->setText(*success?"Unlocked · supported internal administrator operations can reuse authorization until locked or closed.":*message);});
+            QObject::connect(worker,&QThread::finished,authorization,[=]{remember->setEnabled(true);unlock->setEnabled(!*success&&remember->isChecked());relock->setEnabled(*success);if(*success)sessionTimer->start();else sessionTimer->stop();authStatus->setText(*success?"Unlocked · supported internal administrator operations can reuse authorization until locked or closed.":*message);});
             QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();
         });
-        auto* sessionTimer=new QTimer(authorization);sessionTimer->setInterval(1000);
-        QObject::connect(sessionTimer,&QTimer::timeout,authorization,[=]{if(remember->isEnabled()&&relock->isEnabled()&&!tux::admin::active()&&!tux::admin::busy()){relock->setEnabled(false);unlock->setEnabled(remember->isChecked());authStatus->setText("Session ended. Unlock again before retrying a reviewed action.");}});sessionTimer->start();
+        QObject::connect(sessionTimer,&QTimer::timeout,authorization,[=]{if(remember->isEnabled()&&relock->isEnabled()&&!tux::admin::active()&&!tux::admin::busy()){sessionTimer->stop();relock->setEnabled(false);unlock->setEnabled(remember->isChecked());authStatus->setText("Session ended. Unlock again before retrying a reviewed action.");}});
         layout->addWidget(authorization);
         layout->addWidget(applicationUpdates());
         auto* preferences=panel();auto* pl=new QVBoxLayout(preferences);pl->setContentsMargins(22,20,22,20);pl->addWidget(text("Preferences","sectionTitle"));pl->addWidget(text("Precision is the selected visual identity. Sampling speed and pause controls are available in Performance. System actions use your normal desktop authorization.","muted"));pl->addWidget(button("Open monitoring controls",[this]{navigate("performance");},w));

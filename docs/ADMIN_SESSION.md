@@ -5,3 +5,5 @@ Runtime gate: two actual APT cache cleanups via one installed broker in disposab
 
 ## Integrated typed routes
 The session accepts strictly parsed, bounded three-field JSON requests for approved signed update install, exact mounted volume read-only inspection, and five existing system-service verbs against literal .service units. Root helper independently resolves trusted binaries, passes argument arrays and retains bounded output. The updater independently rechecks version, channel, trust and signed metadata. No mutation timeout or automatic replay. User service operations remain unprivileged. Third-party apps retain their own policy. Physical Mint authorization and real online upgrade remain acceptance gates.
+
+Regression correction: session-state polling runs only while explicitly unlocked. Initial build failed the existing idle-shell timer check; corrected without weakening the test.
