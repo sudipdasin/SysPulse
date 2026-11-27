@@ -186,6 +186,7 @@ int main(int argc,char** argv) {
         require(controlTabs->currentIndex()==0,"care routes to existing memory optimizer");
         require(reportTable->rowCount()==0,"care scan and navigation never manufacture diagnostic reports");
         require(window.findChild<QPushButton*>("quickBoost")&&window.findChild<QPushButton*>("maintenanceQuickBoost"),"visible primary Boost controls");
+        require(window.findChild<QPushButton*>("quickDesktopProfiles")&&window.findChild<QPushButton*>("lastBoostResults")&&!window.findChild<QPushButton*>("lastBoostResults")->isEnabled(),"visible preset and saved results controls without fabricated receipt");
         auto* maintenance=window.findChild<QPushButton*>("openMaintenanceCenter");
         auto* baseline=window.findChild<QPushButton*>("maintenanceBaseline");
         auto* recheck=window.findChild<QPushButton*>("maintenanceRecheck");
