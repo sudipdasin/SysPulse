@@ -6,6 +6,9 @@
 #include <QSpinBox>
 #include <QDialog>
 #include <QPlainTextEdit>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
@@ -135,6 +138,8 @@ struct Window::Impl {
     QLabel* reportStatus=nullptr;
     QLabel* cpu=nullptr;QLabel* memory=nullptr;QLabel* disk=nullptr;QLabel* network=nullptr;
     QLabel* analysisStatus=nullptr;
+    QString analysisId;
+    bool diagnosticBusy=false;
     QLabel* lastBoostStatus=nullptr;QPushButton* lastBoostButton=nullptr;
     QString current="overview";
     QStringList history;
@@ -165,7 +170,7 @@ struct Window::Impl {
     ToolboxPage* toolbox(const QStringList& groups,bool experimental=false) {
         auto* p=new ToolboxPage(groups,experimental,w);allToolboxes.append(p);
         p->canExecute=[this,p]{
-            if(management&&management->isBusy())return false;
+            if(diagnosticBusy||(management&&management->isBusy()))return false;
             for(auto* other:allToolboxes)if(other!=p&&other->isBusy())return false;
             return true;
         };
@@ -181,13 +186,91 @@ struct Window::Impl {
     void updateFooter() {
         refreshActionIndicators();
         bool busy=false;for(auto* p:allToolboxes)busy=busy||p->isBusy();
-        const bool systemBusy=management&&management->isBusy();
+        const bool systemBusy=diagnosticBusy||(management&&management->isBusy());
         for(auto* page:allToolboxes)page->setExecutionAllowed(!systemBusy&&(!busy||page->isBusy()));
         if(auto* analyzeButton=w->findChild<QPushButton*>("analyzeSystem"))analyzeButton->setEnabled(!busy&&!systemBusy);
+        for(const auto& name:{"quickBoost","maintenanceQuickBoost"})if(auto* b=w->findChild<QPushButton*>(name))b->setEnabled(!busy&&!systemBusy&&!analysisId.isEmpty());
         footer->setText(QString("%1  ·  Automation off  ·  SysPulse %2").arg(busy||systemBusy?"Task in progress":"Manual maintenance").arg(tux::Version));
     }
+    struct DiagnosticGuard {
+        Impl* self;
+        explicit DiagnosticGuard(Impl* p):self(p){self->diagnosticBusy=true;self->updateFooter();}
+        ~DiagnosticGuard(){self->diagnosticBusy=false;self->updateFooter();}
+    };
+    bool maintenanceAvailable() const {
+        if(diagnosticBusy||tux::admin::busy()||(management&&management->isBusy()))return false;
+        for(auto* page:allToolboxes)if(page->isBusy())return false;
+        return true;
+    }
+    QJsonObject diagnosticCall(const QStringList& args,const QString& caption,int timeout=20000) {
+        const auto exe=tux::trustedSystemExecutable("syspulse-diagnostics");
+        if(exe.isEmpty()){QMessageBox::warning(w,"Diagnostics","Installed diagnostic helper is unavailable. No Boost action was authorized.");return {};}
+        ReviewedProgress progress(w);progress.setWindowTitle("SysPulse diagnostics");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+        auto* layout=new QVBoxLayout(&progress);layout->addWidget(text(caption));
+        AsyncCommandResult response;
+        AsyncCommand::run(&progress,exe,args,timeout,131072,[&](const AsyncCommandResult& r){response=r;progress.done(0);});
+        progress.exec();
+        QJsonParseError error;const auto doc=QJsonDocument::fromJson(response.output,&error);const auto obj=doc.object();
+        if(!response.ok()||error.error!=QJsonParseError::NoError||obj.value("schema").toInt()!=1){
+            QMessageBox dialog(w);dialog.setWindowTitle("Diagnostics not verified");dialog.setTextFormat(Qt::PlainText);dialog.setIcon(QMessageBox::Warning);
+            dialog.setText("No further maintenance action was authorized. "+obj.value("error").toString("The diagnostic helper did not return a verified result.").left(300));dialog.exec();return {};
+        }
+        return obj;
+    }
+    bool validAnalysis(const QJsonObject& obj) {
+        if(obj.value("schema").toInt()!=1||obj.value("state").toString()!="ready"||!QRegularExpression("^[a-f0-9]{32}$").match(obj.value("id").toString()).hasMatch()||!obj.value("sources").isArray()||!obj.value("findings").isArray()||!obj.value("coverage").isObject()||!obj.value("metrics").isObject())return false;
+        const auto rec=obj.value("recommendations").toObject();
+        for(const auto& action:{"thumbnails","archives","own_memory","pause_monitoring"}){
+            const auto a=rec.value(action).toObject();if(!a.value("allowed").isBool()||!a.value("recommended").isBool()||!a.value("history").isObject()||!a.value("reason").isString()||(a.value("recommended").toBool()&&!a.value("allowed").toBool()))return false;
+        }
+        return true;
+    }
+    void showDiagnosticDetails(const QJsonObject& result) {
+        QDialog dialog(w);dialog.setWindowTitle("System analysis · findings and coverage");dialog.resize(840,580);auto* layout=new QVBoxLayout(&dialog);
+        const auto coverage=result.value("coverage").toObject();layout->addWidget(text(QString("%1 of %2 sources readable · %3 limited or unavailable. Observations may overlap; unavailable checks are not a clean bill of health.").arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()).arg(coverage.value("limited").toInt()),"sectionTitle"));
+        auto* tabs=new QTabWidget;
+        const auto make=[tabs](const QString& title,const QStringList& lines){auto* view=new QPlainTextEdit;view->setReadOnly(true);view->setPlainText(lines.join("\n"));tabs->addTab(view,title);};
+        QStringList findings,coverageLines,measurements,recommendations;
+        for(const auto& v:result.value("findings").toArray()){const auto a=v.toObject();findings<<QString("%1 · %2 · %3 observations").arg(a.value("level").toString().toUpper(),a.value("code").toString()).arg(a.value("observations").toInt());}
+        if(findings.isEmpty())findings<<"No classified faults in readable, bounded sources. This does not prove the system is fault-free.";
+        for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();coverageLines<<QString("%1 · %2 · %3 lines").arg(a.value("name").toString(),a.value("status").toString()).arg(a.value("lines").toInt());const auto e=a.value("events").toObject();for(auto i=e.begin();i!=e.end();++i)coverageLines<<QString("    %1: %2").arg(i.key()).arg(i.value().toInt());}
+        const auto metrics=result.value("metrics").toObject();for(auto i=metrics.begin();i!=metrics.end();++i)measurements<<i.key()+": "+i.value().toVariant().toString();
+        const auto rec=result.value("recommendations").toObject();for(auto i=rec.begin();i!=rec.end();++i){const auto a=i.value().toObject(),h=a.value("history").toObject();recommendations<<QString("%1 · %2\n%3\nHistory: %4 attempts, %5 verified successes, %6 failures, %7 no-effect results\n").arg(i.key(),!a.value("allowed").toBool()?"Blocked":a.value("recommended").toBool()?"Recommended":"Optional",a.value("reason").toString()).arg(h.value("attempts").toInt()).arg(h.value("successes").toInt()).arg(h.value("failures").toInt()).arg(h.value("no_effect").toInt());}
+        make("Findings",findings);make("Log coverage",coverageLines);make("Measurements",measurements);make("Boost & learning",recommendations);layout->addWidget(tabs,1);
+        layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
+        auto* close=new QPushButton("Close");QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);layout->addWidget(close);dialog.exec();
+    }
     void analyze() {
-        if(management->isBusy())return;
+        if(!maintenanceAvailable())return;
+        QDialog review(w);review.setObjectName("deepAnalysisReview");review.setWindowTitle("Analyze system · SysPulse");review.resize(600,300);auto* layout=new QVBoxLayout(&review);
+        layout->addWidget(text("Full local diagnostic pass","sectionTitle"));
+        layout->addWidget(text("Inspect readable current and recent system/user journals, kernel errors, rotated system logs, failed services, package audit, crash records, hardware and network inventory, memory, storage and pressure. Checks are bounded; unavailable sources are explicitly recorded."));
+        layout->addWidget(text("Read-only, no administrator escalation or network upload. Classified findings and measurements are saved locally. A fresh analysis is required before Boost. Raw log messages are not retained.","muted"));
+        auto* row=new QHBoxLayout;auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);auto* start=new QPushButton("Run analysis");start->setObjectName("runDeepAnalysis");row->addStretch();row->addWidget(cancel);row->addWidget(start);layout->addLayout(row);
+        QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(start,&QPushButton::clicked,&review,&QDialog::accept);
+        if(review.exec()!=QDialog::Accepted)return;
+        DiagnosticGuard guard(this);analysisId.clear();
+        const auto result=diagnosticCall({"analyze"},"Inspecting bounded logs and system health; recording findings locally…",150000);
+        if(!validAnalysis(result)){analysisStatus->setText("Analysis was not verified. Boost remains locked.");return;}
+        analysisId=result.value("id").toString();const auto coverage=result.value("coverage").toObject();
+        analysisStatus->setText(QString("Analysis saved · %1 findings · %2/%3 sources readable. Boost uses this report for 15 minutes, once.").arg(result.value("findings").toArray().size()).arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()));
+        showDiagnosticDetails(result);
+    }
+    void diagnosticHistory() {
+        if(!maintenanceAvailable())return;DiagnosticGuard guard(this);
+        const auto data=diagnosticCall({"history"},"Reading local diagnostic and learning history…");if(data.isEmpty())return;
+        QDialog dialog(w);dialog.setWindowTitle("Analysis and learning history");dialog.resize(780,540);auto* layout=new QVBoxLayout(&dialog);auto* view=new QPlainTextEdit;view->setReadOnly(true);QStringList lines;
+        lines<<"Recent analyses (up to 30):";
+        for(const auto& v:data.value("analyses").toArray()){const auto a=v.toObject(),c=a.value("coverage").toObject();lines<<QString("%1 · %2 · %3 · %4 findings · %5/%6 readable").arg(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(a.value("utc").toDouble())).toLocalTime().toString("yyyy-MM-dd HH:mm"),a.value("state").toString(),a.value("context").toString()).arg(a.value("findings").toInt()).arg(c.value("readable").toInt()).arg(c.value("sources").toInt());}
+        lines<<"\nOutcome-based learning (local only):";for(const auto& v:data.value("learning").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
+        view->setPlainText(lines.join("\n"));layout->addWidget(view,1);
+        layout->addWidget(text("Retains up to 180 analyses and their associated outcomes. Learning changes recommendations only, never security gates or executable commands.","muted"));
+        auto* row=new QHBoxLayout;auto* clear=new QPushButton("Clear history…");auto* close=new QPushButton("Close");row->addWidget(clear);row->addStretch();row->addWidget(close);layout->addLayout(row);
+        QObject::connect(clear,&QPushButton::clicked,&dialog,[&]{if(QMessageBox::question(&dialog,"Clear diagnostic history","Delete local analysis history and learned outcomes? This cannot be undone.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;const auto cleared=diagnosticCall({"clear"},"Clearing local diagnostics database…");if(cleared.value("state").toString()=="cleared"){analysisId.clear();analysisStatus->setText("Diagnostic history cleared. Analyze system before Boost.");dialog.accept();}});
+        QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);dialog.exec();
+    }
+    void analyzeClassic() {
+        if(!maintenanceAvailable())return;DiagnosticGuard guard(this);
         for(auto* page:allToolboxes)if(page->isBusy())return;
         tux::HealthDialog dialog(w);dialog.setWindowTitle("Analyze system · SysPulse");
         dialog.setStyleSheet(QString());
@@ -308,7 +391,7 @@ struct Window::Impl {
         auto* experiments=toolbox({},true);toolboxes.insert("experimental",experiments);
         pages.insert("experimental",workspace("Maintenance actions","Apply system and desktop changes through reviewed, explicitly authorized tools. Experimental or higher-risk operations retain their prerequisites.",experiments));
         pages.insert("settings",settingsPage());
-        management->canMutate=[this]{for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
+        management->canMutate=[this]{if(diagnosticBusy)return false;for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
         management->onBusyChanged=[this](bool){updateFooter();};
         for(auto i=pages.cbegin();i!=pages.cend();++i){i.value()->setProperty("sysPulsePageId",i.key());stack->addWidget(i.value());}
         fluent::decorateTree(w);
@@ -336,10 +419,10 @@ struct Window::Impl {
         auto* hero=panel("analysisHero");auto* hl=new QHBoxLayout(hero);hl->setContentsMargins(24,22,24,22);
         auto* mark=new PulseMark;mark->setFixedSize(60,70);hl->addWidget(mark);
         auto* heroText=new QVBoxLayout;heroText->addWidget(text("Keep your computer running smoothly","sectionTitle"));
-        analysisStatus=text("Boost safely cleans eligible generated thumbnails and downloaded packages, with a review and measured results. Analyze system for detailed diagnostics.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
-        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(boostButton);actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
+        analysisStatus=text("Analyze system first. SysPulse will use local diagnostic evidence and learned outcomes to prepare a safe Boost.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
+        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(analyzeButton);actions->addWidget(boostButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
         auto* shortcuts=new QHBoxLayout;auto* profiles=button("Performance presets…",[this]{openDesktopProfiles();},w);profiles->setObjectName("quickDesktopProfiles");shortcuts->addWidget(profiles);
-        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
+        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);auto* historyButton=button("Analysis history…",[this]{diagnosticHistory();},w);historyButton->setObjectName("diagnosticHistory");shortcuts->addWidget(historyButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
         lastBoostStatus=text("No saved Boost receipt.","muted");lastBoostStatus->setObjectName("lastBoostStatus");lastBoostStatus->setTextFormat(Qt::PlainText);heroText->addWidget(lastBoostStatus);refreshBoostReceipt();hl->addLayout(heroText,1);
         hl->addWidget(text("SAFE BOOST\nNo app removal\nNo personal-file deletion","muted"));layout->addWidget(hero);
         auto* metrics=new QGridLayout;metrics->setSpacing(12);
@@ -1076,7 +1159,8 @@ struct Window::Impl {
         layout->addWidget(text("Maintenance & boost","sectionTitle"));
         auto* quick=button("Boost now…",[this]{runQuickBoost();},content,true);quick->setObjectName("maintenanceQuickBoost");layout->addWidget(quick);
         layout->addWidget(button("Performance presets and restore…",[this]{openDesktopProfiles();},content));
-        layout->addWidget(text("Use Boost for a reviewed default cleanup, or use individual advanced tools below. Nothing runs at startup.","muted"));
+        layout->addWidget(button("Analyze system…",[this]{analyze();},content));layout->addWidget(button("Analysis and learning history…",[this]{diagnosticHistory();},content));layout->addWidget(button("Advanced diagnostic checklist…",[this]{analyzeClassic();},content));
+        layout->addWidget(text("A fresh full analysis is required for Boost. Advanced individual tools remain explicitly reviewed. Nothing runs at startup.","muted"));
         auto* table=new QTableWidget(3,3);table->setObjectName("maintenanceComparison");
         table->setHorizontalHeaderLabels({"Measurement","Baseline","Latest"});
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->verticalHeader()->hide();
@@ -1469,6 +1553,7 @@ bool Window::navigate(const QString& id) {return d->navigate(id);}
 QString Window::currentPageId()const{return d->current;}
 int Window::navigationCount()const{return d->nav.size();}
 void Window::closeEvent(QCloseEvent* event) {
+    if(d->diagnosticBusy){event->ignore();return;}
     if(tux::admin::busy()||!findChildren<QThread*>("adminSessionUnlockWorker").isEmpty()){QMessageBox::information(this,"Administrator session busy","Finish or cancel the authentication or maintenance operation before closing.");event->ignore();return;}
     if(d->management->isBusy()) {QMessageBox::information(this,"System action in progress","Wait for the service action to finish or cancel the desktop authorization before closing SysPulse.");event->ignore();return;}
     for(auto* page:d->allToolboxes)if(page->isBusy()) {
