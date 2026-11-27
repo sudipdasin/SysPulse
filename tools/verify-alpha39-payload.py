@@ -40,7 +40,7 @@ def verify_tar(stream, expected_anchor=ANCHOR):
             if total > MAX_PAYLOAD:
                 raise ValueError("Payload too large")
             if name in PARENTS:
-                if not item.isdir() or item.uid != 0 or item.gid != 0 or item.mode & 0o7022:
+                if not item.isdir() or item.uid != 0 or item.gid != 0 or item.mode != 0o755:
                     raise ValueError(f"Unsafe required parent: {name}")
                 directories.add(name)
             if name not in REQUIRED:
