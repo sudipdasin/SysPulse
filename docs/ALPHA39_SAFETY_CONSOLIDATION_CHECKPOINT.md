@@ -1,0 +1,14 @@
+# Alpha.39 safety consolidation and local build recovery — 2026-11-27
+
+Continuation base: f8f5a0ef757b0d9dc5baa79980affa06c01cb559 (native adapters); compared with 5a2853b6ba1d3b9b2015eaeda2238837e644398d (package triage). Both diverged from 803ba8600963f4d520a02775e7d29b3b4f49efd8. Retain both histories. This branch selectively ports compatible improvements, not a blanket merge.
+
+## Verified work
+- Hardened native APT parser: reject notices/warnings (including leading whitespace), malformed actions, excessive counters, oversize/NUL output; recognize disabled removal and purge; preserve summary removal count even if no Remv action is printed. Keep fixed command and no execution authority.
+- Bounded procps parser; preserves new extra columns and excludes since-boot sample.
+- Exact final module blob 28883936136e4ebc531aa36642fc90befaf5f99d and new test blob 4de936869c24e7b0267a46d9539dc2a133168d11. 21/21 local tests passed (10 inherited plus 11 new). Existing test blob 92b8e3a80f3637b4bd64b882b08798d04d97e159. CTest registration committed, full CTest not executed.
+- Non-root Debian 13 real APT and vmstat smoke before the final count-only correction: zero proposed changes, two current samples, unchanged dpkg/apt state SHA checks. Disposable alternate broken-dependency status database: actual APT refused removal, both fixture files unchanged; exposed zero removal count when only summary printed. Corrected and reran 21 tests; regression explicitly covers the actual summary discrepancy.
+- Native builder port: tools/build-alpha39-local.sh requires explicit 40-character source commit for build, checks exact checkout and Alpha.39 version, isolated HOME, CTest, CPack, owner public anchor and package metadata. Exact blob 10f803c1128d449c8eb936a97e876cb48befc77e; syntax pass, invalid commit exit 2, incompatible root Debian 13 / missing Qt preflight exit 1. No host install or automatic dependency installation. Build not executed.
+- Source work checkpoint 6e541f48624c7cb807602c4215f8d653c023f4f3. No main merge, production signing, feed change, CI actions or paid services.
+
+## Course correction and gates
+Use dev/alpha39-native-build-recovery as the isolated continuation candidate; no full merge claim. Native Docker route exists but older build report uses a hardcoded baseline; verify SOURCE-CHECKOUT.txt rather than treating that label as source provenance, and correct it before release. Render free quota exhausted; current container lacks Qt/Docker and direct Git network. On compatible Mint/Ubuntu use reviewed script --check then --build with exact candidate commit. Full native Qt/CTest, installed GUI, signed prior-version upgrade, recovery, tamper and physical Mint SMART tests remain mandatory. Preserve the verified Alpha.37 evaluation package and existing owner trust. No release until gates pass. Continue independent corpus, reversible repairs and safe cleaning after integrated validation.
