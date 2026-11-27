@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew existing signed SysPulse metadata when due
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=10m
+[Install]
+WantedBy=timers.target
