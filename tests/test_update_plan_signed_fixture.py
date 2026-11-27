@@ -24,6 +24,9 @@ class Tests(unittest.TestCase):
             root=pathlib.Path(d); home=root/'gnupg'; home.mkdir(mode=0o700)
             repo=root/'feed';repo.mkdir(); data=root/'pkg';(data/'DEBIAN').mkdir(parents=True)
             (data/'DEBIAN/control').write_text(f'Package: syspulse\nVersion: {NEW}\nArchitecture: amd64\nMaintainer: Test <fixture@example.invalid>\nDescription: Disposable test-only package\n')
+            (data/'DEBIAN').chmod(0o755)
+            (data/'DEBIAN/control').chmod(0o644)
+            data.chmod(0o755)
             env={'PATH':'/usr/bin:/bin','HOME':d,'LANG':'C','LC_ALL':'C'}
             def run(args,**kw):
                 return subprocess.run(args,env=env,check=True,capture_output=True,timeout=30,**kw).stdout
