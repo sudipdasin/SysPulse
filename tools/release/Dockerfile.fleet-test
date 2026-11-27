@@ -24,8 +24,20 @@ USER tester
 RUN python3 /src/tools/release/source_signer.py self-test > /out/LEGACY-TESTS.txt 2>&1 && cat /out/LEGACY-TESTS.txt
 RUN python3 /src/tools/release/test_fleet_signer.py > /out/FLEET-TESTS.txt 2>&1 || { cat /out/FLEET-TESTS.txt; exit 1; }
 RUN cat /out/FLEET-TESTS.txt && python3 /src/tools/release/fleet_validator.py --help >/dev/null
+FROM ubuntu:24.04 AS research35
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates procps systemd iproute2 util-linux && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 tester && mkdir -p /out /src/tools /src/tests && chown tester:tester /out
+COPY tools/syspulse-diagnostics tools/syspulse_research.py /src/tools/
+COPY tests/test_research_adapters.py /src/tests/
+USER tester
+RUN python3 /src/tools/syspulse-diagnostics self-test > /out/AI35-DB-TESTS.txt 2>&1 || { cat /out/AI35-DB-TESTS.txt; exit 1; }
+RUN python3 /src/tests/test_research_adapters.py > /out/AI35-ADAPTER-TESTS.txt 2>&1 || { cat /out/AI35-ADAPTER-TESTS.txt; exit 1; }
+RUN cat /out/AI35-DB-TESTS.txt /out/AI35-ADAPTER-TESTS.txt
+RUN PYTHONPATH=/src/tools python3 -c 'import json,syspulse_research as r; p=r.profile({"findings":[{"code":"package_failure"}],"context":"normal"}); result=r.run(p,["web","groq","gemini"],lambda _:None); print(json.dumps(result,ensure_ascii=True)); assert result[1]["status"]==result[2]["status"]=="not_configured"' > /out/AI35-LIVE-SEARCH.txt && cat /out/AI35-LIVE-SEARCH.txt
+
 FROM python:3.11-slim-bookworm
 COPY --from=tests /out/ /srv/results/
+COPY --from=research35 /out/ /srv/results/
 USER 10001:10001
 EXPOSE 10000
 CMD ["python3","-m","http.server","10000","--bind","0.0.0.0","--directory","/srv/results/"]
