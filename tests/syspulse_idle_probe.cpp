@@ -50,10 +50,10 @@ quint64 processCpuTicks() {
     return user + system;
 }
 
-quint64 residentKiB() {
+quint64 residentKiB(const QByteArray& field = "VmRSS:") {
     const auto contents = readProcFile("/proc/self/status");
     for (const auto& line : contents.split('\n')) {
-        if (!line.startsWith("VmRSS:")) continue;
+        if (!line.startsWith(field)) continue;
         const auto fields = line.simplified().split(' ');
         bool ok = false;
         const auto value = fields.value(1).toULongLong(&ok);
@@ -213,6 +213,7 @@ int main(int argc, char** argv) {
                 {"process_cpu_seconds", cpuSeconds},
                 {"cpu_fraction_one_core", cpuSeconds / seconds},
                 {"cpu_percent_one_core", 100.0 * cpuSeconds / seconds},
+                {"rss_peak_kib", static_cast<double>(residentKiB("VmHWM:"))},
                 {"rss_start_kib", static_cast<double>(startRssKiB)},
                 {"rss_end_kib", static_cast<double>(endRssKiB)},
                 {"rss_endpoint_max_kib", static_cast<double>(qMax(startRssKiB, endRssKiB))},
