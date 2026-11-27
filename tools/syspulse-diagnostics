@@ -645,10 +645,12 @@ def main():
             elif a.mode=="reserve":
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
-                if fresh is not None:
-                    if "archives" in selected:fresh.append(package_solver_source())
-                    fresh.append(smart_source())
+                    names={"kernel-ring","kernel-journal-current-boot","dpkg-audit"}
+                    if "archives" in selected:names.add("apt-repair-preview")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                        disk=pool.submit(smart_source)
+                        fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in names]))
+                        fresh.append(disk.result())
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
             else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
         print(json.dumps(result,ensure_ascii=True,separators=(",",":"),allow_nan=False));return 0
