@@ -12,7 +12,7 @@ MAX_READ=1024*1024
 MAX_LINES=6000
 MAX_AGE=900
 RETENTION=180
-ACTIONS=("thumbnails","archives","own_memory","pause_monitoring")
+ACTIONS=("thumbnails","failed_thumbnails","archives","own_memory","pause_monitoring")
 CATEGORIES=("storage_io","filesystem","disk_health","oom","memory_pressure","gpu","thermal","kernel_fault","service_failure","package_failure","network","authentication","application_crash","other_error")
 CRITICAL={"storage_io","filesystem","disk_health","oom","thermal","kernel_fault"}
 # Fixed ordered rules. Raw messages are classified in memory and never persisted.
@@ -283,10 +283,12 @@ def assess(metrics,sources,history):
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
+              "failed_thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
               "archives":storage_ok and kernel_ok and package_ok and not critical_storage and not critical_other,
               "own_memory":True,"pause_monitoring":True}
     context="disk" if lowdisk or inode else "memory" if lowmem else "normal"
     reasons={"thumbnails":"Generated cache only; fresh native eligibility scan still required.",
+             "failed_thumbnails":"Optional old failed-thumbnail markers; deletion can trigger thumbnail retries. Never preselected.",
              "archives":"Package downloads only; package audit and fresh native checks required.",
              "own_memory":"Release unused SysPulse allocator pages only.",
              "pause_monitoring":"Reduce SysPulse sampling, not system services."}
@@ -512,7 +514,7 @@ def reserve(c,ident,selected,boot,tick,now,metrics,owner=None,fresh_sources=None
         c.execute("BEGIN IMMEDIATE")
         row=read_analysis(c,ident,boot,tick,now)
         require(all(row["recommendations"][a]["allowed"] is True for a in selected),"Action not permitted by analysis")
-        if any(a in ("thumbnails","archives") for a in selected):
+        if any(a in ("thumbnails","failed_thumbnails","archives") for a in selected):
             require(all(metrics.get(x+"_readonly") is False and metrics.get(x+"_total_bytes",0)>0 and metrics.get(x+"_device")==row["metrics"].get(x+"_device") for x in ("root","home","apt")),"Storage changed or unavailable")
             if fresh_sources is not None:
                 fresh=assess(metrics,fresh_sources,{})
@@ -576,7 +578,7 @@ def main():
             elif a.mode=="refine":result=refine(c,a.id,boot_id(),clock(),int(time.time()))
             elif a.mode=="reserve":
                 selected=json.loads(a.payload);fresh=None
-                if any(x in ("archives","thumbnails") for x in selected):
+                if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
                 if fresh is not None:fresh.append(smart_source())
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
@@ -616,6 +618,9 @@ def run_tests():
             self.m["home_readonly"]=True;self.assertFalse(self.make()["recommendations"]["thumbnails"]["allowed"])
         def test_thermal(self):
             self.m["max_temperature_c"]=95;self.assertFalse(self.make()["recommendations"]["archives"]["allowed"])
+        def test_failed_markers_optional(self):
+            r=self.make();a=r["recommendations"]["failed_thumbnails"];self.assertTrue(a["allowed"]);self.assertFalse(a["recommended"])
+            self.s.append(source("syslog","ok",{"storage_io":1},1));self.assertFalse(self.make()["recommendations"]["failed_thumbnails"]["allowed"])
         def test_recommend_disk(self):self.assertTrue(self.make()["recommendations"]["thumbnails"]["recommended"])
         def test_normal_no_generic_default(self):
             self.m["memory_available_kib"]=600;self.m["root_free_bytes"]=self.m["apt_free_bytes"]=500
