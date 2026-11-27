@@ -19,6 +19,8 @@
 #include "syspulse/memory_plan.hpp"
 #include "syspulse/care_plan.hpp"
 #include "syspulse/maintenance_preview.hpp"
+#include "syspulse/boost.hpp"
+#include <QStorageInfo>
 #include "syspulse/system_memory.hpp"
 #include "syspulse/swap_activity.hpp"
 #include <QElapsedTimer>
@@ -331,10 +333,10 @@ struct Window::Impl {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);layout->setContentsMargins(0,0,0,0);layout->setSpacing(14);
         auto* hero=panel("analysisHero");auto* hl=new QHBoxLayout(hero);hl->setContentsMargins(24,22,24,22);
         auto* mark=new PulseMark;mark->setFixedSize(60,70);hl->addWidget(mark);
-        auto* heroText=new QVBoxLayout;heroText->addWidget(text("Ready for analysis","sectionTitle"));
-        analysisStatus=text("Run a scan to review storage, memory, services and system warnings.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
-        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);hl->addLayout(heroText,1);
-        hl->addWidget(text("MAINTENANCE\nManual\n\nAUTOMATION\nOff","muted"));layout->addWidget(hero);
+        auto* heroText=new QVBoxLayout;heroText->addWidget(text("Keep your computer running smoothly","sectionTitle"));
+        analysisStatus=text("Boost safely cleans eligible generated thumbnails and downloaded packages, with a review and measured results. Analyze system for detailed diagnostics.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
+        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(boostButton);actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);hl->addLayout(heroText,1);
+        hl->addWidget(text("SAFE BOOST\nNo app removal\nNo personal-file deletion","muted"));layout->addWidget(hero);
         auto* metrics=new QGridLayout;metrics->setSpacing(12);
         auto metric=[this,metrics](int column,const QString& label,QLabel** value,const QString& color,int tab) {
             auto* frame=panel("metricCard");auto* ml=new QVBoxLayout(frame);ml->setContentsMargins(16,14,16,14);
@@ -946,11 +948,65 @@ struct Window::Impl {
             }
         }
     }
+    void runQuickBoost() {
+        if(tux::admin::busy()) {QMessageBox::information(w,"Boost","Another administrator operation is running. Try again after it finishes.");return;}
+        const auto plan=std::make_shared<syspulse::boost::Plan>();
+        ReviewedProgress planning(w);planning.setWindowTitle("Preparing safe boost");planning.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+        auto* progressLayout=new QVBoxLayout(&planning);progressLayout->addWidget(text("Checking eligible generated thumbnails and downloaded packages…"));
+        auto* worker=QThread::create([plan]{std::atomic_bool cancelled{false};*plan=syspulse::boost::prepare(syspulse::cleaner::homeCache(),cancelled);});
+        QObject::connect(worker,&QThread::finished,&planning,[&planning]{planning.done(0);});QObject::connect(worker,&QThread::finished,worker,&QObject::deleteLater);worker->start();planning.exec();
+        const auto mib=[](std::uint64_t bytes){return QString::number(bytes/1048576.0,'f',2)+" MiB";};
+        const auto apt=tux::trustedSystemExecutable("apt-get"),auth=tux::trustedSystemExecutable("pkexec");
+        QDialog review(w);review.setWindowTitle("Safe Boost · review once");review.resize(580,350);
+        auto* rl=new QVBoxLayout(&review);rl->addWidget(text("One maintenance pass","sectionTitle"));
+        rl->addWidget(text("Only the checked actions will run. No installed applications, documents, browser profiles, services or kernel settings will be changed."));
+        auto* thumbnails=new QCheckBox(QString("Clean %1 generated thumbnails older than 30 days (%2)").arg(plan->files.size()).arg(mib(plan->bytes)));
+        thumbnails->setChecked(!plan->files.empty());thumbnails->setEnabled(!plan->files.empty());rl->addWidget(thumbnails);auto* thumbnailNote=text(QString::fromStdString(plan->status),"muted");thumbnailNote->setTextFormat(Qt::PlainText);rl->addWidget(thumbnailNote);
+        auto* archives=new QCheckBox(plan->apt.complete?QString("Clean downloaded APT package archives (%1 measured, %2 files)").arg(mib(plan->apt.bytes)).arg(plan->apt.files):QString("APT archive size unavailable · use advanced Cleaner"));
+        const bool aptEligible=plan->apt.complete&&plan->apt.files>0&&!apt.isEmpty()&&!auth.isEmpty();
+        archives->setEnabled(aptEligible);archives->setChecked(aptEligible);rl->addWidget(archives);rl->addWidget(text("APT cleanup may require one administrator approval and future package re-downloads. The measured size is not a guaranteed disk-space gain.","muted"));
+        auto* ownMemory=new QCheckBox("Release unused SysPulse memory");ownMemory->setChecked(true);rl->addWidget(ownMemory);
+        auto* pause=new QCheckBox("Pause SysPulse live monitoring to reduce its background activity");rl->addWidget(pause);
+        rl->addWidget(text("Thumbnail and package-cache removal is permanent; both may be regenerated or downloaded again. No speed increase is guaranteed.","muted"));
+        auto* row=new QHBoxLayout;auto* apply=new QPushButton("Apply Boost");apply->setObjectName("applyQuickBoost");apply->setProperty("primary",true);auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);row->addStretch();row->addWidget(cancel);row->addWidget(apply);rl->addLayout(row);
+        QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(apply,&QPushButton::clicked,&review,&QDialog::accept);
+        const auto selected=[=]{apply->setEnabled(thumbnails->isChecked()||archives->isChecked()||ownMemory->isChecked()||pause->isChecked());};
+        for(auto* option:{thumbnails,archives,ownMemory,pause})QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});selected();
+        if(review.exec()!=QDialog::Accepted)return;
+        const auto available=[](const QString& path)->std::optional<std::uint64_t>{QStorageInfo v(path);v.refresh();if(!v.isValid()||!v.isReady()||v.bytesAvailable()<0)return {};return static_cast<std::uint64_t>(v.bytesAvailable());};
+        const auto show=[mib](const std::optional<std::uint64_t>& value){return value?mib(*value):QString("Unknown");};
+        const auto before=available("/var/cache/apt/archives");QStringList lines;
+        if(thumbnails->isChecked()){
+            auto result=std::make_shared<syspulse::boost::Outcome>();
+            ReviewedProgress progress(w);progress.setWindowTitle("Cleaning reviewed thumbnails");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Rechecking each file before removal…"));
+            auto* task=QThread::create([plan,result]{*result=syspulse::boost::apply(*plan);});QObject::connect(task,&QThread::finished,&progress,[&progress]{progress.done(0);});QObject::connect(task,&QThread::finished,task,&QObject::deleteLater);task->start();progress.exec();
+            lines<<QString("Generated thumbnails: %1 removed, %2 skipped, %3 logical file size.").arg(result->removed).arg(result->skipped).arg(mib(result->bytes));
+        }else lines<<"Generated thumbnails: not selected.";
+        if(archives->isChecked()){
+            if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";}
+            else{
+                ReviewedProgress progress(w);progress.setWindowTitle("Cleaning downloaded packages");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator approval and APT completion…"));
+                AsyncCommandResult outcome;
+                tux::admin::runReviewed(&progress,{"boost","archives","clean"},auth,{apt,"clean"},4096,[&](const AsyncCommandResult& result){outcome=result;progress.done(0);});
+                progress.exec();refreshActionIndicators();const auto after=syspulse::preview::archives("/var/cache/apt/archives");
+                lines<<QString("APT cleanup: %1. Archive size before: %2; after: %3.").arg(outcome.ok()?"command completed":"not verified",mib(plan->apt.bytes),after.complete?mib(after.bytes):QString("Unknown"));
+            }
+        }else lines<<"APT cleanup: not selected.";
+        if(ownMemory->isChecked()){
+            const auto result=syspulse::relief::trimSelf();const auto fmt=[mib](const std::optional<std::uint64_t>& n){return n?mib(*n*1024):QString("Unknown");};
+            lines<<QString("SysPulse RSS: %1 → %2. %3").arg(fmt(result.before),fmt(result.after),!result.supported?"Allocator trim unavailable.":result.released?"Allocator reported unused pages released.":"No unused pages reported released.");
+        }
+        if(pause->isChecked()){performance->setPaused(true);lines<<"SysPulse live monitoring: paused. Resume in Performance.";}
+        lines<<QString("APT filesystem available space: %1 → %2. Other activity can affect this measurement.").arg(show(before),show(available("/var/cache/apt/archives")));
+        analysisStatus->setText("Boost finished. Review the results; no speed gain is assumed.");
+        QMessageBox report(w);report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(QMessageBox::Information);report.exec();
+    }
     QWidget* maintenanceCenterPage() {
         auto* content=new QWidget;content->setObjectName("maintenanceCenterPage");
         auto* layout=new QVBoxLayout(content);
         layout->addWidget(text("Maintenance & boost","sectionTitle"));
-        layout->addWidget(text("Measure first, review the exact operation, then remeasure. No package removal, cache deletion or desktop change runs from this page automatically.","muted"));
+        auto* quick=button("Boost now…",[this]{runQuickBoost();},content,true);quick->setObjectName("maintenanceQuickBoost");layout->addWidget(quick);
+        layout->addWidget(text("Use Boost for a reviewed default cleanup, or use individual advanced tools below. Nothing runs at startup.","muted"));
         auto* table=new QTableWidget(3,3);table->setObjectName("maintenanceComparison");
         table->setHorizontalHeaderLabels({"Measurement","Baseline","Latest"});
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->verticalHeader()->hide();
