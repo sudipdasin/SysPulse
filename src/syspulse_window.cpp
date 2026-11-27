@@ -6,6 +6,9 @@
 #include <QSpinBox>
 #include <QDialog>
 #include <QPlainTextEdit>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
@@ -135,6 +138,8 @@ struct Window::Impl {
     QLabel* reportStatus=nullptr;
     QLabel* cpu=nullptr;QLabel* memory=nullptr;QLabel* disk=nullptr;QLabel* network=nullptr;
     QLabel* analysisStatus=nullptr;
+    QString analysisId;
+    bool diagnosticBusy=false;
     QLabel* lastBoostStatus=nullptr;QPushButton* lastBoostButton=nullptr;
     QString current="overview";
     QStringList history;
@@ -165,7 +170,7 @@ struct Window::Impl {
     ToolboxPage* toolbox(const QStringList& groups,bool experimental=false) {
         auto* p=new ToolboxPage(groups,experimental,w);allToolboxes.append(p);
         p->canExecute=[this,p]{
-            if(management&&management->isBusy())return false;
+            if(diagnosticBusy||(management&&management->isBusy()))return false;
             for(auto* other:allToolboxes)if(other!=p&&other->isBusy())return false;
             return true;
         };
@@ -181,13 +186,92 @@ struct Window::Impl {
     void updateFooter() {
         refreshActionIndicators();
         bool busy=false;for(auto* p:allToolboxes)busy=busy||p->isBusy();
-        const bool systemBusy=management&&management->isBusy();
+        const bool systemBusy=diagnosticBusy||(management&&management->isBusy());
         for(auto* page:allToolboxes)page->setExecutionAllowed(!systemBusy&&(!busy||page->isBusy()));
         if(auto* analyzeButton=w->findChild<QPushButton*>("analyzeSystem"))analyzeButton->setEnabled(!busy&&!systemBusy);
+        for(const auto& name:{"quickBoost","maintenanceQuickBoost"})if(auto* b=w->findChild<QPushButton*>(name))b->setEnabled(!busy&&!systemBusy&&!analysisId.isEmpty());
         footer->setText(QString("%1  ·  Automation off  ·  SysPulse %2").arg(busy||systemBusy?"Task in progress":"Manual maintenance").arg(tux::Version));
     }
+    struct DiagnosticGuard {
+        Impl* self;
+        explicit DiagnosticGuard(Impl* p):self(p){self->diagnosticBusy=true;self->updateFooter();}
+        ~DiagnosticGuard(){self->diagnosticBusy=false;self->updateFooter();}
+    };
+    bool maintenanceAvailable() const {
+        if(diagnosticBusy||tux::admin::busy()||(management&&management->isBusy()))return false;
+        for(auto* page:allToolboxes)if(page->isBusy())return false;
+        return true;
+    }
+    QJsonObject diagnosticCall(const QStringList& args,const QString& caption,int timeout=20000) {
+        const auto exe=tux::trustedSystemExecutable("syspulse-diagnostics");
+        if(exe.isEmpty()){QMessageBox::warning(w,"Diagnostics","Installed diagnostic helper is unavailable. No Boost action was authorized.");return {};}
+        ReviewedProgress progress(w);progress.setWindowTitle("SysPulse diagnostics");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+        auto* layout=new QVBoxLayout(&progress);layout->addWidget(text(caption));
+        AsyncCommandResult response;
+        AsyncCommand::run(&progress,exe,args,timeout,131072,[&](const AsyncCommandResult& r){response=r;progress.done(0);});
+        progress.exec();
+        QJsonParseError error;const auto doc=QJsonDocument::fromJson(response.output,&error);const auto obj=doc.object();
+        if(!response.ok()||error.error!=QJsonParseError::NoError||obj.value("schema").toInt()!=1){
+            QMessageBox dialog(w);dialog.setWindowTitle("Diagnostics not verified");dialog.setTextFormat(Qt::PlainText);dialog.setIcon(QMessageBox::Warning);
+            dialog.setText("No further maintenance action was authorized. "+obj.value("error").toString("The diagnostic helper did not return a verified result.").left(300));dialog.exec();return {};
+        }
+        return obj;
+    }
+    bool validAnalysis(const QJsonObject& obj) {
+        if(obj.value("schema").toInt()!=1||obj.value("state").toString()!="ready"||!QRegularExpression("^[a-f0-9]{32}$").match(obj.value("id").toString()).hasMatch()||!obj.value("sources").isArray()||!obj.value("findings").isArray()||!obj.value("coverage").isObject()||!obj.value("metrics").isObject())return false;
+        const auto rec=obj.value("recommendations").toObject();
+        for(const auto& action:{"thumbnails","archives","own_memory","pause_monitoring"}){
+            const auto a=rec.value(action).toObject();if(!a.value("allowed").isBool()||!a.value("recommended").isBool()||!a.value("history").isObject()||!a.value("reason").isString()||(a.value("recommended").toBool()&&!a.value("allowed").toBool()))return false;
+        }
+        return true;
+    }
+    void showDiagnosticDetails(const QJsonObject& result) {
+        QDialog dialog(w);dialog.setWindowTitle("System analysis · findings and coverage");dialog.resize(840,580);auto* layout=new QVBoxLayout(&dialog);
+        const auto coverage=result.value("coverage").toObject();layout->addWidget(text(QString("%1 of %2 sources readable · %3 limited or unavailable. Observations may overlap; unavailable checks are not a clean bill of health.").arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()).arg(coverage.value("limited").toInt()),"sectionTitle"));
+        auto* tabs=new QTabWidget;
+        const auto make=[tabs](const QString& title,const QStringList& lines){auto* view=new QPlainTextEdit;view->setReadOnly(true);view->setPlainText(lines.join("\n"));tabs->addTab(view,title);};
+        QStringList findings,coverageLines,measurements,recommendations;
+        for(const auto& v:result.value("findings").toArray()){const auto a=v.toObject();findings<<QString("%1 · %2 · %3 observations · seen in %4/%5 recent analyses").arg(a.value("level").toString().toUpper(),a.value("code").toString()).arg(a.value("observations").toInt()).arg(a.value("observed_in_recent_analyses").toInt(1)).arg(result.value("trend_window").toInt(1));}
+        if(findings.isEmpty())findings<<"No classified faults in readable, bounded sources. This does not prove the system is fault-free.";
+        for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();coverageLines<<QString("%1 · %2 · %3 lines").arg(a.value("name").toString(),a.value("status").toString()).arg(a.value("lines").toInt());const auto e=a.value("events").toObject();for(auto i=e.begin();i!=e.end();++i)coverageLines<<QString("    %1: %2").arg(i.key()).arg(i.value().toInt());}
+        const auto metrics=result.value("metrics").toObject();for(auto i=metrics.begin();i!=metrics.end();++i)measurements<<i.key()+": "+i.value().toVariant().toString();
+        const auto rec=result.value("recommendations").toObject();for(auto i=rec.begin();i!=rec.end();++i){const auto a=i.value().toObject(),h=a.value("history").toObject();recommendations<<QString("%1 · %2\n%3\nHistory: %4 attempts, %5 verified successes, %6 failures, %7 no-effect results\n").arg(i.key(),!a.value("allowed").toBool()?"Blocked":a.value("recommended").toBool()?"Recommended":"Optional",a.value("reason").toString()).arg(h.value("attempts").toInt()).arg(h.value("successes").toInt()).arg(h.value("failures").toInt()).arg(h.value("no_effect").toInt());}
+        make("Findings",findings);make("Log coverage",coverageLines);make("Measurements",measurements);make("Boost & learning",recommendations);layout->addWidget(tabs,1);
+        layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
+        auto* close=new QPushButton("Close");QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);layout->addWidget(close);dialog.exec();
+    }
     void analyze() {
-        if(management->isBusy())return;
+        if(!maintenanceAvailable())return;
+        QDialog review(w);review.setObjectName("deepAnalysisReview");review.setWindowTitle("Analyze system · SysPulse");review.resize(600,300);auto* layout=new QVBoxLayout(&review);
+        layout->addWidget(text("Full local diagnostic pass","sectionTitle"));
+        layout->addWidget(text("Inspect readable current and recent system/user journals, kernel errors, rotated system logs, failed services, package audit, crash records, hardware and network inventory, memory, storage and pressure. Checks are bounded; unavailable sources are explicitly recorded."));
+        layout->addWidget(text("Read-only, no administrator escalation or network upload. Classified findings and measurements are saved locally. A fresh analysis is required before Boost. Raw log messages are not retained.","muted"));
+        auto* row=new QHBoxLayout;auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);auto* start=new QPushButton("Run analysis");start->setObjectName("runDeepAnalysis");row->addStretch();row->addWidget(cancel);row->addWidget(start);layout->addLayout(row);
+        QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(start,&QPushButton::clicked,&review,&QDialog::accept);
+        if(review.exec()!=QDialog::Accepted)return;
+        DiagnosticGuard guard(this);analysisId.clear();
+        const auto result=diagnosticCall({"analyze"},"Inspecting bounded logs and system health; recording findings locally…",150000);
+        if(!validAnalysis(result)){analysisStatus->setText("Analysis was not verified. Boost remains locked.");return;}
+        analysisId=result.value("id").toString();const auto coverage=result.value("coverage").toObject();
+        analysisStatus->setText(QString("Analysis saved · %1 findings · %2/%3 sources readable. Boost uses this report for 15 minutes, once.").arg(result.value("findings").toArray().size()).arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()));
+        showDiagnosticDetails(result);
+    }
+    void diagnosticHistory() {
+        if(!maintenanceAvailable())return;DiagnosticGuard guard(this);
+        const auto data=diagnosticCall({"history"},"Reading local diagnostic and learning history…");if(data.isEmpty())return;
+        QDialog dialog(w);dialog.setWindowTitle("Analysis and learning history");dialog.resize(780,540);auto* layout=new QVBoxLayout(&dialog);auto* view=new QPlainTextEdit;view->setReadOnly(true);QStringList lines;
+        lines<<"Recent analyses (up to 30):";
+        for(const auto& v:data.value("analyses").toArray()){const auto a=v.toObject(),c=a.value("coverage").toObject();lines<<QString("%1 · %2 · %3 · %4 findings · %5/%6 readable").arg(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(a.value("utc").toDouble())).toLocalTime().toString("yyyy-MM-dd HH:mm"),a.value("state").toString(),a.value("context").toString()).arg(a.value("findings").toInt()).arg(c.value("readable").toInt()).arg(c.value("sources").toInt());}
+        lines<<"\nOutcome-based learning (local only):";for(const auto& v:data.value("learning").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
+        view->setPlainText(lines.join("\n"));layout->addWidget(view,1);
+        layout->addWidget(text("Retains up to 180 analyses and their associated outcomes. Learning changes recommendations only, never security gates or executable commands.","muted"));
+        auto* row=new QHBoxLayout;auto* clear=new QPushButton("Clear history…");auto* close=new QPushButton("Close");row->addWidget(clear);row->addStretch();row->addWidget(close);layout->addLayout(row);
+        QObject::connect(clear,&QPushButton::clicked,&dialog,[&]{if(QMessageBox::question(&dialog,"Clear diagnostic history","Delete local analysis history and learned outcomes? This cannot be undone.",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;const auto cleared=diagnosticCall({"clear"},"Clearing local diagnostics database…");if(cleared.value("state").toString()=="cleared"){analysisId.clear();analysisStatus->setText("Diagnostic history cleared. Analyze system before Boost.");dialog.accept();}});
+        QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);dialog.exec();
+    }
+    void analyzeClassic() {
+        if(!maintenanceAvailable())return;DiagnosticGuard guard(this);
+        analysisId.clear();analysisStatus->setText("Advanced diagnostics do not authorize Boost. Run full Analyze system first.");
         for(auto* page:allToolboxes)if(page->isBusy())return;
         tux::HealthDialog dialog(w);dialog.setWindowTitle("Analyze system · SysPulse");
         dialog.setStyleSheet(QString());
@@ -308,7 +392,7 @@ struct Window::Impl {
         auto* experiments=toolbox({},true);toolboxes.insert("experimental",experiments);
         pages.insert("experimental",workspace("Maintenance actions","Apply system and desktop changes through reviewed, explicitly authorized tools. Experimental or higher-risk operations retain their prerequisites.",experiments));
         pages.insert("settings",settingsPage());
-        management->canMutate=[this]{for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
+        management->canMutate=[this]{if(diagnosticBusy)return false;for(auto* page:allToolboxes)if(page->isBusy())return false;return true;};
         management->onBusyChanged=[this](bool){updateFooter();};
         for(auto i=pages.cbegin();i!=pages.cend();++i){i.value()->setProperty("sysPulsePageId",i.key());stack->addWidget(i.value());}
         fluent::decorateTree(w);
@@ -336,10 +420,10 @@ struct Window::Impl {
         auto* hero=panel("analysisHero");auto* hl=new QHBoxLayout(hero);hl->setContentsMargins(24,22,24,22);
         auto* mark=new PulseMark;mark->setFixedSize(60,70);hl->addWidget(mark);
         auto* heroText=new QVBoxLayout;heroText->addWidget(text("Keep your computer running smoothly","sectionTitle"));
-        analysisStatus=text("Boost safely cleans eligible generated thumbnails and downloaded packages, with a review and measured results. Analyze system for detailed diagnostics.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
-        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(boostButton);actions->addWidget(analyzeButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
+        analysisStatus=text("Analyze system first. SysPulse will use local diagnostic evidence and learned outcomes to prepare a safe Boost.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
+        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(analyzeButton);actions->addWidget(boostButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
         auto* shortcuts=new QHBoxLayout;auto* profiles=button("Performance presets…",[this]{openDesktopProfiles();},w);profiles->setObjectName("quickDesktopProfiles");shortcuts->addWidget(profiles);
-        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
+        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);auto* historyButton=button("Analysis history…",[this]{diagnosticHistory();},w);historyButton->setObjectName("diagnosticHistory");shortcuts->addWidget(historyButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
         lastBoostStatus=text("No saved Boost receipt.","muted");lastBoostStatus->setObjectName("lastBoostStatus");lastBoostStatus->setTextFormat(Qt::PlainText);heroText->addWidget(lastBoostStatus);refreshBoostReceipt();hl->addLayout(heroText,1);
         hl->addWidget(text("SAFE BOOST\nNo app removal\nNo personal-file deletion","muted"));layout->addWidget(hero);
         auto* metrics=new QGridLayout;metrics->setSpacing(12);
@@ -1009,7 +1093,14 @@ struct Window::Impl {
         QMessageBox::information(w,"Desktop preset",resultStatus=="restored"?"Original settings restored and verified.":resultStatus=="already-active"?"Requested settings already active. No changes made.":"Preset applied and readback verified. Use Performance presets to restore the original values.");
     }
     void runQuickBoost() {
-        if(tux::admin::busy()) {QMessageBox::information(w,"Boost","Another administrator operation is running. Try again after it finishes.");return;}
+        if(!maintenanceAvailable())return;
+        if(analysisId.isEmpty()){QMessageBox::information(w,"Boost","Analyze system first.");return;}
+        DiagnosticGuard guard(this);
+        const auto analysis=diagnosticCall({"plan",analysisId},"Checking the fresh analysis and learned recommendations…");
+        if(!validAnalysis(analysis)||analysis.value("id").toString()!=analysisId){analysisId.clear();analysisStatus->setText("Analysis expired or unavailable. Analyze again before Boost.");return;}
+        const auto recommendations=analysis.value("recommendations").toObject();
+        const auto allowed=[&](const QString& action){return recommendations.value(action).toObject().value("allowed").toBool();};
+        const auto recommended=[&](const QString& action){return recommendations.value(action).toObject().value("recommended").toBool();};
         const auto plan=std::make_shared<syspulse::boost::Plan>();
         ReviewedProgress planning(w);planning.setWindowTitle("Preparing safe boost");planning.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
         auto* progressLayout=new QVBoxLayout(&planning);progressLayout->addWidget(text("Checking eligible generated thumbnails and downloaded packages…"));
@@ -1019,14 +1110,16 @@ struct Window::Impl {
         const auto apt=tux::trustedSystemExecutable("apt-get"),auth=tux::trustedSystemExecutable("pkexec");
         QDialog review(w);review.setWindowTitle("Safe Boost · review once");review.resize(580,350);
         auto* rl=new QVBoxLayout(&review);rl->addWidget(text("One maintenance pass","sectionTitle"));
-        rl->addWidget(text("Only the checked actions will run. No installed applications, documents, browser profiles, services or kernel settings will be changed."));
+        rl->addWidget(text("Based on your saved diagnostic findings, local history and freshly measured eligibility. Only checked actions run. No applications, documents, browser profiles, services or kernel settings will be changed."));
         auto* thumbnails=new QCheckBox(QString("Clean %1 generated thumbnails older than 30 days (%2)").arg(plan->files.size()).arg(mib(plan->bytes)));
-        thumbnails->setChecked(!plan->files.empty());thumbnails->setEnabled(!plan->files.empty());rl->addWidget(thumbnails);auto* thumbnailNote=text(QString::fromStdString(plan->status),"muted");thumbnailNote->setTextFormat(Qt::PlainText);rl->addWidget(thumbnailNote);
+        thumbnails->setEnabled(allowed("thumbnails")&&!plan->files.empty());thumbnails->setChecked(thumbnails->isEnabled()&&recommended("thumbnails"));thumbnails->setToolTip(recommendations.value("thumbnails").toObject().value("reason").toString());rl->addWidget(thumbnails);auto* thumbnailNote=text(QString::fromStdString(plan->status),"muted");thumbnailNote->setTextFormat(Qt::PlainText);rl->addWidget(thumbnailNote);
         auto* archives=new QCheckBox(plan->apt.complete?QString("Clean downloaded APT package archives (%1 measured, %2 files)").arg(mib(plan->apt.bytes)).arg(plan->apt.files):QString("APT archive size unavailable · use advanced Cleaner"));
-        const bool aptEligible=plan->apt.complete&&plan->apt.files>0&&!apt.isEmpty()&&!auth.isEmpty();
-        archives->setEnabled(aptEligible);archives->setChecked(aptEligible);rl->addWidget(archives);rl->addWidget(text("APT cleanup may require one administrator approval and future package re-downloads. The measured size is not a guaranteed disk-space gain.","muted"));
-        auto* ownMemory=new QCheckBox("Release unused SysPulse memory");ownMemory->setChecked(true);rl->addWidget(ownMemory);
-        auto* pause=new QCheckBox("Pause SysPulse live monitoring to reduce its background activity");rl->addWidget(pause);
+        const bool aptEligible=allowed("archives")&&plan->apt.complete&&plan->apt.files>0&&!apt.isEmpty()&&!auth.isEmpty();
+        archives->setEnabled(aptEligible);archives->setChecked(aptEligible&&recommended("archives"));archives->setToolTip(recommendations.value("archives").toObject().value("reason").toString());rl->addWidget(archives);rl->addWidget(text("APT cleanup may require one administrator approval and future package re-downloads. The measured size is not a guaranteed disk-space gain.","muted"));
+        auto* ownMemory=new QCheckBox("Release unused SysPulse memory");ownMemory->setEnabled(allowed("own_memory"));ownMemory->setChecked(ownMemory->isEnabled()&&recommended("own_memory"));rl->addWidget(ownMemory);
+        auto* pause=new QCheckBox("Pause SysPulse live monitoring to reduce its background activity");pause->setEnabled(allowed("pause_monitoring")&&!performance->isPaused());pause->setChecked(pause->isEnabled()&&recommended("pause_monitoring"));rl->addWidget(pause);
+        if(!allowed("thumbnails")||!allowed("archives"))rl->addWidget(text("Some cleanup actions are blocked because log coverage, disk health or package audit is insufficient. Use diagnostic findings to investigate.","muted"));
+        rl->addWidget(text("When no action is recommended, you may select eligible optional actions or leave the system unchanged.","muted"));
         rl->addWidget(text("Thumbnail and package-cache removal is permanent; both may be regenerated or downloaded again. No speed increase is guaranteed.","muted"));
         auto* row=new QHBoxLayout;auto* apply=new QPushButton("Apply Boost");apply->setObjectName("applyQuickBoost");apply->setProperty("primary",true);auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);row->addStretch();row->addWidget(cancel);row->addWidget(apply);rl->addLayout(row);
         QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(apply,&QPushButton::clicked,&review,&QDialog::accept);
@@ -1034,6 +1127,17 @@ struct Window::Impl {
         for(auto* option:{thumbnails,archives,ownMemory,pause}){QObject::connect(option,&QCheckBox::toggled,&review,[selected](bool){selected();});}
         selected();
         if(review.exec()!=QDialog::Accepted)return;
+        QJsonArray selectedActions;
+        if(thumbnails->isChecked()&&thumbnails->isEnabled())selectedActions.append("thumbnails");
+        if(archives->isChecked()&&archives->isEnabled())selectedActions.append("archives");
+        if(ownMemory->isChecked()&&ownMemory->isEnabled())selectedActions.append("own_memory");
+        if(pause->isChecked()&&pause->isEnabled())selectedActions.append("pause_monitoring");
+        const QString usedAnalysis=analysisId;
+        const auto reserved=diagnosticCall({"reserve",usedAnalysis,QString::fromUtf8(QJsonDocument(selectedActions).toJson(QJsonDocument::Compact))},"Rechecking current health and reserving the one-use maintenance plan…",30000);
+        analysisId.clear();
+        if(reserved.value("state").toString()!="reserved"||reserved.value("id").toString()!=usedAnalysis){analysisStatus->setText("Boost not authorized. Run a new analysis.");return;}
+        QJsonObject learnedOutcome;
+        const auto outcome=[&](const QString& action,const QString& status,std::uint64_t bytes=0){QJsonObject result;result.insert("status",status);result.insert("bytes",static_cast<double>(status=="success"?qMin<std::uint64_t>(bytes,9007199254740991ULL):0));learnedOutcome.insert(action,result);};
         const auto available=[](const QString& path)->std::optional<std::uint64_t>{QStorageInfo v(path);v.refresh();if(!v.isValid()||!v.isReady()||v.bytesAvailable()<0)return {};return static_cast<std::uint64_t>(v.bytesAvailable());};
         const auto show=[mib](const std::optional<std::uint64_t>& value){return value?mib(*value):QString("Unknown");};
         const auto before=available("/var/cache/apt/archives");const auto userCache=QString::fromStdString(plan->cache.string());const auto homeBefore=userCache.isEmpty()?std::optional<std::uint64_t>{}:available(userCache);QStringList lines;bool needsReview=false;
@@ -1041,33 +1145,40 @@ struct Window::Impl {
             auto result=std::make_shared<syspulse::boost::Outcome>();
             ReviewedProgress progress(w);progress.setWindowTitle("Cleaning reviewed thumbnails");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Rechecking each file before removal…"));
             auto* task=QThread::create([plan,result]{*result=syspulse::boost::apply(*plan);});QObject::connect(task,&QThread::finished,&progress,[&progress]{progress.done(0);});QObject::connect(task,&QThread::finished,task,&QObject::deleteLater);task->start();progress.exec();
-            needsReview=needsReview||result->skipped>0||result->removed!=plan->files.size();
+            const bool verified=result->skipped==0&&result->removed==plan->files.size();needsReview=needsReview||!verified;
+            outcome("thumbnails",!verified?"failure":result->removed?"success":"no_effect",result->bytes);
             lines<<QString("Generated thumbnails: %1 removed, %2 skipped, %3 logical file size.").arg(result->removed).arg(result->skipped).arg(mib(result->bytes));
         }else lines<<"Generated thumbnails: not selected.";
         if(archives->isChecked()){
             const auto now=syspulse::preview::archives("/var/cache/apt/archives");
-            if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";needsReview=true;}
-            else if(!now.complete||now.files!=plan->apt.files||now.bytes!=plan->apt.bytes){lines<<"APT cleanup: measured archive size or count changed; review a new Boost plan.";needsReview=true;}
+            if(tux::admin::busy()){lines<<"APT cleanup: another admin operation started; skipped.";needsReview=true;outcome("archives","skipped");}
+            else if(!now.complete||now.files!=plan->apt.files||now.bytes!=plan->apt.bytes){lines<<"APT cleanup: measured archive size or count changed; review a new Boost plan.";needsReview=true;outcome("archives","skipped");}
             else{
                 ReviewedProgress progress(w);progress.setWindowTitle("Cleaning downloaded packages");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator approval and APT completion…"));
                 AsyncCommandResult outcome;
                 tux::admin::runReviewed(&progress,{"boost","archives","clean"},auth,{apt,"clean"},4096,[&](const AsyncCommandResult& result){outcome=result;progress.done(0);});
                 progress.exec();refreshActionIndicators();const auto after=syspulse::preview::archives("/var/cache/apt/archives");
-                needsReview=needsReview||!outcome.ok()||!after.complete;
+                const bool verified=outcome.ok()&&after.complete;needsReview=needsReview||!verified;
+                const auto bytes=verified&&plan->apt.bytes>after.bytes?plan->apt.bytes-after.bytes:0;
+                learnedOutcome.insert("archives",QJsonObject{{"status",!verified?"failure":bytes?"success":"no_effect"},{"bytes",static_cast<double>(qMin<std::uint64_t>(bytes,9007199254740991ULL))}});
                 lines<<QString("APT cleanup: %1. Archive size before: %2; after: %3.").arg(outcome.ok()?"command completed":"not verified",mib(plan->apt.bytes),after.complete?mib(after.bytes):QString("Unknown"));
             }
         }else lines<<"APT cleanup: not selected.";
         if(ownMemory->isChecked()){
             const auto result=syspulse::relief::trimSelf();const auto fmt=[mib](const std::optional<std::uint64_t>& n){return n?mib(*n*1024):QString("Unknown");};
+            const auto released=result.before&&result.after&&*result.before>*result.after&&result.released?(*result.before-*result.after)*1024:0;
+            outcome("own_memory",!result.supported?"skipped":released?"success":"no_effect",released);
             lines<<QString("SysPulse RSS: %1 → %2. %3").arg(fmt(result.before),fmt(result.after),!result.supported?"Allocator trim unavailable.":result.released?"Allocator reported unused pages released.":"No unused pages reported released.");
         }
-        if(pause->isChecked()){performance->setPaused(true);lines<<"SysPulse live monitoring: paused. Resume in Performance.";}
+        if(pause->isChecked()){performance->setPaused(true);const bool paused=performance->isPaused();outcome("pause_monitoring",paused?"success":"failure");needsReview=needsReview||!paused;lines<<(paused?"SysPulse live monitoring: paused. Resume in Performance.":"Monitoring pause could not be verified.");}
         lines<<QString("APT filesystem available space: %1 → %2. Other activity can affect this measurement.").arg(show(before),show(available("/var/cache/apt/archives")));
         if(homeBefore)lines<<QString("User cache filesystem available space: %1 → %2. Other activity can affect this reading.").arg(show(homeBefore),show(available(userCache)));
+        const auto learned=diagnosticCall({"finish",usedAnalysis,QString::fromUtf8(QJsonDocument(learnedOutcome).toJson(QJsonDocument::Compact))},"Recording measured Boost outcomes and updating local learning history…");
+        if(learned.value("state").toString()!="finished"||learned.value("id").toString()!=usedAnalysis){needsReview=true;lines<<"Learning receipt was not verified; no automatic retry.";}else lines<<"Local learning history updated using verified action-specific outcomes.";
         const syspulse::boostlog::Receipt receipt{QDateTime::currentDateTimeUtc().toString(Qt::ISODate),lines,needsReview};
         const auto encoded=syspulse::boostlog::encode(receipt);QSettings settings(QSettings::IniFormat,QSettings::UserScope,"SysPulse","SysPulse");
         if(!encoded.isEmpty()){settings.setValue("boost/lastReceipt",encoded);settings.sync();}if(encoded.isEmpty()||settings.status()!=QSettings::NoError)lines<<"Local receipt could not be saved.";
-        refreshBoostReceipt();analysisStatus->setText(needsReview?"Boost finished with actions needing review. See the results.":"Boost finished. See measured results; no speed gain is assumed.");
+        refreshBoostReceipt();analysisStatus->setText(needsReview?"Boost finished with actions needing review. Analyze again before another Boost.":"Boost finished; measured results saved. Analyze again before another Boost.");
         QMessageBox report(w);report.setWindowTitle("Boost results");report.setTextFormat(Qt::PlainText);report.setText(lines.join("\n\n"));report.setIcon(needsReview?QMessageBox::Warning:QMessageBox::Information);report.exec();
     }
     QWidget* maintenanceCenterPage() {
@@ -1076,7 +1187,8 @@ struct Window::Impl {
         layout->addWidget(text("Maintenance & boost","sectionTitle"));
         auto* quick=button("Boost now…",[this]{runQuickBoost();},content,true);quick->setObjectName("maintenanceQuickBoost");layout->addWidget(quick);
         layout->addWidget(button("Performance presets and restore…",[this]{openDesktopProfiles();},content));
-        layout->addWidget(text("Use Boost for a reviewed default cleanup, or use individual advanced tools below. Nothing runs at startup.","muted"));
+        layout->addWidget(button("Analyze system…",[this]{analyze();},content));layout->addWidget(button("Analysis and learning history…",[this]{diagnosticHistory();},content));layout->addWidget(button("Advanced diagnostic checklist…",[this]{analyzeClassic();},content));
+        layout->addWidget(text("A fresh full analysis is required for Boost. Advanced individual tools remain explicitly reviewed. Nothing runs at startup.","muted"));
         auto* table=new QTableWidget(3,3);table->setObjectName("maintenanceComparison");
         table->setHorizontalHeaderLabels({"Measurement","Baseline","Latest"});
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);table->verticalHeader()->hide();
@@ -1469,6 +1581,7 @@ bool Window::navigate(const QString& id) {return d->navigate(id);}
 QString Window::currentPageId()const{return d->current;}
 int Window::navigationCount()const{return d->nav.size();}
 void Window::closeEvent(QCloseEvent* event) {
+    if(d->diagnosticBusy){event->ignore();return;}
     if(tux::admin::busy()||!findChildren<QThread*>("adminSessionUnlockWorker").isEmpty()){QMessageBox::information(this,"Administrator session busy","Finish or cancel the authentication or maintenance operation before closing.");event->ignore();return;}
     if(d->management->isBusy()) {QMessageBox::information(this,"System action in progress","Wait for the service action to finish or cancel the desktop authorization before closing SysPulse.");event->ignore();return;}
     for(auto* page:d->allToolboxes)if(page->isBusy()) {
