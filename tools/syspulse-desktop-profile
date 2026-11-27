@@ -1,0 +1,202 @@
+#!/usr/bin/python3
+"""Reviewed, reversible XFCE desktop presets with a crash-recovery journal."""
+import fcntl,hashlib,json,os,re,stat,subprocess,sys,tempfile,unittest
+from pathlib import Path
+
+KEYS={"compositing":("xfwm4","/general/use_compositing"),
+      "animations":("xsettings","/Gtk/EnableAnimations")}
+PROFILES={"responsive":False,"visual":True}
+EXE="/usr/bin/xfconf-query"
+
+def digest(obj):
+    return hashlib.sha256(json.dumps(obj,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+def valid(values):
+    if not isinstance(values,dict) or not values or any(k not in KEYS or type(v) is not bool for k,v in values.items()):
+        raise ValueError("Invalid desktop values")
+    return values
+def journal_valid(obj):
+    if not isinstance(obj,dict) or set(obj)!={"schema","profile","before","target"} or obj["schema"]!=1 or obj["profile"] not in PROFILES:
+        raise ValueError("Invalid recovery journal")
+    before,target=valid(obj["before"]),valid(obj["target"])
+    if set(before)!=set(target) or any(v!=PROFILES[obj["profile"]] for v in target.values()):
+        raise ValueError("Invalid recovery values")
+    return obj
+def state_dir(home):
+    p=home
+    for part in ("",".local","state","syspulse","desktop-profile"):
+        if part:
+            p=p/part;p.mkdir(mode=0o700,exist_ok=True)
+        s=p.lstat()
+        if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.getuid() or s.st_mode&0o022: raise ValueError("Unsafe profile state directory")
+    if p.stat().st_mode&0o077: raise ValueError("Profile directory is not private")
+    return p
+def load(path):
+    try: fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    except FileNotFoundError: return None
+    with os.fdopen(fd,"rb") as f:
+        s=os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or s.st_mode&0o077 or s.st_size>4096:
+            raise ValueError("Unsafe recovery journal")
+        return journal_valid(json.loads(f.read(4097)))
+def sync_dir(path):
+    fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try: os.fsync(fd)
+    finally: os.close(fd)
+def save_new(path,obj):
+    journal_valid(obj)
+    if load(path) is not None: raise ValueError("Restore the existing profile first")
+    fd,tmp=tempfile.mkstemp(dir=path.parent,prefix=".journal-")
+    try:
+        with os.fdopen(fd,"w") as f:
+            json.dump(obj,f,sort_keys=True);f.flush();os.fsync(f.fileno())
+        # link refuses to replace an existing recovery journal.
+        os.link(tmp,path)
+    finally:
+        os.unlink(tmp)
+    sync_dir(path.parent)
+    if load(path)!=obj: raise RuntimeError("Recovery journal readback failed")
+def clear(path,obj):
+    if load(path)!=obj: raise RuntimeError("Recovery journal changed")
+    path.unlink();sync_dir(path.parent)
+def read_key(key):
+    channel,prop=KEYS[key]
+    r=subprocess.run([EXE,"-c",channel,"-p",prop],capture_output=True,text=True,timeout=5)
+    value=r.stdout.strip()
+    return value=="true" if r.returncode==0 and value in ("true","false") else None
+def write_key(key,value):
+    channel,prop=KEYS[key]
+    if type(value) is not bool: raise ValueError("Invalid value")
+    subprocess.run([EXE,"-c",channel,"-p",prop,"-s","true" if value else "false"],stdin=subprocess.DEVNULL,capture_output=True,timeout=5,check=True)
+def snapshot(read):
+    return {k:v for k in KEYS if type(v:=read(k)) is bool}
+def review(profile,path,read):
+    old=load(path)
+    if profile=="restore":
+        if old is None: raise ValueError("No saved preset to restore")
+        before={k:read(k) for k in old["before"]}
+        valid(before);target=old["before"]
+    elif profile in PROFILES:
+        if old is not None: raise ValueError("Restore previous preset first")
+        before=valid(snapshot(read));target={k:PROFILES[profile] for k in before}
+    else: raise ValueError("Unknown preset")
+    return {"profile":profile,"before":before,"target":target,"token":digest([profile,before,target,old])}
+def change(before,target,read,write,attempted=None):
+    for k,v in target.items():
+        if read(k)!=before[k]: raise RuntimeError("Desktop setting changed during review")
+        if before[k]!=v:
+            if attempted is not None: attempted.append(k)
+            write(k,v)
+        if read(k)!=v: raise RuntimeError("Setting readback failed")
+def apply(profile,token,path,read,write):
+    plan=review(profile,path,read)
+    if plan["token"]!=token: raise ValueError("Settings or journal changed; review again")
+    before,target=plan["before"],plan["target"]
+    old=load(path)
+    if profile=="restore":
+        journal=old
+    else:
+        if before==target: return {"status":"already-active","values":before}
+        journal={"schema":1,"profile":profile,"before":before,"target":target}
+        save_new(path,journal)
+    attempted=[]
+    try:
+        change(before,target,read,write,attempted)
+    except Exception as exc:
+        # Return to the state captured for this transaction; keep journal on any
+        # uncertain outcome, including a partial restore.
+        try:
+            for k in reversed(attempted):
+                now=read(k)
+                if now==target[k] and now!=before[k]:write(k,before[k])
+                if read(k)!=before[k]:raise RuntimeError('Rollback readback failed')
+            if any(read(k)!=v for k,v in before.items()):raise RuntimeError('External change during operation')
+            if profile!="restore": clear(path,journal)
+        except Exception as rollback:
+            raise RuntimeError("Change failed; rollback unverified. Recovery journal retained.") from rollback
+        raise RuntimeError("Change failed; previous values verified.") from exc
+    if profile=="restore": clear(path,journal)
+    return {"status":"restored" if profile=="restore" else "applied","values":target}
+def lock(path):
+    fd=os.open(path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+    try:
+        s=os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1 or s.st_mode&0o077:
+            raise ValueError("Unsafe lock")
+        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        return os.fdopen(fd,"r+")
+    except BaseException:
+        os.close(fd);raise
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.p=Path(self.tmp.name)/"journal.json";self.state={"compositing":True,"animations":True}
+    def tearDown(self): self.tmp.cleanup()
+    def read(self,k): return self.state.get(k)
+    def write(self,k,v): self.state[k]=v
+    def go(self,p,write=None): return apply(p,review(p,self.p,self.read)["token"],self.p,self.read,write or self.write)
+    def test_roundtrip(self):
+        self.assertEqual(self.go("responsive")["status"],"applied");self.assertEqual(self.state,dict.fromkeys(KEYS,False));self.assertIsNotNone(load(self.p))
+        self.assertEqual(self.go("restore")["status"],"restored");self.assertEqual(self.state,dict.fromkeys(KEYS,True));self.assertFalse(self.p.exists())
+    def test_visual(self):
+        self.state={"compositing":False,"animations":False};self.go("visual");self.assertTrue(all(self.state.values()));self.go("restore");self.assertFalse(any(self.state.values()))
+    def test_missing(self):
+        del self.state["animations"];self.go("responsive");self.assertEqual(self.state,{"compositing":False});self.go("restore")
+    def test_no_support(self):
+        self.state={};self.assertRaises(ValueError,review,"responsive",self.p,self.read)
+    def test_already(self):
+        self.assertEqual(self.go("visual")["status"],"already-active");self.assertFalse(self.p.exists())
+    def test_stale(self):
+        plan=review("responsive",self.p,self.read);self.state["compositing"]=False
+        with self.assertRaises(ValueError):apply("responsive",plan["token"],self.p,self.read,self.write)
+        self.assertFalse(self.p.exists())
+    def test_no_overwrite(self):
+        self.go("responsive");self.assertRaises(ValueError,review,"visual",self.p,self.read)
+    def test_invalid(self):
+        for p in ("","gaming","--anything"):self.assertRaises(ValueError,review,p,self.p,self.read)
+    def test_rollback(self):
+        def fail(k,v):
+            if k=="animations" and v is False:raise RuntimeError("failure")
+            self.write(k,v)
+        with self.assertRaisesRegex(RuntimeError,"previous values verified"):self.go("responsive",fail)
+        self.assertEqual(self.state,dict.fromkeys(KEYS,True));self.assertFalse(self.p.exists())
+    def test_rollback_failure(self):
+        def fail(k,v):
+            if k=="animations" or (k=="compositing" and v is True):raise RuntimeError("failure")
+            self.write(k,v)
+        with self.assertRaisesRegex(RuntimeError,"journal retained"):self.go("responsive",fail)
+        self.assertIsNotNone(load(self.p));self.go("restore");self.assertFalse(self.p.exists())
+    def test_external_change(self):
+        def concurrent(k,v):
+            self.write(k,v)
+            if k=='compositing' and v is False:self.state['animations']=False
+        with self.assertRaisesRegex(RuntimeError,'journal retained'):self.go('responsive',concurrent)
+        self.assertFalse(self.state['animations']);self.assertTrue(self.state['compositing']);self.assertIsNotNone(load(self.p))
+    def test_crash_recovery(self):
+        plan=review("responsive",self.p,self.read)
+        save_new(self.p,{"schema":1,"profile":"responsive","before":plan["before"],"target":plan["target"]})
+        self.state["compositing"]=False;self.go("restore");self.assertTrue(all(self.state.values()))
+    def test_symlink(self):
+        target=self.p.parent/"target";target.write_text("keep");self.p.symlink_to(target)
+        with self.assertRaises(OSError):self.go("responsive")
+        self.assertEqual(target.read_text(),"keep")
+    def test_malformed(self):
+        self.p.write_text("{}");self.p.chmod(0o600);self.assertRaises(ValueError,self.go,"responsive")
+    def test_lock(self):
+        p=self.p.parent/"lock"
+        with lock(p):
+            with self.assertRaises(OSError):lock(p)
+if __name__=="__main__":
+    if sys.argv[1:]==["--self-test"]:unittest.main(argv=[sys.argv[0]])
+    try:
+        if os.geteuid()==0:raise ValueError("Run as the desktop user")
+        resolved=Path(EXE).resolve(strict=True)
+        if not resolved.is_file() or not os.access(resolved,os.X_OK) or any(p.stat().st_uid!=0 or p.stat().st_mode&0o022 for p in (resolved,*resolved.parents)):
+            raise ValueError("Trusted XFCE configuration utility unavailable")
+        directory=state_dir(Path.home());path=directory/"journal.json";args=sys.argv[1:]
+        with lock(directory/"lock"):
+            if args==["status"]:result={"values":snapshot(read_key),"recovery_pending":load(path) is not None}
+            elif len(args)==2 and args[0]=="plan":result=review(args[1],path,read_key)
+            elif len(args)==3 and args[0]=="apply" and re.fullmatch(r"[a-f0-9]{64}",args[2]):result=apply(args[1],args[2],path,read_key,write_key)
+            else:raise ValueError("Use status, plan PROFILE or apply PROFILE TOKEN")
+        print(json.dumps(result,sort_keys=True))
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as exc:
+        print("ERROR: "+str(exc),file=sys.stderr);sys.exit(1)
