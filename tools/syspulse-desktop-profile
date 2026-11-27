@@ -80,10 +80,12 @@ def review(profile,path,read):
         before=valid(snapshot(read));target={k:PROFILES[profile] for k in before}
     else: raise ValueError("Unknown preset")
     return {"profile":profile,"before":before,"target":target,"token":digest([profile,before,target,old])}
-def change(before,target,read,write):
+def change(before,target,read,write,attempted=None):
     for k,v in target.items():
         if read(k)!=before[k]: raise RuntimeError("Desktop setting changed during review")
-        if before[k]!=v: write(k,v)
+        if before[k]!=v:
+            if attempted is not None: attempted.append(k)
+            write(k,v)
         if read(k)!=v: raise RuntimeError("Setting readback failed")
 def apply(profile,token,path,read,write):
     plan=review(profile,path,read)
@@ -96,14 +98,18 @@ def apply(profile,token,path,read,write):
         if before==target: return {"status":"already-active","values":before}
         journal={"schema":1,"profile":profile,"before":before,"target":target}
         save_new(path,journal)
+    attempted=[]
     try:
-        change(before,target,read,write)
+        change(before,target,read,write,attempted)
     except Exception as exc:
         # Return to the state captured for this transaction; keep journal on any
         # uncertain outcome, including a partial restore.
         try:
-            current={k:read(k) for k in before};valid(current)
-            change(current,before,read,write)
+            for k in reversed(attempted):
+                now=read(k)
+                if now==target[k] and now!=before[k]:write(k,before[k])
+                if read(k)!=before[k]:raise RuntimeError('Rollback readback failed')
+            if any(read(k)!=v for k,v in before.items()):raise RuntimeError('External change during operation')
             if profile!="restore": clear(path,journal)
         except Exception as rollback:
             raise RuntimeError("Change failed; rollback unverified. Recovery journal retained.") from rollback
@@ -158,6 +164,12 @@ class Tests(unittest.TestCase):
             self.write(k,v)
         with self.assertRaisesRegex(RuntimeError,"journal retained"):self.go("responsive",fail)
         self.assertIsNotNone(load(self.p));self.go("restore");self.assertFalse(self.p.exists())
+    def test_external_change(self):
+        def concurrent(k,v):
+            self.write(k,v)
+            if k=='compositing' and v is False:self.state['animations']=False
+        with self.assertRaisesRegex(RuntimeError,'journal retained'):self.go('responsive',concurrent)
+        self.assertFalse(self.state['animations']);self.assertTrue(self.state['compositing']);self.assertIsNotNone(load(self.p))
     def test_crash_recovery(self):
         plan=review("responsive",self.p,self.read)
         save_new(self.p,{"schema":1,"profile":"responsive","before":plan["before"],"target":plan["target"]})
