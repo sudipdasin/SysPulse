@@ -296,7 +296,7 @@ struct Window::Impl {
         scheduleActions->addWidget(button("Enable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-enable");},w,true));
         scheduleActions->addWidget(button("Disable weekly SSD TRIM",[this]{locateMaintenanceTool("trim-disable");},w));
         scheduleLayout->addLayout(scheduleActions);
-        auto* cleanupSchedule=new QHBoxLayout;cleanupSchedule->addWidget(button("Enable weekly APT archive cleanup",[this]{locateMaintenanceTool("weekly-clean-enable");},w,true));cleanupSchedule->addWidget(button("Disable weekly APT archive cleanup",[this]{locateMaintenanceTool("weekly-clean-disable");},w));scheduleLayout->addLayout(cleanupSchedule);
+        scheduleLayout->addWidget(scheduleProfilePanel());
         scheduleLayout->addWidget(schedules,1);
         pages.insert("schedules",workspace("Schedules","Inspect timers and opt in to weekly SSD maintenance or obsolete package archive cleanup. No timer changes at startup.",schedulePage));
         pages.insert("recovery",recoveryPage());
@@ -364,6 +364,46 @@ struct Window::Impl {
     }
     void updateMetrics() {
         cpu->setText(performance->cpuValue());memory->setText(performance->memoryValue());disk->setText(performance->diskValue());network->setText(performance->networkValue());
+    }
+    QWidget* scheduleProfilePanel() {
+        auto* page=panel();auto* layout=new QVBoxLayout(page);
+        layout->addWidget(text("Scheduled obsolete package archive cleanup","sectionTitle"));
+        layout->addWidget(text("Choose one daily, weekly or monthly schedule, or turn it off. APT autoclean does not remove installed applications or personal files. Persistent timers may run a missed cleanup after startup. An already-running job can finish when disabled.","muted"));
+        auto* state=text("Read timer states before choosing a schedule.","muted");state->setTextFormat(Qt::PlainText);state->setObjectName("scheduleProfileStatus");layout->addWidget(state);
+        auto* choice=new QComboBox;choice->setObjectName("scheduleProfileChoice");
+        choice->addItem("Off","off");choice->addItem("Daily","daily");choice->addItem("Weekly","weekly");choice->addItem("Monthly","monthly");
+        auto* read=new QPushButton("Read current schedule");auto* apply=new QPushButton("Apply reviewed schedule…");apply->setObjectName("scheduleProfileApply");apply->setEnabled(false);
+        auto* row=new QHBoxLayout;row->addWidget(read);row->addWidget(choice);row->addWidget(apply);layout->addLayout(row);
+        auto token=std::make_shared<QString>();
+        const auto reload=[=]{
+            token->clear();apply->setEnabled(false);const auto exe=tux::trustedSystemExecutable("syspulse-schedule-profile");
+            if(exe.isEmpty()){state->setText("Installed schedule helper unavailable.");return;}
+            read->setEnabled(false);
+            AsyncCommand::run(page,exe,{"status"},35000,4096,[=](const AsyncCommandResult& result){
+                read->setEnabled(true);const auto value=QString::fromUtf8(result.output).trimmed();
+                if(!result.ok()||!QRegularExpression("^[01]{6}$").match(value).hasMatch()){state->setText("Timer state unavailable: "+value.left(500));return;}
+                *token=value;const QStringList patterns={"000000","110000","001100","000011"};const auto index=patterns.indexOf(value);
+                if(index>=0)choice->setCurrentIndex(index);
+                state->setText(QString("Enabled / active: daily %1, weekly %2, monthly %3.").arg(value.mid(0,2),value.mid(2,2),value.mid(4,2)));
+                apply->setEnabled(true);
+            });
+        };
+        QObject::connect(read,&QPushButton::clicked,page,reload);
+        QObject::connect(apply,&QPushButton::clicked,page,[=]{
+            if(token->isEmpty()||tux::admin::busy())return;
+            const auto target=choice->currentData().toString(),expected=*token;
+            const QStringList request={"schedule",target,expected};
+            auto command=tux::admin::typedCommand(request);const auto exe=tux::trustedSystemExecutable("syspulse-schedule-profile"),auth=tux::trustedSystemExecutable("pkexec");
+            if(command.isEmpty()||exe.isEmpty()||auth.isEmpty())return;command[0]=exe;
+            if(QMessageBox::question(page,"Review scheduled maintenance",QString("Set obsolete APT archive cleanup schedule to %1? Other SysPulse archive-cleanup timers will be disabled. Current timer states will be rechecked before applying.").arg(target),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            if(*token!=expected||tux::admin::busy())return;
+            ReviewedProgress progress(page);progress.setWindowTitle("Applying maintenance schedule");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+            auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for authorization, timer configuration and readback…"));
+            apply->setEnabled(false);read->setEnabled(false);QString outcome;
+            tux::admin::runReviewed(&progress,request,auth,command,4096,[&](const AsyncCommandResult& result){outcome=(result.ok()?"Schedule operation completed: ":"Schedule not verified: ")+QString::fromUtf8(result.output).left(600);progress.done(0);});
+            progress.exec();refreshActionIndicators();QMessageBox::information(page,"Maintenance schedule",outcome);reload();
+        });
+        return page;
     }
     QWidget* reviewedSettingPanel(bool wifi) {
         auto* page=panel();auto* layout=new QVBoxLayout(page);
@@ -652,6 +692,19 @@ struct Window::Impl {
             if(QMessageBox::question(w,"Launch bounded-cache Brave",QString("Close all Brave windows and background browser processes first. Launch Brave with --disk-cache-size=%1? Existing browser instances may ignore new launch flags. This does not alter security settings or delete browsing data.").arg(bytes),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
             if(!QProcess::startDetached(exe,{"--disk-cache-size="+bytes}))QMessageBox::warning(w,"Brave","Could not start browser.");
         },integrations,true);brave->setObjectName("launchBraveBounded");il->addWidget(brave);
+        auto* braveStatus=text("Persistent separate menu launcher: read status or save a cache limit.","muted");braveStatus->setObjectName("bravePersistentStatus");braveStatus->setTextFormat(Qt::PlainText);il->addWidget(braveStatus);
+        const auto braveOperation=[=](const QString& action){
+            const auto exe=tux::trustedSystemExecutable("syspulse-brave-profile");if(exe.isEmpty()){braveStatus->setText("Installed launcher helper unavailable.");return;}
+            const int mib=cap->value();QStringList args={action};
+            if(action=="set")args<<QString::number(mib);
+            if(action!="status"&&QMessageBox::question(integrations,"Review persistent Brave launcher",action=="set"?QString("Create or update a separate Brave (SysPulse cache limit) application-menu launcher with %1 MiB? The original Brave launcher and browser preferences will not be changed. Close other Brave instances before using it.").arg(mib):QString("Remove only the unmodified SysPulse Brave launcher? Browser data and the original launcher remain untouched."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            ReviewedProgress progress(integrations);progress.setWindowTitle("Brave launcher");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Checking and applying launcher state…"));
+            AsyncCommand::runAction(&progress,exe,args,4096,[&](const AsyncCommandResult& result){braveStatus->setText((result.ok()?"Verified: ":"Not verified: ")+QString::fromUtf8(result.output).trimmed().left(800));progress.done(0);});progress.exec();
+        };
+        auto* braveRow=new QHBoxLayout;
+        auto* saveBrave=button("Save persistent cache launcher…",[braveOperation]{braveOperation("set");},integrations,true);saveBrave->setObjectName("saveBraveProfile");braveRow->addWidget(saveBrave);
+        braveRow->addWidget(button("Read launcher status",[braveOperation]{braveOperation("status");},integrations));
+        braveRow->addWidget(button("Remove SysPulse launcher…",[braveOperation]{braveOperation("remove");},integrations));il->addLayout(braveRow);
         il->addWidget(button("Review browser cache in Cleaner",[this]{
             navigate("storage");auto* outer=pages.value("storage")->findChild<QTabWidget*>("storageWorkspaceTabs");if(!outer)return;outer->setCurrentIndex(2);
             auto* mode=outer->findChild<QComboBox*>("cleanerMode");auto* root=outer->findChild<QLineEdit*>("cleanerRoot");
@@ -660,10 +713,42 @@ struct Window::Impl {
         il->addStretch();auto* integrationScroll=new QScrollArea;integrationScroll->setWidgetResizable(true);integrationScroll->setWidget(integrations);tabs->addTab(integrationScroll,"Gaming & browser");tabs->addTab(inputControlPage(),"Input controls");
         return workspace("XFCE desktop","Desktop, input, power and installed Linux integrations.",tabs);
     }
+    QWidget* desktopRecoveryPanel() {
+        auto* page=panel();auto* layout=new QVBoxLayout(page);
+        layout->addWidget(text("XFCE desktop configuration snapshot","sectionTitle"));
+        layout->addWidget(text("Capture supported window-manager booleans (compositing, focus, snapping and workspace wrapping). Review current versus saved values before restoring. This is not a full system or personal-file backup.","muted"));
+        auto* state=text("No snapshot operation performed.","muted");state->setTextFormat(Qt::PlainText);state->setObjectName("desktopRecoveryStatus");layout->addWidget(state);
+        auto* captureButton=new QPushButton("Capture desktop settings…");captureButton->setObjectName("captureDesktopSnapshot");
+        auto* restoreButton=new QPushButton("Review and restore snapshot…");restoreButton->setObjectName("restoreDesktopSnapshot");
+        auto* row=new QHBoxLayout;row->addWidget(captureButton);row->addWidget(restoreButton);layout->addLayout(row);
+        QObject::connect(captureButton,&QPushButton::clicked,page,[=]{
+            const auto exe=tux::trustedSystemExecutable("syspulse-desktop-recovery");
+            if(exe.isEmpty()){state->setText("Installed recovery helper unavailable.");return;}
+            if(QMessageBox::question(page,"Capture desktop settings","Save the supported current XFCE values, replacing the previous SysPulse desktop snapshot if present?",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            captureButton->setEnabled(false);restoreButton->setEnabled(false);
+            AsyncCommand::run(page,exe,{"capture"},45000,4096,[=](const AsyncCommandResult& result){captureButton->setEnabled(true);restoreButton->setEnabled(true);state->setText((result.ok()?"Verified: ":"Not verified: ")+QString::fromUtf8(result.output).trimmed().left(800));});
+        });
+        QObject::connect(restoreButton,&QPushButton::clicked,page,[=]{
+            const auto exe=tux::trustedSystemExecutable("syspulse-desktop-recovery");if(exe.isEmpty()){state->setText("Installed recovery helper unavailable.");return;}
+            captureButton->setEnabled(false);restoreButton->setEnabled(false);
+            AsyncCommand::run(page,exe,{"plan"},45000,8192,[=](const AsyncCommandResult& result){
+                captureButton->setEnabled(true);restoreButton->setEnabled(true);
+                QJsonParseError error;const auto doc=QJsonDocument::fromJson(result.output,&error);const auto plan=doc.object();
+                const auto token=plan.value("token").toString();const auto before=plan.value("before").toObject(),target=plan.value("target").toObject();
+                if(!result.ok()||error.error!=QJsonParseError::NoError||!QRegularExpression("^[a-f0-9]{64}$").match(token).hasMatch()||target.isEmpty()){state->setText("Snapshot review unavailable: "+QString::fromUtf8(result.output).left(600));return;}
+                QString details;for(auto i=target.begin();i!=target.end();++i)details+=i.key()+": "+(before.value(i.key()).toBool()?"true":"false")+" → "+(i.value().toBool()?"true":"false")+"\n";
+                QMessageBox confirm(QMessageBox::Question,"Review desktop restore","Restore only these saved settings? The helper refuses stale state and attempts rollback if a change fails.",QMessageBox::Yes|QMessageBox::Cancel,page);confirm.setTextFormat(Qt::PlainText);confirm.setInformativeText(details);confirm.setDefaultButton(QMessageBox::Cancel);
+                if(confirm.exec()!=QMessageBox::Yes)return;
+                ReviewedProgress progress(page);progress.setWindowTitle("Restoring desktop snapshot");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Restoring reviewed settings and verifying readback…"));
+                AsyncCommand::runAction(&progress,exe,{"restore",token},8192,[&](const AsyncCommandResult& restored){state->setText((restored.ok()?"Restore verified: ":"Restore not verified: ")+QString::fromUtf8(restored.output).left(1000));progress.done(0);});progress.exec();
+            });
+        });
+        return page;
+    }
     QWidget* recoveryPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);auto* frame=panel();auto* fl=new QVBoxLayout(frame);fl->setContentsMargins(20,20,20,20);
         fl->addWidget(text("Startup overrides","sectionTitle"));fl->addWidget(text("Review the selected application in Startup apps to restore its system default or inspect an available undo record. Recovery refuses externally changed targets.","muted"));fl->addWidget(button("Review startup recovery",[this]{navigate("management");management->showStartup();},w,true));layout->addWidget(frame);
-        auto* limits=panel();auto* ll=new QVBoxLayout(limits);ll->setContentsMargins(20,20,20,20);ll->addWidget(text("Recovery availability","sectionTitle"));ll->addWidget(text("Cleanup and process termination cannot be undone here. Snapshot creation and general configuration rollback are planned; no backup is created automatically.","muted"));layout->addWidget(limits);
+        auto* limits=panel();auto* ll=new QVBoxLayout(limits);ll->setContentsMargins(20,20,20,20);ll->addWidget(text("Recovery availability","sectionTitle"));ll->addWidget(text("Permanent cleanup and process termination cannot be undone. Use the scoped XFCE snapshot below or separate system/personal-file backup utilities.","muted"));layout->addWidget(limits);layout->addWidget(desktopRecoveryPanel());
         layout->addWidget(button("Review/install snapshot and backup utilities…",[this]{reviewPackageGroup("backup");},content));
         layout->addWidget(installedTools("Recover files to a different disk. Timeshift system snapshots are not personal-file backups.",{{"Timeshift","timeshift-gtk"},{"File recovery","qphotorec"},{"Personal file backups","deja-dup"}}),1);layout->addStretch();
         return workspace("Recovery","Use recovery only where a supported saved state exists.",content);
