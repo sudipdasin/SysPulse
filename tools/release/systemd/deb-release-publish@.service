@@ -1,0 +1,30 @@
+[Unit]
+Description=DEB Release Fleet %i signing transaction
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=debrel-%i
+Group=debrel-%i
+SupplementaryGroups=deb-release-readers
+EnvironmentFile=/etc/deb-release/%i.conf
+WorkingDirectory=/opt/deb-release
+LoadCredential=git-token:/etc/deb-release/credentials/%i/git-token
+LoadCredential=gpg-passphrase:/etc/deb-release/credentials/%i/gpg-passphrase
+ReadWritePaths=/var/lib/deb-release
+# Dedicated account owns only its policy-specific leaf state directory.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+UMask=0077
+TimeoutStartSec=15min
+ExecStart=/usr/bin/python3 /opt/deb-release/tools/release/fleet_signer.py publish --policy /etc/deb-release/%i.json --state ${STATE_PATH} --gpg-home ${GPG_HOME} --git-token %d/git-token --passphrase %d/gpg-passphrase --approval ${APPROVAL_PATH} --validator-uid ${VALIDATOR_UID} --apply
