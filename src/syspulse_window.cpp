@@ -4,6 +4,8 @@
 #include "tux/admin_protocol.hpp"
 #include <QFile>
 #include <QSpinBox>
+#include <QDialog>
+#include <QPlainTextEdit>
 #include <QThread>
 #include "syspulse/diagnostic_sharing_dialog.hpp"
 #include "syspulse/dependency_help.hpp"
@@ -67,6 +69,10 @@
 
 namespace syspulse {
 namespace {
+class ReviewedProgress final: public QDialog {
+public: using QDialog::QDialog; void reject() override {}
+protected: void closeEvent(QCloseEvent* e) override {e->ignore();}
+};
 class PulseMark final: public QWidget {
 public:
     explicit PulseMark(QWidget* p=nullptr):QWidget(p) {setFixedSize(42,48);setAccessibleName("SysPulse pulse mark");}
@@ -411,6 +417,39 @@ struct Window::Impl {
         }
         layout->addLayout(grid);layout->addStretch();return content;
     }
+    void reviewPackageGroup(const QString& group) {
+        const QStringList request={"packages",group,"install"};
+        auto command=tux::admin::typedCommand(request);
+        const auto apt=tux::trustedSystemExecutable("apt-get");
+        if(command.isEmpty()||apt.isEmpty()||tux::admin::busy()){QMessageBox::warning(w,"Package operation","Trusted package manager unavailable or administrator action already running.");return;}
+        command[0]=apt;
+        QStringList previewArgs=command.mid(1);previewArgs.prepend("--simulate");
+        QDialog review(w);review.setWindowTitle("Review package plan");review.resize(800,540);
+        auto* layout=new QVBoxLayout(&review);layout->addWidget(text("Preview from configured distribution repositories. No third-party repository is added. Removal is forbidden; package versions and dependencies may be re-resolved at install time. Existing configuration files are preserved where dpkg offers a choice.","muted"));
+        auto* output=new QPlainTextEdit;output->setReadOnly(true);output->setPlainText("Resolving package transaction…");layout->addWidget(output,1);
+        auto* approve=new QPushButton("Install reviewed package group…");approve->setEnabled(false);layout->addWidget(approve);
+        auto* cancel=new QPushButton("Cancel");layout->addWidget(cancel);
+        QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);
+        QObject::connect(approve,&QPushButton::clicked,&review,&QDialog::accept);
+        AsyncCommand::run(&review,apt,previewArgs,60000,65536,[=](const AsyncCommandResult& result){
+            output->setPlainText(QString::fromUtf8(result.output)+(result.ok()?"":"\nPreview failed, was incomplete, or exceeded the limit. Refresh package lists or use the distribution package manager."));
+            approve->setEnabled(result.ok());
+        });
+        if(review.exec()!=QDialog::Accepted)return;
+        if(!tux::admin::active()||tux::admin::busy()){
+            QMessageBox::information(w,"Administrator session required","Unlock the SysPulse administrator session first, then review this package plan again. The noninteractive installation uses the protected session and does not store your password.");
+            openSettingsSection("adminSessionStatus");return;
+        }
+        if(tux::trustedSystemExecutable("apt-get")!=apt)return;
+        ReviewedProgress progress(w);progress.setWindowTitle("Applying reviewed package transaction");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+        auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("APT is running. Do not close SysPulse or interrupt power. Package transactions may take time."));
+        AsyncCommandResult outcome;
+        tux::admin::runReviewed(&progress,request,tux::trustedSystemExecutable("pkexec"),command,65536,[&](const AsyncCommandResult& result){outcome=result;progress.done(0);});
+        progress.exec();refreshActionIndicators();
+        QMessageBox report(w);report.setWindowTitle("Package transaction result");report.setIcon(outcome.exitCode==0?QMessageBox::Information:QMessageBox::Warning);report.setTextFormat(Qt::PlainText);
+        report.setText(outcome.exitCode==0?"APT reported a successful exit. Review the installed applications.":"APT did not confirm completion. Review the package manager and do not retry blindly.");
+        report.setDetailedText(QString::fromUtf8(outcome.output)+(!outcome.error.isEmpty()?"\n"+outcome.error:QString())+(outcome.truncated?"\nOutput truncated.":QString()));report.exec();
+    }
     QWidget* desktopPage() {
         auto* tabs=new QTabWidget;tabs->setObjectName("desktopWorkspaceTabs");auto* settings=new QWidget;auto* layout=new QVBoxLayout(settings);
         layout->addWidget(text("Open installed XFCE settings tools. Changes are made through their native interfaces.","muted"));
@@ -429,12 +468,33 @@ struct Window::Impl {
         layout->addLayout(grid);layout->addStretch();auto* desktopScroll=new QScrollArea;desktopScroll->setWidgetResizable(true);desktopScroll->setWidget(settings);tabs->addTab(desktopScroll,"Desktop settings");
         auto* diagnostic=toolbox({"Performance","Input","Gaming","Desktop"});toolboxes.insert("desktop",diagnostic);tabs->addTab(diagnostic,"Diagnostics & integrations");
         tabs->addTab(installedTools("Administration tools are optional and run separately using their own authorization.",{{"Settings manager","xfce4-settings-manager"},{"Desktop preferences","xfdesktop-settings"},{"Driver manager","driver-manager"},{"Users and groups","users-admin"},{"Mint users","mintusers"},{"Login window","lightdm-settings"},{"Printers","system-config-printer"},{"Hardware information","hardinfo"},{"Password and keys","seahorse"}}),"Administration tools");
+        auto* integrations=new QWidget;auto* il=new QVBoxLayout(integrations);
+        il->addWidget(text("Gaming setup · native package installation","sectionTitle"));
+        il->addWidget(text("Review and install fixed package groups from configured distribution repositories. No WineHQ key, PPA or unsigned repository is added. An unlocked administrator session is required for installation.","muted"));
+        const QVector<QPair<QString,QString>> groups={{"Wine, Winetricks and Cabextract","wine"},{"Lutris","lutris"},{"Vulkan, Mesa and GameMode","graphics"},{"TLP power management","power"},{"Preload application accelerator","preload"}};
+        for(const auto& g:groups)il->addWidget(button("Review/install "+g.first,[this,g]{reviewPackageGroup(g.second);},integrations));
+        il->addWidget(text("Brave · bounded cache launch","sectionTitle"));
+        auto* cap=new QSpinBox;cap->setRange(64,2048);cap->setValue(256);cap->setSuffix(" MiB");cap->setObjectName("braveCacheCap");il->addWidget(cap);
+        auto* brave=button("Launch Brave with selected cache limit…",[this,cap]{
+            auto exe=tux::trustedSystemExecutable("brave-browser");if(exe.isEmpty())exe=tux::trustedSystemExecutable("brave-browser-stable");
+            if(exe.isEmpty()){QMessageBox::warning(w,"Brave","Trusted Brave browser installation not found.");return;}
+            const auto bytes=QString::number(static_cast<qint64>(cap->value())*1048576);
+            if(QMessageBox::question(w,"Launch bounded-cache Brave",QString("Close all Brave windows and background browser processes first. Launch Brave with --disk-cache-size=%1? Existing browser instances may ignore new launch flags. This does not alter security settings or delete browsing data.").arg(bytes),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+            if(!QProcess::startDetached(exe,{"--disk-cache-size="+bytes}))QMessageBox::warning(w,"Brave","Could not start browser.");
+        },integrations,true);brave->setObjectName("launchBraveBounded");il->addWidget(brave);
+        il->addWidget(button("Review browser cache in Cleaner",[this]{
+            navigate("storage");auto* outer=pages.value("storage")->findChild<QTabWidget*>("storageWorkspaceTabs");if(!outer)return;outer->setCurrentIndex(2);
+            auto* mode=outer->findChild<QComboBox*>("cleanerMode");auto* root=outer->findChild<QLineEdit*>("cleanerRoot");
+            if(mode&&root){mode->setCurrentIndex(3);root->setText(QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)+"/BraveSoftware/Brave-Browser");}
+        },integrations));
+        il->addStretch();auto* integrationScroll=new QScrollArea;integrationScroll->setWidgetResizable(true);integrationScroll->setWidget(integrations);tabs->addTab(integrationScroll,"Gaming & browser");
         return workspace("XFCE desktop","Desktop, input, power and installed Linux integrations.",tabs);
     }
     QWidget* recoveryPage() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);auto* frame=panel();auto* fl=new QVBoxLayout(frame);fl->setContentsMargins(20,20,20,20);
         fl->addWidget(text("Startup overrides","sectionTitle"));fl->addWidget(text("Review the selected application in Startup apps to restore its system default or inspect an available undo record. Recovery refuses externally changed targets.","muted"));fl->addWidget(button("Review startup recovery",[this]{navigate("management");management->showStartup();},w,true));layout->addWidget(frame);
         auto* limits=panel();auto* ll=new QVBoxLayout(limits);ll->setContentsMargins(20,20,20,20);ll->addWidget(text("Recovery availability","sectionTitle"));ll->addWidget(text("Cleanup and process termination cannot be undone here. Snapshot creation and general configuration rollback are planned; no backup is created automatically.","muted"));layout->addWidget(limits);
+        layout->addWidget(button("Review/install snapshot and backup utilities…",[this]{reviewPackageGroup("backup");},content));
         layout->addWidget(installedTools("Recover files to a different disk. Timeshift system snapshots are not personal-file backups.",{{"Timeshift","timeshift-gtk"},{"File recovery","qphotorec"},{"Personal file backups","deja-dup"}}),1);layout->addStretch();
         return workspace("Recovery","Use recovery only where a supported saved state exists.",content);
     }
@@ -508,7 +568,7 @@ struct Window::Impl {
             command[0]=sysctl;
             if(QMessageBox::question(content,"Review runtime swap change",QString("Change vm.swappiness from %1 to %2 for the current boot? No persistent configuration files will be changed.").arg(before).arg(target),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
             if(readValue()!=before||tux::admin::busy()){swapStatus->setText("System state changed during review. Read again.");return;}
-            QDialog progress(content);progress.setWindowTitle("Applying runtime memory setting");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
+            ReviewedProgress progress(content);progress.setWindowTitle("Applying runtime memory setting");progress.setWindowFlags(Qt::Dialog|Qt::CustomizeWindowHint|Qt::WindowTitleHint);
             auto* pl=new QVBoxLayout(&progress);pl->addWidget(text("Waiting for administrator authorization and kernel readback…"));
             applySwap->setEnabled(false);restoreSwap->setEnabled(false);readSwap->setEnabled(false);
             tux::admin::runReviewed(&progress,request,auth,command,4096,[&](const AsyncCommandResult& result){
@@ -637,6 +697,7 @@ struct Window::Impl {
         add(6,0,"Enable weekly SSD maintenance","trim-enable","maintenanceTrimEnable");
         add(6,1,"Disable weekly SSD maintenance","trim-disable","maintenanceTrimDisable");
         layout->addLayout(tools);
+        auto* packageRow=new QHBoxLayout;packageRow->addWidget(button("Preview and repair broken packages…",[this]{reviewPackageGroup("repair");},content));packageRow->addWidget(button("Install disk maintenance tools…",[this]{reviewPackageGroup("disk");},content));layout->addLayout(packageRow);
         layout->addWidget(text("Actions execute after explicit review. Package cleanup removes downloaded archives, not installed programs; log pruning permanently removes archived logs. Compositor changes can cause tearing; the opposite reviewed action is available. Do not disable swap or drop useful kernel caches.","muted"));
         return content;
     }
