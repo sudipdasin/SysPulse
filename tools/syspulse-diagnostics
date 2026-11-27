@@ -9,6 +9,7 @@ import syspulse_research as research
 import syspulse_hybrid as hybrid
 import syspulse_outcomes as outcomes
 import syspulse_recovery as recovery
+import syspulse_native_probes as native_probes
 P=pathlib.Path
 MAX_READ=1024*1024
 MAX_LINES=6000
@@ -212,6 +213,20 @@ def specs():
     ]:jobs.append((name,"file",[path]))
     for name,path in [("syslog-rotated","/var/log/syslog.2.gz"),("kernel-log-rotated","/var/log/kern.log.2.gz"),("auth-log-rotated","/var/log/auth.log.2.gz"),("dpkg-log-rotated","/var/log/dpkg.log.2.gz"),("apt-history-rotated","/var/log/apt/history.log.1.gz"),("apt-terminal-rotated","/var/log/apt/term.log.1.gz")]:jobs.append((name,"gzip",[path]))
     return jobs
+def apt_solver_source():
+    plan=native_probes.collect_apt(command)
+    state=plan["status"]
+    row=source("apt-repair-simulation","ok" if state=="no_changes" else "partial",
+               {"package_failure":1} if state in ("review","removal_blocked","solver_failed") else {},
+               notes="Read-only APT simulation; package names discarded; no execution authorized.")
+    row["apt_simulation"]=plan
+    return row
+def interval_source():
+    data=native_probes.collect_vm(command)
+    row=source("procps-interval-sampling","ok" if data["status"]=="sampled" else "partial",
+               lines=data["samples"],notes="Two recent one-second intervals; since-boot average excluded.")
+    row["interval_metrics"]=data
+    return row
 def smart_source():
     if not any((P(d)/"smartctl").is_file() for d in ("/usr/bin","/usr/sbin","/bin","/sbin")):
         return source("smart-disk-health","unavailable",notes="Optional smartmontools not installed; health not verified.")
@@ -287,6 +302,7 @@ def assess(metrics,sources,history):
     # Unknown coverage never becomes a clean bill of health.
     storage_ok=all(x+"_total_bytes" in metrics and x+"_readonly" in metrics for x in ("root","home","apt"))
     package_ok=not events["package_failure"] and any(s["name"]=="dpkg-audit" and s["status"] in ("ok","empty") and not s["bounded"] and not s["events"] for s in sources)
+    package_ok=package_ok and all(s.get("apt_simulation",{}).get("status")=="no_changes" for s in sources if s["name"]=="apt-repair-simulation")
     kernel_ok=any(s["name"] in ("kernel-journal-current-boot","kernel-ring") and s["status"] in ("ok","empty") and not s["bounded"] for s in sources)
     # A write-heavy action is permitted only with current storage telemetry and readable current kernel logs.
     eligible={"thumbnails":storage_ok and kernel_ok and not critical_storage and not critical_other,
@@ -604,7 +620,9 @@ def main():
             if a.mode=="analyze":
                 b=boot_id();start=clock()
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:rows=list(pool.map(collect_job,specs()))
-                rows.append(smart_source())
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    extra=[pool.submit(fn) for fn in (smart_source,apt_solver_source,interval_source)]
+                    rows.extend(f.result() for f in extra)
                 m=numeric_snapshot();require(boot_id()==b and clock()-start<=120,"Analysis interrupted or exceeded time budget")
                 result=record_analysis(c,m,rows,b,clock(),int(time.time()))
             elif a.mode=="history":result=show_history(c)
@@ -622,7 +640,11 @@ def main():
                 selected=json.loads(a.payload);fresh=None
                 if any(x in ("archives","thumbnails","failed_thumbnails") for x in selected):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:fresh=list(pool.map(collect_job,[s for s in specs() if s[0] in ("kernel-ring","kernel-journal-current-boot","dpkg-audit")]))
-                if fresh is not None:fresh.append(smart_source())
+                if fresh is not None:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                        extra=[pool.submit(smart_source)]
+                        if "archives" in selected:extra.append(pool.submit(apt_solver_source))
+                        fresh.extend(f.result() for f in extra)
                 result=reserve(c,a.id,selected,boot_id(),clock(),int(time.time()),numeric_snapshot(),caller(),fresh)
             else:result=finish(c,a.id,json.loads(a.payload),numeric_snapshot(),caller())
         print(json.dumps(result,ensure_ascii=True,separators=(",",":"),allow_nan=False));return 0
@@ -717,6 +739,13 @@ def run_tests():
             r=source("fixture","ok",counts,3);r["recovery_observations"]=obs
             a=record_analysis(self.c,self.m,self.s+[r],self.b,self.t,self.n)
             self.assertEqual(a["recovery_observations"],obs)
+        def test_solver_requires_review(self):
+            for state in ("review","removal_blocked","solver_failed","unknown"):
+                row=source("apt-repair-simulation","partial");row["apt_simulation"]={"status":state}
+                a=assess(self.m,self.s+[row],{})
+                self.assertFalse(a["recommendations"]["archives"]["allowed"])
+            row=source("apt-repair-simulation","ok");row["apt_simulation"]={"status":"no_changes"}
+            self.assertTrue(assess(self.m,self.s+[row],{})["recommendations"]["archives"]["allowed"])
         def test_recovery_controls_preserve_critical_errors(self):
             for msg in ("SMART health passed; 0 pending sectors","No errors detected in the RAM test.","Previous error resolved; service started successfully","GPU reset completed successfully."):
                 self.assertIsNone(classify(msg))
