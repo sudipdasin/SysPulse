@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Build the tracked source of one explicit commit; never publish or install.
+set -euo pipefail
+umask 077
+[[ $# == 2 && $EUID != 0 ]] || { echo 'Usage (ordinary user): bash tools/render/build-local-alpha39.sh COMMIT NEW_OUTPUT_DIR' >&2; exit 2; }
+commit=$1
+[[ $commit =~ ^[0-9a-f]{40}$ ]] || { echo 'Exact full Git commit required' >&2; exit 2; }
+root=$(git rev-parse --show-toplevel)
+[[ $(git -C "$root" rev-parse --verify "$commit^{commit}") == "$commit" ]] || exit 2
+git -C "$root" show "$commit:CMakeLists.txt" | grep -Fx 'set(SYSPULSE_ALPHA_NUMBER 39)' >/dev/null
+git -C "$root" cat-file -e "$commit:tools/render/Dockerfile.alpha39-local"
+[[ ! -e $2 && ! -L $2 ]] || { echo 'Output directory must not already exist' >&2; exit 2; }
+command -v docker >/dev/null && docker buildx version >/dev/null || { echo 'Existing Docker with Buildx is required; no dependencies will be installed automatically.' >&2; exit 2; }
+out=$(realpath -m -- "$2")
+[[ $out != / && $out != "$root" && $out != "$root/"* ]] || { echo 'Output must be outside the source tree' >&2; exit 2; }
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+git -C "$root" archive --format=tar "$commit" | tar -xf - -C "$tmp"
+mkdir -- "$out"
+docker buildx build --platform linux/amd64 --target artifacts \
+  --build-arg "SOURCE_COMMIT=$commit" \
+  --file "$tmp/tools/render/Dockerfile.alpha39-local" \
+  --output "type=local,dest=$out" "$tmp"
+(
+ cd "$out"
+ [[ $(cat SOURCE-CHECKOUT.txt) == "$commit" ]]
+ sha256sum -c SHA256SUMS
+ test -s INSTALL-STATUS.txt
+)
+printf 'Local evaluation artifacts: %s\nNo production publication or installation performed.\n' "$out"
