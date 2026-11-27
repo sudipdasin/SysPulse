@@ -124,7 +124,7 @@ RUN sha256sum -c "$HOME/preference.sha256" \
     && /usr/bin/syspulse-diagnostics self-test \
     && /usr/local/bin/syspulse-boost-runtime-test \
     && python3 /usr/local/bin/syspulse-diagnostic-learning-runtime-test.py /usr/bin/syspulse-diagnostics \
-    && for module in syspulse_hybrid.py syspulse_outcomes.py syspulse_recovery.py syspulse_native_probes.py syspulse_integrity.py syspulse_smart_evidence.py; do test "$(stat -c '%u:%g:%a' /usr/bin/$module)" = '0:0:644' || exit 1; done \
+    && for module in syspulse_hybrid.py syspulse_outcomes.py syspulse_recovery.py syspulse_native_probes.py syspulse_integrity.py syspulse_smart_evidence.py syspulse_package_evidence.py; do test "$(stat -c '%u:%g:%a' /usr/bin/$module)" = '0:0:644' || exit 1; done \
     && test "$(stat -c '%u:%g:%a' /usr/bin/syspulse_research.py)" = '0:0:644' \
     && python3 /usr/local/bin/syspulse-research-runtime-test.py /usr/bin/syspulse-diagnostics > /home/tester/AI39-INSTALLED-RESEARCH.txt \
     && cat /home/tester/AI39-INSTALLED-RESEARCH.txt \
