@@ -225,6 +225,29 @@ struct Window::Impl {
         }
         return true;
     }
+    QStringList researchLines(const QJsonObject& record) {
+        QStringList lines;
+        if(record.isEmpty()){lines<<"Online research was not requested or no evidence was available. Local diagnostics and Boost remain independent.";return lines;}
+        lines<<QString("Investigation: %1%2").arg(record.value("status").toString(),record.value("cached").toBool()?" · reused local evidence":"");
+        lines<<"External evidence is advisory. No online text, commands or code are executed.\n";
+        for(const auto& value:record.value("results").toArray()){
+            const auto r=value.toObject();lines<<QString("%1 · %2 %3").arg(r.value("provider").toString(),r.value("status").toString(),r.value("model").toString());
+            for(const auto& ref:r.value("references").toArray()){
+                const auto e=ref.toObject();QStringList concepts;for(const auto& c:e.value("concepts").toArray())concepts<<c.toString();
+                lines<<e.value("title").toString()<<e.value("url").toString()<<e.value("answer_url").toString();
+                if(!e.value("author").toString().isEmpty())lines<<"Answer author: "+e.value("author").toString()+" · "+e.value("license").toString();
+                if(!concepts.isEmpty())lines<<"Recognized concepts (not verified fixes): "+concepts.join(", ");
+            }
+            const auto advice=r.value("advice").toObject();for(auto it=advice.begin();it!=advice.end();++it){QStringList ids;for(const auto& item:it.value().toArray())ids<<item.toString();lines<<it.key()+": "+ids.join(", ");}
+            lines<<"";
+        }
+        const auto g=record.value("guidance").toObject();
+        lines<<QString("Independent model responses: %1. Only agreement can suppress a default action; no permission is added.").arg(g.value("model_count").toInt());
+        QStringList caution,priority;for(const auto& a:g.value("consensus_caution").toArray())caution<<a.toString();for(const auto& a:g.value("consensus_priority").toArray())priority<<a.toString();
+        if(!caution.isEmpty())lines<<"Shared caution: "+caution.join(", ");
+        if(!priority.isEmpty())lines<<"Shared suggestions (local eligibility and learned outcomes still control): "+priority.join(", ");
+        return lines;
+    }
     void showDiagnosticDetails(const QJsonObject& result) {
         QDialog dialog(w);dialog.setObjectName("deepAnalysisResults");dialog.setWindowTitle("System analysis · findings and coverage");dialog.resize(840,580);auto* layout=new QVBoxLayout(&dialog);
         const auto coverage=result.value("coverage").toObject();layout->addWidget(text(QString("%1 of %2 sources readable · %3 limited or unavailable. Observations may overlap; unavailable checks are not a clean bill of health.").arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()).arg(coverage.value("limited").toInt()),"sectionTitle"));
@@ -236,23 +259,56 @@ struct Window::Impl {
         for(const auto& v:result.value("sources").toArray()){const auto a=v.toObject();coverageLines<<QString("%1 · %2 · %3 lines").arg(a.value("name").toString(),a.value("status").toString()).arg(a.value("lines").toInt());const auto e=a.value("events").toObject();for(auto i=e.begin();i!=e.end();++i)coverageLines<<QString("    %1: %2").arg(i.key()).arg(i.value().toInt());}
         const auto metrics=result.value("metrics").toObject();for(auto i=metrics.begin();i!=metrics.end();++i)measurements<<i.key()+": "+i.value().toVariant().toString();
         const auto rec=result.value("recommendations").toObject();for(auto i=rec.begin();i!=rec.end();++i){const auto a=i.value().toObject(),h=a.value("history").toObject();recommendations<<QString("%1 · %2\n%3\nHistory: %4 attempts, %5 verified successes, %6 failures, %7 no-effect results\n").arg(i.key(),!a.value("allowed").toBool()?"Blocked":a.value("recommended").toBool()?"Recommended":"Optional",a.value("reason").toString()).arg(h.value("attempts").toInt()).arg(h.value("successes").toInt()).arg(h.value("failures").toInt()).arg(h.value("no_effect").toInt());}
-        make("Findings",findings);make("Log coverage",coverageLines);make("Measurements",measurements);make("Boost & learning",recommendations);layout->addWidget(tabs,1);
+        make("Findings",findings);make("Log coverage",coverageLines);make("Measurements",measurements);make("Boost & learning",recommendations);const auto external=result.value("research").toObject();make("AI & web evidence",researchLines(external));layout->addWidget(tabs,1);
         layout->addWidget(text("Local SQLite history stores classified counts and measured outcomes, not raw journal messages. Critical disk or kernel findings block automatic cache deletion. Use advanced diagnostics for repair review.","muted"));
-        auto* close=new QPushButton("Close");QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);layout->addWidget(close);dialog.exec();
+        auto* routes=new QComboBox;routes->setObjectName("researchDiagnosticRoutes");
+        // Resolve only fixed read-only diagnostic tools already present in SysPulse.
+        const QStringList approved={"kernel","devices","filesystem-config","memory","journal","failed","systemd-state","package-audit","package-origins","network-links","network-routes","network-manager-state","storage","journal-size"};
+        for(const auto& item:external.value("guidance").toObject().value("investigate").toArray()){
+            const auto id=item.toString();if(!approved.contains(id))continue;
+            const auto& a=tux::action(id);if(!a.changes)routes->addItem(a.title,id);
+        }
+        auto* row=new QHBoxLayout;auto* inspect=new QPushButton("Locate suggested diagnostic");inspect->setEnabled(routes->count()>0);routes->setVisible(routes->count()>0);inspect->setVisible(routes->count()>0);row->addWidget(routes,1);row->addWidget(inspect);
+        QString destinationId;QObject::connect(inspect,&QPushButton::clicked,&dialog,[&]{destinationId=routes->currentData().toString();dialog.accept();});
+        auto* close=new QPushButton("Close");QObject::connect(close,&QPushButton::clicked,&dialog,&QDialog::accept);row->addWidget(close);layout->addLayout(row);dialog.exec();
+        if(approved.contains(destinationId))locateMaintenanceTool(destinationId);
+    }
+    void researchSetup() {
+        QMessageBox info(w);info.setWindowTitle("Optional free-tier AI setup");info.setTextFormat(Qt::PlainText);
+        info.setText("Web research uses the public Ask Ubuntu API without a key. AI providers require your own free-only account and desktop keyring. Do not enable billing or paste keys into SysPulse logs.\n\nIf needed, install libsecret-tools using your package manager. In a terminal run:\n\nsecret-tool store --label='SysPulse Groq' application syspulse provider groq\n\nsecret-tool store --label='SysPulse Gemini' application syspulse provider gemini\n\nEnter each key at the hidden prompt. Use only free-tier accounts without billing enabled; SysPulse cannot verify your provider's billing plan. Gemini free-tier inputs may be used to improve products. Only fixed diagnostic categories are sent.");
+        auto* groq=info.addButton("Groq account",QMessageBox::ActionRole);auto* gemini=info.addButton("Google AI Studio",QMessageBox::ActionRole);info.addButton(QMessageBox::Close);info.exec();
+        if(info.clickedButton()==groq)QDesktopServices::openUrl(QUrl("https://console.groq.com/keys"));
+        if(info.clickedButton()==gemini)QDesktopServices::openUrl(QUrl("https://aistudio.google.com/app/apikey"));
     }
     void analyze() {
         if(!maintenanceAvailable())return;
-        QDialog review(w);review.setObjectName("deepAnalysisReview");review.setWindowTitle("Analyze system · SysPulse");review.resize(600,300);auto* layout=new QVBoxLayout(&review);
+        QDialog review(w);review.setObjectName("deepAnalysisReview");review.setWindowTitle("Analyze system · SysPulse");review.resize(660,440);auto* layout=new QVBoxLayout(&review);
         layout->addWidget(text("Full local diagnostic pass","sectionTitle"));
         layout->addWidget(text("Inspect readable current and recent system/user journals, kernel errors, rotated system logs, failed services, package audit, crash records, hardware and network inventory, memory, storage and pressure. Checks are bounded; unavailable sources are explicitly recorded."));
-        layout->addWidget(text("Read-only, no administrator escalation or network upload. Classified findings and measurements are saved locally. A fresh analysis is required before Boost. Raw log messages are not retained.","muted"));
+        layout->addWidget(text("Local analysis is read-only. Classified findings and measurements are saved locally. A fresh analysis is required before Boost. Raw log messages are not retained.","muted"));
+        layout->addWidget(text("Optional investigation of difficult findings","sectionTitle"));
+        auto* webResearch=new QCheckBox("Search public Linux troubleshooting discussions (no key)");webResearch->setObjectName("researchWebConsent");layout->addWidget(webResearch);
+        auto* groqResearch=new QCheckBox("Ask Groq free-tier AI (requires configured free-only key)");groqResearch->setObjectName("researchGroqConsent");layout->addWidget(groqResearch);
+        auto* geminiResearch=new QCheckBox("Ask Gemini free-tier AI (requires configured free-only key)");geminiResearch->setObjectName("researchGeminiConsent");layout->addWidget(geminiResearch);
+        layout->addWidget(text("Only fixed Linux Mint issue categories and broad resource context are sent. Providers may see your IP address and process inputs under their terms. No raw logs, hostnames, file paths, identifiers or measurements are sent. No automatic paid fallback. All choices are off by default.","muted"));
+        auto* setup=button("Configure optional AI accounts…",[this]{researchSetup();},&review);layout->addWidget(setup);
         auto* row=new QHBoxLayout;auto* cancel=new QPushButton("Cancel");cancel->setDefault(true);auto* start=new QPushButton("Run analysis");start->setObjectName("runDeepAnalysis");row->addStretch();row->addWidget(cancel);row->addWidget(start);layout->addLayout(row);
         QObject::connect(cancel,&QPushButton::clicked,&review,&QDialog::reject);QObject::connect(start,&QPushButton::clicked,&review,&QDialog::accept);
         if(review.exec()!=QDialog::Accepted)return;
         DiagnosticGuard guard(this);analysisId.clear();
-        const auto result=diagnosticCall({"analyze"},"Inspecting bounded logs and system health; recording findings locally…",150000);
+        auto result=diagnosticCall({"analyze"},"Inspecting bounded logs and system health; recording findings locally…",150000);
         if(!validAnalysis(result)){analysisStatus->setText("Analysis was not verified. Boost remains locked.");return;}
-        analysisId=result.value("id").toString();const auto coverage=result.value("coverage").toObject();
+        analysisId=result.value("id").toString();
+        QJsonArray providers;if(webResearch->isChecked())providers.append("web");if(groqResearch->isChecked())providers.append("groq");if(geminiResearch->isChecked())providers.append("gemini");
+        if(!providers.isEmpty()){
+            const auto evidence=diagnosticCall({"research",analysisId,QString::fromUtf8(QJsonDocument(providers).toJson(QJsonDocument::Compact))},"Investigating categorized findings with selected web and AI services in parallel…",55000);
+            if(evidence.value("id").toString()==analysisId){
+                const auto revised=diagnosticCall({"plan",analysisId},"Reading locally safety-checked research and updated recommendations…");
+                if(validAnalysis(revised)&&revised.value("id").toString()==analysisId)result=revised;
+                if(!result.contains("research"))result.insert("research",evidence);
+            }
+        }
+        const auto coverage=result.value("coverage").toObject();
         analysisStatus->setText(QString("Analysis saved · %1 findings · %2/%3 sources readable. Boost uses this report for 15 minutes, once.").arg(result.value("findings").toArray().size()).arg(coverage.value("readable").toInt()).arg(coverage.value("sources").toInt()));
         showDiagnosticDetails(result);
     }
@@ -263,6 +319,7 @@ struct Window::Impl {
         lines<<"Recent analyses (up to 30):";
         for(const auto& v:data.value("analyses").toArray()){const auto a=v.toObject(),c=a.value("coverage").toObject();lines<<QString("%1 · %2 · %3 · %4 findings · %5/%6 readable").arg(QDateTime::fromSecsSinceEpoch(static_cast<qint64>(a.value("utc").toDouble())).toLocalTime().toString("yyyy-MM-dd HH:mm"),a.value("state").toString(),a.value("context").toString()).arg(a.value("findings").toInt()).arg(c.value("readable").toInt()).arg(c.value("sources").toInt());}
         lines<<"\nOutcome-based learning (local only):";for(const auto& v:data.value("learning").toArray()){const auto a=v.toObject();lines<<QString("%1 / %2: %3 attempts, %4 successes, %5 failures, %6 no effect").arg(a.value("context").toString(),a.value("action").toString()).arg(a.value("attempts").toInt()).arg(a.value("successes").toInt()).arg(a.value("failures").toInt()).arg(a.value("no_effect").toInt());}
+        lines<<"\nRecent saved web and AI evidence:";for(const auto& v:data.value("research").toArray()){lines<<researchLines(v.toObject());lines<<"";}
         view->setPlainText(lines.join("\n"));layout->addWidget(view,1);
         layout->addWidget(text("Retains up to 180 analyses and their associated outcomes. Learning changes recommendations only, never security gates or executable commands.","muted"));
         auto* row=new QHBoxLayout;auto* clear=new QPushButton("Clear history…");auto* close=new QPushButton("Close");row->addWidget(clear);row->addStretch();row->addWidget(close);layout->addLayout(row);
@@ -1110,7 +1167,8 @@ struct Window::Impl {
         const auto apt=tux::trustedSystemExecutable("apt-get"),auth=tux::trustedSystemExecutable("pkexec");
         QDialog review(w);review.setObjectName("adaptiveBoostReview");review.setWindowTitle("Safe Boost · review once");review.resize(580,350);
         auto* rl=new QVBoxLayout(&review);rl->addWidget(text("One maintenance pass","sectionTitle"));
-        rl->addWidget(text("Based on your saved diagnostic findings, local history and freshly measured eligibility. Only checked actions run. No applications, documents, browser profiles, services or kernel settings will be changed."));
+        rl->addWidget(text("Based on your saved diagnostic findings, local history, optional AI/web evidence and freshly measured eligibility. Only checked actions run. No applications, documents, browser profiles, services or kernel settings will be changed."));
+        if(analysis.contains("research"))rl->addWidget(text("Online evidence is advisory. Independent model agreement may reduce default selections; it never grants permissions or bypasses native checks.","muted"));
         auto* thumbnails=new QCheckBox(QString("Clean %1 generated thumbnails older than 30 days (%2)").arg(plan->files.size()).arg(mib(plan->bytes)));
         thumbnails->setEnabled(allowed("thumbnails")&&!plan->files.empty());thumbnails->setChecked(thumbnails->isEnabled()&&recommended("thumbnails"));thumbnails->setToolTip(recommendations.value("thumbnails").toObject().value("reason").toString());rl->addWidget(thumbnails);auto* thumbnailNote=text(QString::fromStdString(plan->status),"muted");thumbnailNote->setTextFormat(Qt::PlainText);rl->addWidget(thumbnailNote);
         auto* archives=new QCheckBox(plan->apt.complete?QString("Clean downloaded APT package archives (%1 measured, %2 files)").arg(mib(plan->apt.bytes)).arg(plan->apt.files):QString("APT archive size unavailable · use advanced Cleaner"));
