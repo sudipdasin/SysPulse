@@ -2,7 +2,7 @@
 
 This branch restores the established SysPulse 3.0.0-alpha.2 application from the original [Tux Steward source checkpoint](https://github.com/sudipdasin/tux-steward/tree/0105b57667f79129765c56e3f1654cd91c42cf3a). The canonical repository is SysPulse. Preserve the approved Precision white/crimson theme, Observatory monitoring, Forge management, existing navigation and working features.
 
-**Alpha.21 reporting and compatibility candidate.** Configured relay endpoint, verified issue receipt contract, explicit error states, modern XFCE default applications launcher and fixed executable selection for two reviewed read-only commands. Relay publication requires maintainer credential.
+**Alpha.22 signed updater evaluation candidate.** Native Settings update checks, release channels and administrator-approved full-package updates through scoped signed APT metadata. Production trust enrollment and canonical signed publication are still required.
 
 - [Continuity policy](docs/CONTINUITY.md)
 - [Migration status](docs/QT_MIGRATION_STATUS.md)

@@ -43,6 +43,9 @@ execute_process(COMMAND "${extracted}/usr/bin/syspulse-memory-control" invalid R
 if(NOT helper_code EQUAL 1 OR NOT helper_error MATCHES "Only enable or disable")
     message(FATAL_ERROR "Packaged memory helper missing or argument guard failed")
 endif()
+if(NOT EXISTS "${extracted}/usr/bin/syspulse-apt-update" OR NOT depends MATCHES "python3" OR NOT depends MATCHES "ca-certificates")
+    message(FATAL_ERROR "Full package updater or runtime dependency missing")
+endif()
 file(REMOVE_RECURSE "${extracted}")
 message(STATUS "Debian dependencies, packaged versions and binary build-path privacy verified")
 

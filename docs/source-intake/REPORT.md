@@ -44,3 +44,5 @@ Synthetic regression for configured relay, actual issue receipt contract, modern
 
 ### Alpha.22 signed-update source checkpoint
 Native scoped APT updater, explicit channel preference and per-update PolicyKit authorization. No signing key generated or enrolled without owner trust. Production feed publication and physical target validation pending. No intake IDs promoted.
+
+Alpha.22 build gate exercises the actual updater helper against the previous installed package and signed disposable repository, not merely raw APT commands. Signed production feed remains separate.

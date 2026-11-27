@@ -400,7 +400,7 @@ inline QMap<QString,QString> importAudit(const QByteArray& data,bool& valid,QStr
         result.insert(key,state);
     }
     valid=!result.isEmpty();
-    if(valid&&target){for(int n=1;n<=21;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(facts.value("syspulse_version").toString()==known){*target=known;break;}}}
+    if(valid&&target){for(int n=1;n<=22;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(facts.value("syspulse_version").toString()==known){*target=known;break;}}}
     return result;
 }
 inline QString sessionState(const tux::Result& r,const tux::Action& a){
@@ -446,7 +446,7 @@ inline QJsonObject payload(const QMap<QString,QString>& checks,int level,const Q
     QJsonObject obj{{"schema",1},{"release",QString(tux::Version)},{"level",level==1?"min":level==2?"med":"max"},{"counts",counts}};
     if(level>=2)obj.insert("checks",details);
     bool hasAudit=false;for(auto i=checks.cbegin();i!=checks.cend();++i)if(i.key().startsWith("audit/")&&allowed(i.key(),i.value())){hasAudit=true;break;}
-    if(hasAudit){QString safe="unknown";for(int n=1;n<=21;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(auditTarget==known)safe=known;}obj.insert("audit_reference","3.0.0-alpha.19");obj.insert("audit_target",safe);}
+    if(hasAudit){QString safe="unknown";for(int n=1;n<=22;++n){const auto known=QString("3.0.0-alpha.%1").arg(n);if(auditTarget==known)safe=known;}obj.insert("audit_reference","3.0.0-alpha.19");obj.insert("audit_target",safe);}
     return obj;
 }
 inline QString advice(const QMap<QString,QString>& checks){
