@@ -56,6 +56,11 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing payload entries"):
             self.check()
 
+    def test_missing_package_evidence(self):
+        (self.root / "usr/bin/syspulse_package_evidence.py").unlink()
+        with self.assertRaisesRegex(ValueError, "Missing payload entries"):
+            self.check()
+
     def test_missing_updater(self):
         (self.root / "usr/bin/syspulse-apt-update").unlink()
         with self.assertRaisesRegex(ValueError, "Missing payload entries"):
