@@ -41,7 +41,7 @@ COPY --from=build /work/build/tux-tests /usr/local/bin/syspulse-core-runtime-tes
 COPY --from=build /work/build/syspulse-shell-tests /usr/local/bin/syspulse-shell-runtime-test
 COPY tools/render/x11-runtime-test.sh /usr/local/bin/syspulse-x11-runtime-test.sh
 COPY tools/render/test-apt-updater-runtime.py /usr/local/bin/syspulse-apt-updater-runtime-test.py
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /previous/previous.deb python3 fonts-dejavu-core xvfb xauth dbus-x11 xinput x11-xserver-utils xfconf xfce4-settings procps iproute2 util-linux \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove --no-install-recommends /previous/previous.deb python3 ca-certificates fonts-dejavu-core xvfb xauth dbus-x11 xinput x11-xserver-utils xfconf xfce4-settings procps iproute2 util-linux \
     && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha21~render1' \
     && useradd --create-home --uid 10001 tester
 USER tester
@@ -58,7 +58,7 @@ RUN printf 'deb [arch=amd64 signed-by=/upgrade/test-only.gpg] file:/upgrade/repo
     && apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Languages=none update \
     && apt-cache -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- policy syspulse | grep -F 'Candidate: 3.0.0~alpha22~render1' \
     && printf 'corruption-fixture\n' >> /upgrade/repo/pool/syspulse_3.0.0~alpha22~render1_amd64.deb \
-    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha22~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log) \
+    && (if DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Etc::sourcelist=/tmp/syspulse-upgrade.list -o Dir::Etc::sourceparts=- install -y --no-remove --only-upgrade --no-install-recommends syspulse=3.0.0~alpha22~render1 >/tmp/tamper.log 2>&1; then echo 'Tampered package unexpectedly accepted'; exit 1; fi; (grep -Ei 'hash sum mismatch|file has unexpected size|size mismatch' /tmp/tamper.log || { cat /tmp/tamper.log; exit 1; })) \
     && test "$(dpkg-query -W -f='${Version}' syspulse)" = '3.0.0~alpha21~render1' \
     && cp /candidate/*.deb /upgrade/repo/pool/syspulse_3.0.0~alpha22~render1_amd64.deb \
     && dpkg-deb -x /candidate/*.deb /tmp/updater-test \
