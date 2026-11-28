@@ -14,6 +14,10 @@
 #include "syspulse/dependency_help.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/overview_layout.hpp"
+#include <QResizeEvent>
+#include <QSizePolicy>
+#include <algorithm>
 #include "syspulse/fluent_visuals.hpp"
 #include "syspulse/cleaner_page.hpp"
 #include "syspulse/offline_filesystem.hpp"
@@ -103,6 +107,43 @@ QPushButton* button(const QString& title,std::function<void()> fn,QWidget* conte
     b->setProperty("primary",primary);fluent::decorate(b);
     QObject::connect(b,&QPushButton::clicked,context,[fn=std::move(fn)]{fn();});return b;
 }
+// Reuse the same button instances on resize, preserving callbacks, focus and enabled state.
+class OverviewActions final: public QWidget {
+public:
+    explicit OverviewActions(const QVector<QPushButton*>& buttons,QWidget* parent=nullptr)
+        :QWidget(parent),buttons_(buttons),grid_(new QGridLayout(this)) {
+        setObjectName("overviewActions");
+        setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+        grid_->setContentsMargins(0,0,0,0);grid_->setSpacing(8);
+        grid_->setSizeConstraint(QLayout::SetNoConstraint);
+        for(auto* b:buttons_)b->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+        arrange(3);
+    }
+protected:
+    void resizeEvent(QResizeEvent* e) override {
+        QWidget::resizeEvent(e);reflow(e->size().width());
+    }
+    void showEvent(QShowEvent* e) override {
+        QWidget::showEvent(e);reflow(width());
+    }
+private:
+    QVector<QPushButton*> buttons_;
+    QGridLayout* grid_;
+    int columns_=0;
+    void reflow(int available) {
+        int preferred=1;
+        for(auto* b:buttons_)preferred=std::max(preferred,std::max(b->sizeHint().width(),b->minimumSizeHint().width()));
+        arrange(overviewActionColumns(available,preferred,grid_->horizontalSpacing()));
+    }
+    void arrange(int columns) {
+        if(columns==columns_)return;
+        columns_=columns;
+        for(auto* b:buttons_)grid_->removeWidget(b);
+        for(int i=0;i<buttons_.size();++i)grid_->setColumnStretch(i,i<columns?1:0);
+        for(int i=0;i<buttons_.size();++i)grid_->addWidget(buttons_[i],i/columns,i%columns);
+        grid_->invalidate();updateGeometry();
+    }
+};
 QWidget* workspace(const QString& title,const QString& subtitle,QWidget* child) {
     auto* page=new QWidget;auto* layout=new QVBoxLayout(page);
     layout->setContentsMargins(22,20,22,18);layout->setSpacing(12);
@@ -518,16 +559,33 @@ struct Window::Impl {
     }
     QWidget* overview() {
         auto* content=new QWidget;auto* layout=new QVBoxLayout(content);layout->setContentsMargins(0,0,0,0);layout->setSpacing(14);
-        auto* hero=panel("analysisHero");auto* hl=new QHBoxLayout(hero);hl->setContentsMargins(24,22,24,22);
-        auto* mark=new PulseMark;mark->setFixedSize(60,70);hl->addWidget(mark);
-        auto* heroText=new QVBoxLayout;heroText->addWidget(text("Keep your computer running smoothly","sectionTitle"));
-        analysisStatus=text("Analyze system first. SysPulse will use local diagnostic evidence and learned outcomes to prepare a safe Boost.","muted");analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
-        auto* actions=new QHBoxLayout;auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");actions->addWidget(analyzeButton);actions->addWidget(boostButton);actions->addWidget(button("Open reports",[this]{navigate("reports");},w));actions->addStretch();heroText->addLayout(actions);
-        auto* shortcuts=new QHBoxLayout;auto* profiles=button("Performance presets…",[this]{openDesktopProfiles();},w);profiles->setObjectName("quickDesktopProfiles");shortcuts->addWidget(profiles);
-        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");shortcuts->addWidget(lastBoostButton);auto* historyButton=button("Analysis history…",[this]{diagnosticHistory();},w);historyButton->setObjectName("diagnosticHistory");shortcuts->addWidget(historyButton);shortcuts->addStretch();heroText->addLayout(shortcuts);
-        lastBoostStatus=text("No saved Boost receipt.","muted");lastBoostStatus->setObjectName("lastBoostStatus");lastBoostStatus->setTextFormat(Qt::PlainText);heroText->addWidget(lastBoostStatus);refreshBoostReceipt();hl->addLayout(heroText,1);
-        hl->addWidget(text("SAFE BOOST\nNo app removal\nNo personal-file deletion","muted"));layout->addWidget(hero);
+        auto* hero=panel("analysisHero");auto* hl=new QVBoxLayout(hero);
+        hl->setContentsMargins(18,14,18,14);hl->setSpacing(10);
+        auto* heading=new QHBoxLayout;heading->setSpacing(12);
+        auto* mark=new PulseMark;heading->addWidget(mark,0,Qt::AlignTop);
+        auto* heroText=new QVBoxLayout;heroText->setSpacing(4);
+        heroText->addWidget(text("System care · Analyze & Boost","sectionTitle"));
+        analysisStatus=text("Analyze system to prepare a safe Boost using local diagnostic evidence and learned outcomes.","muted");
+        analysisStatus->setObjectName("analysisStatus");heroText->addWidget(analysisStatus);
+        heading->addLayout(heroText,1);hl->addLayout(heading);
+
+        auto* analyzeButton=button("Analyze system",[this]{analyze();},w,true);analyzeButton->setObjectName("analyzeSystem");
+        auto* boostButton=button("Boost now…",[this]{runQuickBoost();},w,true);boostButton->setObjectName("quickBoost");
+        auto* profiles=button("Performance presets…",[this]{openDesktopProfiles();},w);profiles->setObjectName("quickDesktopProfiles");
+        auto* reportsButton=button("Open reports",[this]{navigate("reports");},w);reportsButton->setObjectName("overviewOpenReports");
+        auto* historyButton=button("Analysis history…",[this]{diagnosticHistory();},w);historyButton->setObjectName("diagnosticHistory");
+        lastBoostButton=button("Last Boost results",[this]{showBoostReceipt();},w);lastBoostButton->setObjectName("lastBoostResults");
+        hl->addWidget(new OverviewActions({analyzeButton,boostButton,profiles,reportsButton,historyButton,lastBoostButton},hero));
+
+        auto* statusRow=new QHBoxLayout;statusRow->setSpacing(12);
+        auto* safety=text("Safe Boost: no app removal or personal-file deletion.","muted");safety->setObjectName("overviewBoostSafety");
+        statusRow->addWidget(safety,1);
+        lastBoostStatus=text("No saved Boost receipt.","muted");lastBoostStatus->setObjectName("lastBoostStatus");
+        lastBoostStatus->setTextFormat(Qt::PlainText);lastBoostStatus->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+        statusRow->addWidget(lastBoostStatus,1);hl->addLayout(statusRow);refreshBoostReceipt();
+        layout->addWidget(hero);
         auto* metrics=new QGridLayout;metrics->setSpacing(12);
+        for(int column=0;column<4;++column)metrics->setColumnStretch(column,1);
         auto metric=[this,metrics](int column,const QString& label,QLabel** value,const QString& color,int tab) {
             auto* frame=panel("metricCard");auto* ml=new QVBoxLayout(frame);ml->setContentsMargins(16,14,16,14);
             ml->addWidget(text(label,"sectionTitle"));*value=text("Collecting…","metricValue");(*value)->setStyleSheet("color:"+color+";");ml->addWidget(*value);
