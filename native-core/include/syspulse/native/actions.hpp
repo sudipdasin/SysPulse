@@ -5,7 +5,7 @@
 #include <memory>
 namespace syspulse::native {
 struct CleanSummary { std::size_t files{}; std::uint64_t bytes{}; std::string status; };
-struct CleanResult { std::size_t removed{}, skipped{}; std::uint64_t bytes{}; std::string status; };
+struct CleanResult { std::size_t removed{}, skipped{}; std::uint64_t bytes{}; std::string status; bool completed{}; std::optional<std::uint64_t> availableBefore,availableAfter; };
 class CacheReview {
     struct Impl; std::unique_ptr<Impl> p;
 public:

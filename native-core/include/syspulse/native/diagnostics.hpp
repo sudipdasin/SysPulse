@@ -5,10 +5,14 @@
 #include <string_view>
 #include <optional>
 #include <cstddef>
+#include <vector>
 namespace syspulse::native {
 struct DiagnosticCategory {const char* name; const char* advice; bool critical;};
 const std::array<DiagnosticCategory,14>& diagnosticCategories();
+struct DiagnosticPattern { unsigned category{}; std::string signature; unsigned count{}; };
 struct DiagnosticSummary {
+    std::vector<DiagnosticPattern> patterns;
+    unsigned patternOverflow{};
     std::array<unsigned,14> counts{};
     unsigned records{}, malformed{}, duplicates{}, recovered{}, oversized{};
     bool available{}, partial{};

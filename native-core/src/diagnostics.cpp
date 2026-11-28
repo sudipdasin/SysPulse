@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Port of SysPulse tools/syspulse-diagnostics PATTERNS and syspulse_recovery.py.
 #include "syspulse/native/diagnostics.hpp"
+#include "syspulse/native/learning.hpp"
 #include <regex>
+#include <map>
+#include <algorithm>
 #include <sstream>
 #include <set>
 #include <memory>
@@ -57,7 +60,7 @@ const std::array<DiagnosticCategory,14>& diagnosticCategories(){static const std
  {"application_crash","Review application and crash evidence; preserve user data.",false},
  {"other_error","Inspect the local evidence; no automatic repair inferred.",false}
  }};return c;}
-DiagnosticSummary diagnoseJournal(std::string_view input,bool commandSucceeded,bool outputCapped){DiagnosticSummary out;out.partial=outputCapped;if(!commandSucceeded)return out;if(input.size()>65536){out.partial=true;return out;}std::set<std::string> cursors;unsigned lines=0;const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(1);while(!input.empty()){
+DiagnosticSummary diagnoseJournal(std::string_view input,bool commandSucceeded,bool outputCapped){DiagnosticSummary out;out.partial=outputCapped;if(!commandSucceeded)return out;if(input.size()>65536){out.partial=true;return out;}std::set<std::string> cursors;std::map<std::pair<unsigned,std::string>,unsigned> mined;unsigned lines=0;const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(1);while(!input.empty()){
     if(std::chrono::steady_clock::now()>=deadline){out.partial=true;break;}
     auto end=input.find('\n');auto line=trim(input.substr(0,end));input=end==input.npos?std::string_view{}:input.substr(end+1);if(line.empty())continue;if(++lines>256){out.partial=true;break;}if(line.size()>16384||line.find('\0')!=line.npos){++out.oversized;out.partial=true;continue;}
     std::unique_ptr<json_tokener,decltype(&json_tokener_free)> tok(json_tokener_new_ex(16),json_tokener_free);if(!tok){out.partial=true;break;}json_tokener_set_flags(tok.get(),JSON_TOKENER_STRICT|JSON_TOKENER_VALIDATE_UTF8);
@@ -68,7 +71,7 @@ DiagnosticSummary diagnoseJournal(std::string_view input,bool commandSucceeded,b
     ++out.records;out.available=true;if(msg->size()>2048){++out.oversized;out.partial=true;continue;}auto text=trim(*msg);bool recovered=false;
     if(*pr>3)for(const auto& rx:recoveries())if(std::regex_match(text.begin(),text.end(),rx)){++out.recovered;recovered=true;break;}
     if(recovered)continue;
-    bool found=false;for(auto i:order)if(std::regex_search(text.begin(),text.end(),patterns()[i])){++out.counts[i];found=true;break;}if(!found&&*pr<=3)++out.counts[13];
- }if(!out.available)out.partial=true;return out;}
+    std::optional<unsigned> category;for(auto i:order)if(std::regex_search(text.begin(),text.end(),patterns()[i])){category=i;break;}if(!category&&*pr<=3)category=13;if(category){++out.counts[*category];auto key=std::make_pair(*category,privateSignature(text));auto existing=mined.find(key);if(existing!=mined.end())++existing->second;else if(mined.size()<128)mined.emplace(std::move(key),1);else ++out.patternOverflow;}
+ }if(!out.available)out.partial=true;for(const auto& item:mined)out.patterns.push_back({item.first.first,item.first.second,item.second});std::sort(out.patterns.begin(),out.patterns.end(),[](const auto& a,const auto& b){if(a.count!=b.count)return a.count>b.count;if(a.category!=b.category)return a.category<b.category;return a.signature<b.signature;});if(out.patterns.size()>6)out.patterns.resize(6);return out;}
 std::string diagnosticReport(const DiagnosticSummary& s){std::ostringstream o;o<<"Journal classification: "<<(!s.available?"unavailable":s.partial?"partial":"bounded sample")<<". Not a diagnosis or repair guarantee.\n";o<<"Records "<<s.records<<", invalid "<<s.malformed<<", duplicates "<<s.duplicates<<", oversized "<<s.oversized<<", recovery observations "<<s.recovered<<".\n";for(std::size_t i=0;i<s.counts.size();++i)if(s.counts[i]){const auto& c=diagnosticCategories()[i];o<<(c.critical?"PRIORITY REVIEW ":"REVIEW ")<<c.name<<": "<<s.counts[i]<<"\n"<<c.advice<<"\n";}o<<"Counts may overlap across samples. Recovery observations do not prove repair.\n";return o.str();}
 }

@@ -9,6 +9,7 @@
 #include <pwd.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <cerrno>
@@ -58,8 +59,11 @@ CleanSummary CacheReview::scan(bool failedMarkers){cancel();CleanSummary s;
 CleanResult CacheReview::apply(){CleanResult out;
 #if defined(__linux__)
     auto review=std::move(p);p=std::make_unique<Impl>();if(!ordinary()||review->cache.n<0||Clock::now()>review->expiry){out.status="Review expired or unavailable; analyze again.";return out;}Fd current(cacheRoot());struct stat a{},b{};if(current.n<0||fstat(current.n,&a)||fstat(review->cache.n,&b)||a.st_dev!=b.st_dev||a.st_ino!=b.st_ino||mountId(current.n)!=mountId(review->cache.n)){out.status="Cache identity changed; nothing removed.";return out;}
+    const auto available=[&]()->std::optional<std::uint64_t>{struct statvfs v{};if(fstatvfs(current.n,&v)||!v.f_frsize||v.f_bavail>v.f_blocks||v.f_bavail>UINT64_MAX/v.f_frsize)return {};return static_cast<std::uint64_t>(v.f_bavail)*v.f_frsize;};
+    out.availableBefore=available();
     for(const auto& e:review->entries){if(!removeEntry(current.n,e,std::time(nullptr))){++out.skipped;continue;}++out.removed;out.bytes+=static_cast<std::uint64_t>(e.info.st_size);}
-    out.status="Cleanup complete: logical file bytes, not guaranteed reclaimed blocks.";
+    out.availableAfter=available();if(!out.availableBefore||!out.availableAfter){out.availableBefore.reset();out.availableAfter.reset();}
+    out.completed=true;out.status="Cleanup complete: logical file bytes, not guaranteed reclaimed blocks.";
 #else
     out.status="Unavailable on this platform.";
 #endif
