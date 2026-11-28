@@ -1,5 +1,10 @@
 # SysPulse Community
 
+## Online AppVeyor monitoring — 28 November 2026
+
+Owner-device authenticated API status and artifact listing passed for SysPulse build 55182273, job x9aa28pb549q80tc. A dedicated Cloudflare Workers Free monitor is configured with an encrypted account token, hourly UTC cron and persistent logs. First scheduled invocation is pending verification. It is a read-only check of the pinned historical build, not automatic fleet enrollment, build submission or artifact download. Scheduled execution requires no laptop process. [Cloud monitoring status](https://github.com/sudipdasin/SysPulse/blob/integration/alpha39/docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). No paid services, GitHub Actions or CircleCI.
+
+
 Open-source native system maintenance, diagnostics and administration. Linux Mint XFCE (AMD64) first; other Linux distributions and native Windows 10/11 require independent validation. Canonical source repository: SysPulse. Preserve the established C++/Qt Precision white/crimson UI, Observatory and Forge; the original Tux Steward source is read-only.
 
 ## Current development
@@ -10,7 +15,7 @@ Owner-supplied laptop transcript at exact commit b6a7cb1e9ec77271fb8c103574eca64
 
 ## Build and distribution
 
-**Hosted build setup:** [AppVeyor configuration, first successful build, artifact retrieval and API bridge](docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). Manual build branch `build/appveyor-alpha39`; use the dashboard [SysPulse](https://ci.appveyor.com/project/sudipdasin/syspulse), free public open-source plan, one job, 60-minute timeout, full Git clone, no tags/PR/push triggers, no deployment. Configuration: [`appveyor.yml`](appveyor.yml), [`tools/ci/appveyor-alpha39.sh`](tools/ci/appveyor-alpha39.sh). The documented API bridge is an optional local preview, not an authenticated or fleet-ready integration. Do not paste tokens into chat or commit them.
+**Hosted build setup:** [AppVeyor configuration, first successful build, artifact retrieval and API bridge](docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). Manual build branch `build/appveyor-alpha39`; use the dashboard [SysPulse](https://ci.appveyor.com/project/sudipdasin/syspulse), free public open-source plan, one job, 60-minute timeout, full Git clone, no tags/PR/push triggers, no deployment. Configuration: [`appveyor.yml`](appveyor.yml), [`tools/ci/appveyor-alpha39.sh`](tools/ci/appveyor-alpha39.sh). The local API bridge passed owner-device status and artifact listing; the cloud monitor is configured but live scheduled acceptance remains pending. Do not paste tokens into chat or commit them.
 
 - [Canonical releases](https://github.com/sudipdasin/SysPulse/releases): do not assume a published Alpha.39 installer exists.
 - [Mandatory package, update and parity policy](docs/DEB_UPDATE_RELEASE_POLICY.md)
