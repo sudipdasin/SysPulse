@@ -6,9 +6,11 @@ Open-source native system maintenance, diagnostics and administration. Linux Min
 
 **Alpha.39 integration candidate — not a production release.** Continue development from [integration/alpha39](https://github.com/sudipdasin/SysPulse/tree/integration/alpha39). Do not use the old main branch or historical preview branches as a development baseline. Read [integration recovery and release gates](docs/ALPHA39_INTEGRATION_RECOVERY.md) before modifying source.
 
-Owner-supplied laptop transcript at exact commit b6a7cb1e9ec77271fb8c103574eca640e78da701 records 286 passing distinct checks, one expected skip, zero failures, and repeated native UBSan checks. Subsequent updater and builder changes have focused fixture evidence only. Full native Qt compilation, actual Alpha.39 DEB, installed signed upgrade, physical Mint acceptance and release approval remain outstanding.
+Owner-supplied laptop transcript at exact commit b6a7cb1e9ec77271fb8c103574eca640e78da701 records 286 passing distinct checks, one expected skip, zero failures, and repeated native UBSan checks. On 2026-11-28 the first free AppVeyor hosted build succeeded at exact source commit `df76ac5ca220b2378f1b93c9059b70f990f48695`: native Qt/C++ compilation, 74/74 CTest suites, 31 required package entries, evaluation DEB checksum and both artifact uploads passed. Actual installed signed upgrade, physical Mint acceptance, independent downloaded-artifact verification and production release approval remain outstanding.
 
 ## Build and distribution
+
+**Hosted build setup:** [AppVeyor configuration, first successful build, artifact retrieval and API bridge](docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). Manual build branch `build/appveyor-alpha39`; use the dashboard [SysPulse](https://ci.appveyor.com/project/sudipdasin/syspulse), free public open-source plan, one job, 60-minute timeout, full Git clone, no tags/PR/push triggers, no deployment. Configuration: [`appveyor.yml`](appveyor.yml), [`tools/ci/appveyor-alpha39.sh`](tools/ci/appveyor-alpha39.sh). The documented API bridge is an optional local preview, not an authenticated or fleet-ready integration. Do not paste tokens into chat or commit them.
 
 - [Canonical releases](https://github.com/sudipdasin/SysPulse/releases): do not assume a published Alpha.39 installer exists.
 - [Mandatory package, update and parity policy](docs/DEB_UPDATE_RELEASE_POLICY.md)
@@ -22,7 +24,7 @@ bash tools/build-alpha39-local.sh --check
 SYSPULSE_BUILD_JOBS=1 bash tools/build-alpha39-local.sh --build FULL_REVIEWED_COMMIT
 ```
 
-No hosted CI or paid infrastructure. No unverified release publication. Preserve public trust anchors; no arbitrary root shell or stored passwords.
+Only explicitly approved free AppVeyor hosted builds or local builds; GitHub Actions and CircleCI remain prohibited. No paid infrastructure. No unverified release publication. Preserve public trust anchors; no arbitrary root shell or stored passwords.
 
 ## Project documentation
 
