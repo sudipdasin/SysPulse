@@ -1,0 +1,13 @@
+# System Overview layout refresh — 2026-11-28
+
+## Scope
+Individual SysPulse UI work, not a new Master CI / CI Fleet Control milestone. Base integration/alpha39: 46436b35adf9a1e6dfe0bc9e9f722107fcf58d9a. Owner screenshot showed two crowded action rows at the left of a wide panel, an oversized pulse-mark gutter and detached safety copy at the far right.
+
+## Implementation
+Replace the two independent horizontal rows with one measured-width action grid. Six actions on one row where room permits; three, two or one columns as the content narrows, keeping complete rows. Keep the same button instances on resize and existing action callbacks, analysis and receipt object names, safety authorization and navigation. Arrange Analyze, Boost, Performance presets, Open reports, Analysis history, Last Boost results. Compact heading and pulse mark; move the safety statement and receipt into a balanced status row. Equal stretch for the four metric cards. Existing metric controls and lower workspace contents unchanged. No new polling, privileges, background action or maintenance behavior. Retain alpha.39 version for source candidate to avoid breaking pinned builder/package contracts; new release version requires separate acceptance.
+
+## Evidence
+Source/test commit 48cc58fb82705c88ed3fb4398e007c6ecbbc3585. Standalone header blob 1cb7c5820457af9988ed2f672262888d14a48434 and test blob 79dcce0813d0b65d895f3a6f93abeb1fd292783e exactly match local Git object hashes. Debian GCC 14.2.0, C++17, -O2 -Wall -Wextra -Wpedantic -Werror -fsanitize=undefined: 14 boundary cases and 3000 width invariants passed, no failure. Test output SHA256 0415b2225350b69bd8ea0d424c62925d63a3720ecdebbe37390dc3006a4d4f58. Source readback confirmed all six original callbacks retained, unchanged metric/lower content and all code following overview unchanged. Native shell test added for 1366/1920/1000 window widths, visible action order, clipping, resize safety gates; registered standalone test with CTest. UI blob 5c62143eebc98c6bc814f071f4d63d7f2757195b; shell test 840588afed1e05efeb95081e840952821fceec73; CMake 9875377e51ba3d14621bbec597ebd740fb541c1c.
+
+## Remaining acceptance
+Local Qt5 development headers/pkg-config unavailable; no full Qt compilation, native rendering, CTest shell execution, screenshot or updated DEB produced. Verify layout with actual native build, offscreen tests and physical Mint XFCE at multiple window sizes before merge. Current AppVeyor pilot only accepts reviewed branches and manual builds: do not bypass its guards or submit a new job automatically. No GitHub Actions, CircleCI, new paid services, cloud changes or production release. Keep integration/main unchanged pending native acceptance.
