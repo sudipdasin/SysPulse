@@ -1,5 +1,8 @@
 # SysPulse
 
+> **Current build and recovery (28 November 2026):** Active development is on [integration/alpha39](https://github.com/sudipdasin/SysPulse/tree/integration/alpha39), not this historical source branch. The first free AppVeyor hosted Ubuntu 24.04 amd64 build succeeded at `df76ac5ca220b2378f1b93c9059b70f990f48695` with 74/74 CTest suites and evaluation DEB/evidence upload. [Setup, manual build settings, artifacts and recovery](https://github.com/sudipdasin/SysPulse/blob/integration/alpha39/docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). Installed signed upgrade, physical Mint acceptance and production release remain pending. No GitHub Actions, CircleCI or paid infrastructure.
+
+
 Open-source native system maintenance, diagnostics and administration tools. Linux Mint XFCE (AMD64) first; other Linux distributions and native Windows 10/11 are roadmap targets requiring their own validation.
 
 ## Download the established native application
