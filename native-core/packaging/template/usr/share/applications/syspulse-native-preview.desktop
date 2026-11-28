@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SysPulse Native Maintenance Preview
+Comment=Native monitoring and reviewed maintenance actions
+Exec=syspulse-native-preview
+Icon=syspulse-native-preview
+Terminal=false
+Categories=System;Monitor;
+StartupNotify=false

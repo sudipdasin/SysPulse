@@ -1,0 +1,24 @@
+SysPulse Native R11 Linux administration evaluation. Coexists with Alpha 39.
+Run as an ordinary desktop account, not root. Reviewed APT upgrades and repair
+require matching successful preview and separate authorization. APT takes its
+own transaction locks after the helper rechecks the plan; a race remains.
+System and user service changes, Wi-Fi and power profiles require review.
+System service stop/restart excludes selected foundational service names; this
+is not a complete dependency or alias safety analysis. Offline ext filesystem
+check/repair requires UDisks2 and gdbus, matching unmounted device identity,
+unique UUID, a failed check before repair and separate backup confirmation.
+UDisks performs authorization and its own mount checks. No forced unmount.
+No firewall mutation. Optional tools may be absent; operations then fail closed.
+Actual privileged service, package, memory, TRIM and filesystem mutations and
+NetworkManager/power daemon changes have NOT been verified on a real Mint
+session. Keep Alpha 39 installed. Unsigned evaluation; full parity, Windows
+and signed update pending. No background update or maintenance is installed.
+R11 adds actual ordinary-user verified single-file copy and restore to a NEW
+path (64 MiB maximum, private mode 0600, no symlinks, no overwrite). It is not
+recursive backup, metadata preservation, snapshot or recovery of deleted data.
+The destination filesystem must support hardlinks; same-user races remain.
+Live CPU and RAM history added. Full replacement remains unaccepted.
+Desktop / reports adds optional native desktop tool launchers (not internal
+implementations of those tools) and an explicit redacted local report export.
+Reports are saved in the owned account home with private permissions, no
+overwrite. External tool execution not tested in the current environment.

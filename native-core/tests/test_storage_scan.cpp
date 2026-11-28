@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "syspulse/native/storage_scan.hpp"
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <cstdlib>
+#include <unistd.h>
+using namespace syspulse::native;namespace fs=std::filesystem;
+unsigned count=0;void check(bool ok,const char* msg){++count;if(!ok){std::cerr<<msg<<'\n';std::exit(1);}}
+int main(){char temp[]="/tmp/sp-storage-XXXXXX";check(mkdtemp(temp)!=nullptr,"temp");fs::path root(temp);struct Guard{fs::path p;~Guard(){std::error_code ec;fs::remove_all(p,ec);}} guard{root};fs::create_directory(root/".cache");std::ofstream(root/".cache/a")<<"1234567890";std::ofstream(root/"archive.zip")<<"12345678901234567890";std::ofstream(root/"photo.png")<<"123";std::ofstream(root/"review.log")<<"1234";fs::create_hard_link(root/"archive.zip",root/"other.zip");fs::create_symlink("/etc",root/"outside");std::atomic_bool cancel{false};auto r=scanStorage(root.string(),{},cancel);check(r.available&&r.complete,"bounded scan");check(r.files==5&&r.aliases==1,"unique hardlinks");check(r.logical==37,"logical total");check(r.categoryBytes[0]==10&&r.categoryBytes[1]==4&&r.categoryBytes[2]==20&&r.categoryBytes[3]==3,"categories");check(r.largest.size()==4&&r.largest.front().logical==20,"largest ordering");check(storageReport(r).find("never automatically removed")!=std::string::npos,"report scope");auto bounded=scanStorage(root.string(),{1,1,std::chrono::seconds(2)},cancel);check(bounded.limited&&!bounded.complete,"entry cap");auto top=scanStorage(root.string(),{100,1,std::chrono::seconds(2)},cancel);check(top.largest.size()==1&&top.largest.front().logical==20,"top cap");cancel=true;check(scanStorage(root.string(),{},cancel).cancelled,"cancel");cancel=false;check(!scanStorage((root/"outside").string(),{},cancel).available,"root link rejected");check(!scanStorage("relative",{},cancel).available,"relative rejected");check(fs::exists(root/"archive.zip")&&fs::exists(root/"review.log"),"read only");std::cout<<count<<" storage analysis checks passed\n";}

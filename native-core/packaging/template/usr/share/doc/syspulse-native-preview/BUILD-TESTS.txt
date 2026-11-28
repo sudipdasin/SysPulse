@@ -1,0 +1,1 @@
+16/16 CTest suites in Release, UBSan and static-runtime compatibility builds. Separately executed ordinary-user report, process and backup tests and packaged X11 report workflow. No privileged mutation, target Mint acceptance, Windows or signed update verified.

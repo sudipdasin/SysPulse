@@ -1,0 +1,18 @@
+Package: syspulse-native-preview
+Version: 3.0.0~native.r11+preview1
+Architecture: amd64
+Maintainer: SysPulse Preview Packaging <noreply@example.invalid>
+Section: utils
+Priority: optional
+Installed-Size: 3732
+Depends: libc6 (>= 2.38), libx11-6, libssl3t64, libjson-c5
+Recommends: xfonts-base, xfonts-75dpi, pkexec, util-linux, systemd, apt, dpkg, iproute2
+Suggests: xfce4-settings, xfce4-session, xfce4-power-manager, gnome-disk-utility, timeshift, gufw, baobab, udisks2, libglib2.0-bin, network-manager, power-profiles-daemon, ufw
+Homepage: https://github.com/sudipdasin/SysPulse
+Description: Native C++ administration evaluation with verified file recovery
+ X11 system dashboard, reviewed thumbnail cache cleanup and process termination,
+ reversible local startup management, package audits and reviewed APT operations.
+ Includes reviewed package configuration, root TRIM and runtime zswap control.
+ Adds service, Wi-Fi, power and offline filesystem review workflows.
+ Verified file recovery, CPU and RAM history, local report export and desktop tool access.
+ Co-installable with established SysPulse. Optional PolicyKit authorization.

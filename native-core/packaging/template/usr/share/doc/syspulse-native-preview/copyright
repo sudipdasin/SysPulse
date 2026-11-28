@@ -1,0 +1,7 @@
+SysPulse Native R4, GPL-3.0-or-later, as identified in upstream source files.
+Upstream: https://github.com/sudipdasin/SysPulse
+Source checkpoint: 95bb11275660cc1aa4099a170e75c972f9ef5b94
+Source branch: feature/native-cpp-health-ui-r4-20261128
+The GPL text is included as COPYING. Statically linked GCC runtime components
+are subject to their upstream licenses and GCC Runtime Library Exception;
+see gcc-runtime-copyright. X11 and glibc are dynamically linked system libraries.
