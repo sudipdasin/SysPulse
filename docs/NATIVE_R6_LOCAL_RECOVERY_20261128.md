@@ -1,0 +1,16 @@
+# R5/R6 local native maintenance recovery — 2026-11-28
+
+SysPulse application only. Last verified remote native code baseline remains R4 69fae0af9ad3af7fe0f79b8382f0a8fc3c3b4175. R5 and R6 implementation files were developed locally and delivered as source archives; this documentation checkpoint is NOT a remote source synchronization or production integration. Direct Git network DNS unavailable. Preserve Alpha39 and R4 branch. No Master CI changes, paid service, hosted CI or release publication.
+
+R6 adds real ordinary-user reversible startup-file management, with reviewed exact filename, 60-second review, file/directory identity revalidation, XDG system-wide counterpart refusal and atomic no-overwrite rename, plus direct bounded Debian dpkg status audit. Startup scope: standard ~/.config/autostart, eligible owned regular single-link desktop entries, ASCII basename <=40, disable via .desktop.syspulse-disabled, restoration preserves content. No global startup mutation, no package repair, no administrator actions. Residual same-user filesystem race remains. R5 cache cleanup and pidfd SIGTERM actions retained.
+
+Verification: Debian GCC 14.2.0, strict Release, UBSan, and static C++ runtime builds each 8/8 CTest suites. Ordinary-user fixture exercised real startup disable/restore and rejected collision, changed identity, symlink. R5 real generated-cache fixture and child SIGTERM reran successfully. Ordinary-user Xvfb GUI with isolated temporary account performed cancel, disable, restore, content preservation and system-entry collision exclusion. Live dpkg database parse; no package mutation. Exact extracted DEB manifest and graphical smoke passed. GLIBC symbol ceiling 2.38. Native UI still prototype; actual Mint desktop/Windows, full privileged maintenance, signed updates and parity unaccepted. Unsigned local evaluation only.
+
+Artifacts delivered in chat:
+- SysPulse-Native-R6-Maintenance-Preview-amd64.deb, SHA256 f6ce7bab1f5db8845f0e6a5ccfa042eb0bd7269678c66b5180e23036784b9610; 598244 bytes; package syspulse-native-preview version 3.0.0~native.r6+preview1, installed size 3732 KiB.
+- SysPulse-Native-R6-Source-and-Evidence.zip, SHA256 56b3cebd10e8d6750662468f9c5b87ab61ff55a8de7b58f67be53537ccb2167f.
+- SysPulse-R6-from-R5.patch, SHA256 5d6e9ef9e6d38cca529195908cd0769ce6293e267ff951961f8f7bfde887ac64.
+- SysPulse-R6-local-source.bundle, SHA256 7c932f1d56d7dc6ae9ff601fb4a6368952578143e3181e4b35209a25dce58b99.
+- Local R5 snapshot dc2bee4b7a5211660eaf13f44a667d5da05d0035; local R6 36f7c485fa24680b1c1605ac82e0ef70b6daa8a1. These are local Git objects, not reachable GitHub commits.
+
+Next: import exact R5/R6 archive sources onto a new topic from verified R4, compare Git blobs, rerun full local suite, merge only after parity. Prioritize migration of already-proven privileged maintenance and repair components rather than more monitoring prototypes; include actual isolated mutation tests and native UI acceptance. Avoid rewriting working components without benefit. No automatic destructive actions or unsigned upgrades.
