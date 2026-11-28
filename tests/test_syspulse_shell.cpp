@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "syspulse/window.hpp"
+#include "syspulse/overview_layout.hpp"
+#include <QGridLayout>
+#include <algorithm>
 #include "syspulse/dependency_help.hpp"
 #include "syspulse/performance.hpp"
 #include "tux/core.hpp"
@@ -69,6 +72,37 @@ int main(int argc,char** argv) {
         for(auto* action:help->menu()->actions())require(!action->icon().isNull(),"help commands have distinct icon glyphs");
         for(auto* tabs:window.findChildren<QTabWidget*>())for(int i=0;i<tabs->count();++i)require(!tabs->tabIcon(i).isNull(),"workspace tabs have icons");
         require(window.currentPageId()=="overview","overview is the initial destination");
+        auto* overviewActions=window.findChild<QWidget*>("overviewActions");
+        require(overviewActions&&overviewActions->layout(),"responsive overview action container exists");
+        auto* overviewGrid=qobject_cast<QGridLayout*>(overviewActions->layout());
+        require(overviewGrid&&overviewGrid->count()==6,"all six overview actions retained");
+        const QStringList overviewNames={"analyzeSystem","quickBoost","quickDesktopProfiles","overviewOpenReports","diagnosticHistory","lastBoostResults"};
+        const auto verifyOverview=[&]{
+            int preferred=1;
+            for(const auto& name:overviewNames){
+                auto* b=overviewActions->findChild<QPushButton*>(name);
+                require(b&&b->isVisible(),"overview action remains visible");
+                preferred=std::max(preferred,std::max(b->sizeHint().width(),b->minimumSizeHint().width()));
+            }
+            const int columns=syspulse::overviewActionColumns(overviewActions->width(),preferred,overviewGrid->horizontalSpacing());
+            for(int i=0;i<overviewNames.size();++i){
+                auto* b=overviewActions->findChild<QPushButton*>(overviewNames[i]);
+                int row=-1,column=-1,rowSpan=0,columnSpan=0;
+                overviewGrid->getItemPosition(overviewGrid->indexOf(b),&row,&column,&rowSpan,&columnSpan);
+                require(row==i/columns&&column==i%columns&&rowSpan==1&&columnSpan==1,"overview action order and wrapping");
+                require(overviewActions->rect().contains(b->geometry()),"overview action does not overflow its container");
+                require(b->width()>=b->minimumSizeHint().width(),"overview action is not horizontally clipped");
+            }
+            require(!overviewActions->findChild<QPushButton*>("quickBoost")->isEnabled(),"resize cannot unlock Boost");
+            require(!overviewActions->findChild<QPushButton*>("lastBoostResults")->isEnabled(),"resize cannot manufacture a receipt");
+            return columns;
+        };
+        verifyOverview();
+        window.resize(1920,900);events(100);const int wideColumns=verifyOverview();
+        window.resize(1000,680);events(100);const int narrowColumns=verifyOverview();
+        require(narrowColumns<=wideColumns,"narrow overview never gains columns");
+        window.resize(1366,768);events(100);verifyOverview();
+
         auto* sharing=window.findChild<QPushButton*>("reviewDiagnosticSharing");require(sharing,"report consent entry present");
         bool consentChecks=false;
         QTimer::singleShot(0,&window,[&]{
