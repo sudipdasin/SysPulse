@@ -28,7 +28,7 @@ if [[ $EUID == 0 ]]; then echo 'Run as a normal desktop user, not root.' >&2; ex
 export PATH=/usr/bin:/bin
 missing=0
 target=diagnostics-only
-required=(git g++ python3 dpkg-deb timeout tar sha256sum apt-get apt-cache dpkg dpkg-scanpackages gpg gpgconf realpath tee)
+required=(git g++ python3 dpkg-deb timeout tar sha256sum apt-get apt-cache dpkg dpkg-scanpackages gpg gpgconf gpgv apt-config cmp realpath tee)
 if [[ $mode != --diagnostics ]]; then
     . /etc/os-release
     case "${ID:-}:${VERSION_ID:-}:${UBUNTU_CODENAME:-}" in
