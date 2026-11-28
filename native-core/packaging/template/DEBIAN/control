@@ -5,7 +5,7 @@ Maintainer: SysPulse Preview Packaging <noreply@example.invalid>
 Section: utils
 Priority: optional
 Installed-Size: 3732
-Depends: libc6 (>= 2.38), libx11-6, libssl3t64, libjson-c5
+Depends: libc6 (>= 2.38), libx11-6, libcairo2, libssl3t64, libjson-c5
 Recommends: xfonts-base, xfonts-75dpi, pkexec, util-linux, systemd, apt, dpkg, iproute2
 Suggests: xfce4-settings, xfce4-session, xfce4-power-manager, gnome-disk-utility, timeshift, gufw, baobab, udisks2, libglib2.0-bin, network-manager, power-profiles-daemon, ufw
 Homepage: https://github.com/sudipdasin/SysPulse

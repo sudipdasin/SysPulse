@@ -15,7 +15,10 @@ work=$(mktemp -d); trap 'rm -rf -- "$work"' EXIT
 cmake -S "$root" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS='-Wall -Wextra -Wpedantic -Werror' -DCMAKE_EXE_LINKER_FLAGS='-static-libstdc++ -static-libgcc'
 cmake --build "$work/build" -j2
 ctest --test-dir "$work/build" --output-on-failure
-ctest --test-dir "$work/build" -N | grep -q 'Total Tests: 19' || { echo 'Required X11 smoke test missing'; exit 1; }
+testlist=$(ctest --test-dir "$work/build" -N)
+for suite in native-dashboard-x11 native-gui-layout native-diagnostic-learning; do
+    grep -Eq "Test +#[0-9]+: ${suite}$" <<< "$testlist" || { echo "Required test missing: $suite"; exit 1; }
+done
 cp -a "$root/packaging/template" "$work/package"
 sed -i "s/^Version:.*/Version: $SYSPULSE_PACKAGE_VERSION/" "$work/package/DEBIAN/control"
 mkdir -p "$work/package/usr/bin"
