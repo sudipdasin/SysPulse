@@ -1,5 +1,10 @@
 # SysPulse
 
+## Online AppVeyor monitoring — 28 November 2026
+
+Owner-device authenticated API status and artifact listing passed for SysPulse build 55182273, job x9aa28pb549q80tc. A dedicated Cloudflare Workers Free monitor is configured with an encrypted account token, hourly UTC cron and persistent logs. First scheduled invocation is pending verification. It is a read-only check of the pinned historical build, not automatic fleet enrollment, build submission or artifact download. Scheduled execution requires no laptop process. [Cloud monitoring status](https://github.com/sudipdasin/SysPulse/blob/integration/alpha39/docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). No paid services, GitHub Actions or CircleCI.
+
+
 > **Current build and recovery (28 November 2026):** Active development is on [integration/alpha39](https://github.com/sudipdasin/SysPulse/tree/integration/alpha39), not this historical source branch. The first free AppVeyor hosted Ubuntu 24.04 amd64 build succeeded at `df76ac5ca220b2378f1b93c9059b70f990f48695` with 74/74 CTest suites and evaluation DEB/evidence upload. [Setup, manual build settings, artifacts and recovery](https://github.com/sudipdasin/SysPulse/blob/integration/alpha39/docs/ALPHA39_APPVEYOR_BUILD_SETUP.md). Installed signed upgrade, physical Mint acceptance and production release remain pending. No GitHub Actions, CircleCI or paid infrastructure.
 
 
