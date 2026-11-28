@@ -1,0 +1,18 @@
+# Free OSS hosted evaluation only; no production release or deployment.
+version: '3.0.0-alpha.39.{build}'
+image: Ubuntu2404
+branches:
+  only:
+    - build/appveyor-alpha39
+    - integration/alpha39
+skip_tags: true
+max_jobs: 1
+install:
+  - sh: bash tools/ci/appveyor-alpha39.sh prepare
+build_script:
+  - sh: bash tools/ci/appveyor-alpha39.sh build
+test: off
+artifacts:
+  - path: syspulse-ci-artifacts/*.deb
+  - path: syspulse-ci-artifacts/evidence.tar.gz
+deploy: off
