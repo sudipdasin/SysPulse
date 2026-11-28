@@ -10,6 +10,7 @@ max_jobs: 1
 install:
   - sh: bash tools/ci/appveyor-alpha39.sh prepare
 build_script:
+  - sh: /usr/bin/python3 tests/test_appveyor_alpha39.py
   - sh: bash tools/ci/appveyor-alpha39.sh build
 test: off
 artifacts:
