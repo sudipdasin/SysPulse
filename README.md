@@ -5,14 +5,14 @@
 
 Open-source native system maintenance, diagnostics and administration tools. Linux Mint XFCE (AMD64) first; other Linux distributions and native Windows 10/11 are roadmap targets requiring their own validation.
 
-## Download the established native application
+## Historical evaluation download links (not the current Alpha.39 build)
 
-- [Live native DEB evaluation download directory](https://syspulse-qt-alpha3-build-eval.onrender.com/) — current candidate, checksum and build/installation reports. This is a mutable evaluation service, not an immutable official release repository.
+- [Live native DEB evaluation download directory](https://syspulse-qt-alpha3-build-eval.onrender.com/) — historical mutable evaluation candidate and reports. This is a mutable evaluation service, not an immutable official release repository.
 - [Canonical GitHub Releases](https://github.com/sudipdasin/SysPulse/releases) — official distribution destination; no published assets at this checkpoint.
 - [Established Qt evaluation source](https://github.com/sudipdasin/SysPulse/tree/build/render-qt-alpha3-evaluation) — native application and build configuration. Actual deployed commit must be checked against the deployment record, not assumed from branch head.
 - [Mandatory package, update and parity policy](docs/DEB_UPDATE_RELEASE_POLICY.md).
 
-Alpha.8 passed native compilation, 36/36 regression suites, 56 additional build checks and Ubuntu 24.04 container installation, then deployed live. Alpha.9 package lifecycle evaluation is in development. The Qt application preserves the established Precision interface, resource monitoring, process/service/startup controls, System Care, maintenance and reviewed system memory compression. Real Mint XFCE VM validation, production signing/updates and official Release asset publication remain outstanding. Do not install legacy X11 prototypes as the current product.
+Alpha.8 passed native compilation, 36/36 regression suites, 56 additional build checks and Ubuntu 24.04 container installation, then deployed live. Alpha.9 package lifecycle evaluation was an earlier development checkpoint. The Qt application preserves the established Precision interface, resource monitoring, process/service/startup controls, System Care, maintenance and reviewed system memory compression. Real Mint XFCE VM validation, production signing/updates and official Release asset publication remain outstanding. Do not install legacy X11 prototypes as the current product.
 
 ## Project documentation
 
